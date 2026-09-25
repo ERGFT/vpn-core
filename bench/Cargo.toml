@@ -1,0 +1,29 @@
+[package]
+name = "bench"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+reality-core = { path = "../core" }
+tokio.workspace = true
+anyhow.workspace = true
+# для warmup_probe: замер разовой инициализации криптографии
+rustls.workspace = true
+mimalloc = { version = "0.1.52", optional = true }
+
+[dev-dependencies]
+criterion = { version = "0.5", features = ["html_reports", "async_tokio"] }
+uuid.workspace = true
+
+[[bench]]
+name = "throughput"
+harness = false
+
+[[bin]]
+name = "memwatch"
+path = "src/bin/memwatch.rs"
+
+[features]
+mimalloc = ["dep:mimalloc"]

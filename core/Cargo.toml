@@ -1,0 +1,45 @@
+[package]
+name = "reality-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+name = "reality_core"
+path = "src/lib.rs"
+
+[dependencies]
+tokio.workspace = true
+tokio-rustls.workspace = true
+rustls.workspace = true
+rustls-pki-types.workspace = true
+webpki-roots.workspace = true
+bytes.workspace = true
+uuid.workspace = true
+url.workspace = true
+thiserror.workspace = true
+anyhow.workspace = true
+tracing.workspace = true
+sha2.workspace = true
+md-5.workspace = true
+hex.workspace = true
+pin-project-lite.workspace = true
+async-tungstenite.workspace = true
+ws_stream_tungstenite.workspace = true
+tokio-util.workspace = true
+futures-util.workspace = true
+h2.workspace = true
+http.workspace = true
+x25519-dalek.workspace = true
+hkdf.workspace = true
+hmac.workspace = true
+aes-gcm.workspace = true
+base64.workspace = true
+x509-parser.workspace = true
+rand.workspace = true
+zeroize.workspace = true
+ml-kem.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util", "macros", "rt-multi-thread"] }
+rcgen = "0.13"

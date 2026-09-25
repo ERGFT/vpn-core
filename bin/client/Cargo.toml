@@ -1,0 +1,21 @@
+[package]
+name = "reality-client"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "reality-client"
+path = "src/main.rs"
+
+[dependencies]
+reality-core = { path = "../../core" }
+tokio.workspace = true
+clap.workspace = true
+anyhow.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+mimalloc = { version = "0.1.52", optional = true }
+
+[features]
+mimalloc = ["dep:mimalloc"]

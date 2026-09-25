@@ -1,0 +1,344 @@
+//! Транспорт Этапа 1: обычный TCP + стандартный TLS (проверка цепочки
+//! сертификатов по системному/встроенному набору корней — без всякой
+//! маскировки ClientHello).
+//!
+//! ClientHello, которое реально уходит в сеть здесь, — это ClientHello
+//! библиотеки rustls как есть: он не похож на Chrome/Firefox и
+//! отличим DPI по JA3/JA4 при желании. Это ожидаемо для Этапа 1 —
+//! маскировка появляется на Этапе 3, REALITY (обход через chain-of-trust
+//! легитимного сайта без собственного сертификата) — на Этапе 5. До тех
+//! пор этот клиент по устойчивости к активному пробингу не лучше, чем
+//! просто "TLS до сервера, который знает про VLESS".
+
+use std::net::SocketAddr;
+use std::sync::{Arc, Once};
+use std::time::Duration;
+
+use rustls::pki_types::ServerName;
+use rustls::{ClientConfig, RootCertStore};
+use tokio::net::TcpStream;
+use tokio_rustls::client::TlsStream;
+use tokio_rustls::TlsConnector;
+use uuid::Uuid;
+
+use crate::error::{Error, Result};
+use crate::fingerprint::CaptureFirstBytes;
+use crate::reality::{RealityCertVerifier, RealityHook};
+use crate::vless::protocol::{vless_connect, Address, Command, VlessStream};
+use crate::vless::uri::Security;
+use crate::vless::VlessConfig;
+
+pub type TlsBoxedStream = TlsStream<TcpStream>;
+/// TLS-поток поверх обёртки, которая параллельно запоминает первые
+/// байты, записанные в сокет (Этап 3 — снятие собственного ClientHello).
+pub type CapturingTlsStream = TlsStream<CaptureFirstBytes<TcpStream>>;
+
+/// ClientHello почти всегда укладывается в несколько сотен-полторы
+/// тысяч байт даже с большим набором расширений; 4 КБ — щедрый запас,
+/// с которым точно не обрежем реальный ClientHello.
+const CLIENT_HELLO_CAPTURE_CAP: usize = 4096;
+
+/// Таймауты сетевых операций. Без них соединение с сервером, который
+/// принял TCP, но молчит (частый случай при блокировках или просто
+/// зависший сервер), висело бы вечно: задача и её буферы не
+/// освобождались бы никогда.
+const DNS_TIMEOUT: Duration = Duration::from_secs(5);
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+/// Отдельно на TLS-рукопожатие: сервер может принять TCP и молчать —
+/// таймаут TCP тут уже не поможет, соединение-то установлено.
+/// Поймано тестом `core/tests/connect_robustness.rs`: до этого клиент
+/// висел на таком сервере неограниченно долго.
+const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(15);
+
+/// Обёртка таймаута вокруг TLS-рукопожатия с понятной ошибкой.
+async fn with_handshake_timeout<T>(
+    what: &str,
+    fut: impl std::future::Future<Output = std::io::Result<T>>,
+) -> Result<T> {
+    match tokio::time::timeout(HANDSHAKE_TIMEOUT, fut).await {
+        Ok(Ok(v)) => Ok(v),
+        Ok(Err(e)) => Err(Error::Io(e)),
+        Err(_) => Err(Error::Protocol(format!(
+            "{what}: сервер не завершил TLS-рукопожатие за {} с",
+            HANDSHAKE_TIMEOUT.as_secs()
+        ))),
+    }
+}
+
+static CRYPTO_INIT: Once = Once::new();
+
+/// rustls 0.23 требует явно выбранного crypto-провайдера, если в бинаре
+/// скомпилирован больше чем один backend. Вызывать один раз при старте
+/// процесса (и в каждом тесте, который поднимает TLS) — повторные вызовы
+/// безопасны и no-op.
+pub fn ensure_crypto_provider() {
+    CRYPTO_INIT.call_once(|| {
+        let provider = rustls::crypto::aws_lc_rs::default_provider();
+
+        // Прогрев генератора случайных чисел (найдено замерами Этапа 8).
+        // aws-lc засевает свой ГСЧ лениво, при первом запросе случайных
+        // байт, и этот засев стоит ~28 мс на процесс. Без прогрева он
+        // приходился на ПЕРВОЕ соединение пользователя: оно занимало
+        // ~36 мс против ~2 мс у всех последующих (у Xray-core первое
+        // соединение — 1,6 мс, отсюда и было отставание в 6-21 раз).
+        // Один запрос здесь переносит эту разовую цену на старт
+        // процесса, где её никто не ждёт. Байты нужны только ради
+        // побочного эффекта — засева, сами они никуда не идут.
+        let mut warmup = [0u8; 32];
+        let _ = provider.secure_random.fill(&mut warmup);
+
+        let _ = provider.install_default();
+    });
+}
+
+fn default_root_store() -> RootCertStore {
+    let mut roots = RootCertStore::empty();
+    roots.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+    roots
+}
+
+async fn connect_tcp(cfg: &VlessConfig) -> Result<TcpStream> {
+    let addr = format!("{}:{}", cfg.host, cfg.port);
+
+    // Асинхронное разрешение имени: раньше здесь был блокирующий
+    // `to_socket_addrs`, вызванный прямо из async-кода. Рабочих потоков
+    // у tokio по числу ядер (на слабой машине — два), и один медленный
+    // ответ DNS останавливал обработку ВСЕХ соединений, а не только
+    // своего. `lookup_host` уносит это в отдельный пул.
+    let addrs: Vec<SocketAddr> = tokio::time::timeout(DNS_TIMEOUT, tokio::net::lookup_host(&addr))
+        .await
+        .map_err(|_| {
+            Error::Protocol(format!(
+                "не удалось разрешить имя {addr} за {} с",
+                DNS_TIMEOUT.as_secs()
+            ))
+        })?
+        .map_err(|e| Error::Protocol(format!("не удалось разрешить имя {addr}: {e}")))?
+        .collect();
+
+    if addrs.is_empty() {
+        return Err(Error::Protocol(format!(
+            "имя {addr} не разрешилось ни в один адрес"
+        )));
+    }
+
+    // Перебираем ВСЕ адреса, а не только первый. Домен часто отдаёт и
+    // IPv6, и IPv4; если IPv6 у провайдера или в сети не работает (а это
+    // обычное дело), раньше клиент просто не подключался, хотя IPv4 был
+    // рядом в том же ответе.
+    let mut last_err = None;
+    for sa in &addrs {
+        match tokio::time::timeout(CONNECT_TIMEOUT, TcpStream::connect(sa)).await {
+            Ok(Ok(tcp)) => {
+                tcp.set_nodelay(true).ok();
+                return Ok(tcp);
+            }
+            Ok(Err(e)) => {
+                tracing::debug!(%sa, error = %e, "адрес не подошёл, пробую следующий");
+                last_err = Some(Error::Io(e));
+            }
+            Err(_) => {
+                tracing::debug!(%sa, "таймаут подключения, пробую следующий");
+                last_err = Some(Error::Protocol(format!(
+                    "таймаут подключения к {sa} ({} с)",
+                    CONNECT_TIMEOUT.as_secs()
+                )));
+            }
+        }
+    }
+
+    Err(last_err.unwrap_or_else(|| {
+        Error::Protocol(format!("не удалось подключиться ни к одному адресу {addr}"))
+    }))
+}
+
+fn build_client_config(roots: RootCertStore, alpn: Vec<Vec<u8>>) -> ClientConfig {
+    // Этап 3: cipher suites — в порядке реального Chrome, не в дефолтном
+    // порядке aws-lc-rs (см. `fingerprint::chrome_profile` за источником
+    // и обоснованием, почему список не полный). Провайдер — тот же самый
+    // aws-lc-rs, только с переставленным `cipher_suites`, поэтому
+    // `with_safe_default_protocol_versions()` здесь не может провалиться
+    // по-настоящему (те же suite'ы, те же kx_groups — просто другой
+    // порядок Vec) — `expect` фиксирует это как инвариант, не как то,
+    // что реально может случиться в рантайме.
+    let provider = crate::fingerprint::apply_chrome133_cipher_order(
+        rustls::crypto::aws_lc_rs::default_provider(),
+    );
+    let mut config = ClientConfig::builder_with_provider(Arc::new(provider))
+        .with_safe_default_protocol_versions()
+        .expect("переупорядочивание cipher_suites не может сделать набор suite'ов непригодным")
+        .with_root_certificates(roots)
+        .with_no_client_auth();
+    config.alpn_protocols = alpn;
+    config
+}
+
+/// Поднять TCP+TLS до `cfg.host:cfg.port` с SNI = `cfg.effective_sni()`,
+/// проверяя цепочку сертификатов по переданному набору корней и заявляя
+/// переданный список ALPN-протоколов (пусто — ALPN не отправляется;
+/// `[b"h2"]` нужен транспорту Этапа 4 gRPC).
+///
+/// Вынесено отдельно от [`connect_tls`], чтобы тесты могли передать
+/// набор корней, где доверенным является только тестовый
+/// self-signed сертификат — без ослабления проверки в продакшен-пути
+/// (`connect_tls` всегда использует встроенный набор публичных CA).
+pub async fn connect_tls_with_roots_alpn(
+    cfg: &VlessConfig,
+    roots: RootCertStore,
+    alpn: Vec<Vec<u8>>,
+) -> Result<TlsBoxedStream> {
+    ensure_crypto_provider();
+
+    let tcp = connect_tcp(cfg).await?;
+    let config = build_client_config(roots, alpn);
+    let connector = TlsConnector::from(Arc::new(config));
+    let server_name =
+        ServerName::try_from(cfg.effective_sni().to_string()).map_err(Error::InvalidDnsName)?;
+
+    let tls = with_handshake_timeout("TLS", connector.connect(server_name, tcp)).await?;
+    Ok(tls)
+}
+
+/// Как [`connect_tls_with_roots_alpn`], но без ALPN — удобно там, где он
+/// не нужен (Этап 1: голый TCP+TLS).
+pub async fn connect_tls_with_roots(
+    cfg: &VlessConfig,
+    roots: RootCertStore,
+) -> Result<TlsBoxedStream> {
+    connect_tls_with_roots_alpn(cfg, roots, Vec::new()).await
+}
+
+/// Поднять TCP+TLS до `cfg.host:cfg.port` с SNI = `cfg.effective_sni()`,
+/// доверяя встроенному набору публичных корневых сертификатов
+/// (webpki-roots). Это единственный путь, которым продакшен-клиент
+/// устанавливает TLS на Этапе 1.
+pub async fn connect_tls(cfg: &VlessConfig) -> Result<TlsBoxedStream> {
+    connect_tls_with_roots(cfg, default_root_store()).await
+}
+
+/// Как [`connect_tls`], но с ALPN — используется транспортами Этапа 4.
+pub async fn connect_tls_with_alpn(
+    cfg: &VlessConfig,
+    alpn: Vec<Vec<u8>>,
+) -> Result<TlsBoxedStream> {
+    connect_tls_with_roots_alpn(cfg, default_root_store(), alpn).await
+}
+
+/// Поднять TCP+TLS как [`connect_tls`], но обернуть сокет так, чтобы
+/// запомнить сырые байты отправленного ClientHello — Этап 3, "сверка":
+/// посмотреть, какой TLS-отпечаток этот клиент реально отправляет прямо
+/// сейчас (см. `crate::fingerprint`).
+pub async fn connect_tls_capturing_client_hello(
+    cfg: &VlessConfig,
+) -> Result<(CapturingTlsStream, Vec<u8>)> {
+    ensure_crypto_provider();
+
+    let tcp = connect_tcp(cfg).await?;
+    let captured_tcp = CaptureFirstBytes::new(tcp, CLIENT_HELLO_CAPTURE_CAP);
+
+    let config = build_client_config(default_root_store(), Vec::new());
+    let connector = TlsConnector::from(Arc::new(config));
+    let server_name =
+        ServerName::try_from(cfg.effective_sni().to_string()).map_err(Error::InvalidDnsName)?;
+
+    let tls = with_handshake_timeout("TLS", connector.connect(server_name, captured_tcp)).await?;
+    let captured = tls.get_ref().0.captured().to_vec();
+    Ok((tls, captured))
+}
+
+/// Поднять TCP+TLS до `cfg.host:cfg.port` с REALITY-аутентификацией
+/// (Этап 5) вместо проверки цепочки X.509. `reality` — уже разобранные
+/// `pbk=`/`sid=` (см. `VlessConfig::reality_params`). SNI по-прежнему
+/// `cfg.effective_sni()` — это домен "сайта прикрытия", под который
+/// маскируется сервер, а не отдельный REALITY-специфичный хост. `alpn` —
+/// как в [`connect_tls_with_alpn`]: пусто для голого TCP-транспорта
+/// (Этап 1/5), `[b"h2"]` для gRPC (Этап 4) поверх REALITY.
+///
+/// Только TLS1.3 (REALITY не поддерживает TLS1.2 — сама вставка
+/// SessionId и переиспользование эфемерного key_share рассчитаны только
+/// на TLS1.3, см. `vendor/rustls-reality-patch` и `reality/hook.rs`).
+pub async fn connect_tls_reality_with_alpn(
+    cfg: &VlessConfig,
+    reality: &crate::vless::uri::RealityParams,
+    alpn: Vec<Vec<u8>>,
+) -> Result<TlsBoxedStream> {
+    ensure_crypto_provider();
+
+    let tcp = connect_tcp(cfg).await?;
+
+    let mut rng = rand::rngs::OsRng;
+    let hook = Arc::new(RealityHook::new(
+        &reality.public_key,
+        &reality.short_id,
+        &mut rng,
+    ));
+    let verifier = Arc::new(RealityCertVerifier::from_hook(hook.clone()).map_err(|e| {
+        Error::Protocol(format!(
+            "REALITY: не удалось создать верификатор сертификата: {e}"
+        ))
+    })?);
+
+    // Этап 3: тот же Chrome-порядок cipher suites, что и в обычном
+    // TLS-пути (`build_client_config`) — см. комментарий там же.
+    let provider = crate::fingerprint::apply_chrome133_cipher_order(
+        rustls::crypto::aws_lc_rs::default_provider(),
+    );
+    let mut config = ClientConfig::builder_with_provider(Arc::new(provider))
+        .with_protocol_versions(&[&rustls::version::TLS13])
+        .expect("переупорядочивание cipher_suites не может сделать TLS1.3 непригодным")
+        .dangerous()
+        .with_custom_certificate_verifier(verifier)
+        .with_no_client_auth();
+    config.reality = Some(hook);
+    config.alpn_protocols = alpn;
+
+    let connector = TlsConnector::from(Arc::new(config));
+    let server_name =
+        ServerName::try_from(cfg.effective_sni().to_string()).map_err(Error::InvalidDnsName)?;
+
+    let tls = with_handshake_timeout("REALITY", connector.connect(server_name, tcp)).await?;
+    Ok(tls)
+}
+
+/// Как [`connect_tls_reality_with_alpn`], но без ALPN — путь Этапа 1/5
+/// (голый TCP-транспорт).
+pub async fn connect_tls_reality(
+    cfg: &VlessConfig,
+    reality: &crate::vless::uri::RealityParams,
+) -> Result<TlsBoxedStream> {
+    connect_tls_reality_with_alpn(cfg, reality, Vec::new()).await
+}
+
+/// Общая точка входа для TCP-подобных транспортов (голый TCP — Этап 1/5,
+/// и база для gRPC — Этап 4): TLS либо обычный (проверка цепочки X.509),
+/// либо REALITY, по `cfg.security` — не дублировать это ветвление в
+/// каждом транспорте отдельно.
+pub async fn connect_tls_by_security(
+    cfg: &VlessConfig,
+    alpn: Vec<Vec<u8>>,
+) -> Result<TlsBoxedStream> {
+    match cfg.security {
+        Security::Reality => {
+            let reality = cfg.reality_params()?;
+            connect_tls_reality_with_alpn(cfg, &reality, alpn).await
+        }
+        Security::Tls | Security::None => {
+            connect_tls_with_roots_alpn(cfg, default_root_store(), alpn).await
+        }
+    }
+}
+
+/// Полное открытие соединения Этапа 1/5: TCP -> TLS (обычный или REALITY,
+/// по `cfg.security`) -> заголовок запроса VLESS. Заголовок ответа
+/// сервера снимается лениво, при первом чтении из возвращённого
+/// [`VlessStream`] (см. `vless_connect` — почему ждать его заранее нельзя).
+pub async fn connect_and_handshake(
+    cfg: &VlessConfig,
+    id: &Uuid,
+    target: Address,
+    target_port: u16,
+) -> Result<VlessStream<TlsBoxedStream>> {
+    cfg.ensure_flow_supported()?;
+    let stream = connect_tls_by_security(cfg, Vec::new()).await?;
+    vless_connect(stream, id, Command::Tcp, &target, target_port).await
+}

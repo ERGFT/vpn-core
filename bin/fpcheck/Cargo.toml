@@ -1,0 +1,15 @@
+[package]
+name = "fpcheck"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "fpcheck"
+path = "src/main.rs"
+
+[dependencies]
+reality-core = { path = "../../core" }
+tokio.workspace = true
+clap.workspace = true
+anyhow.workspace = true

@@ -1,0 +1,106 @@
+[workspace]
+resolver = "2"
+members = [
+    "core",
+    "bin/client",
+    "bin/fpcheck",
+    "bench",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+[workspace.dependencies]
+tokio = { version = "1", features = ["full"] }
+tokio-rustls = "0.26"
+rustls = "0.23"
+rustls-pki-types = "1"
+webpki-roots = "0.26"
+bytes = "1"
+uuid = { version = "1", features = ["v4"] }
+url = "2"
+thiserror = "2"
+anyhow = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+clap = { version = "4", features = ["derive"] }
+rand = "0.8"
+
+# Этап 3: снятие/расчёт TLS-фингерпринта (JA3/JA4) — измерение того, что
+# реально уходит в сеть, а не подмена (см. PLAN.md, Этап 3: rustls не
+# даёт менять порядок cipher suite/extensions и не умеет GREASE).
+sha2 = "0.10"
+md-5 = "0.10"
+hex = "0.4"
+pin-project-lite = "0.2"
+
+# Этап 4: транспорты поверх готовых библиотек, не самописный фреймер.
+# ws_stream_tungstenite хочет futures_io::AsyncRead/Write на входе (её
+# внутренний async-tungstenite так устроен) и tokio::io на выходе
+# (feature "tokio_io") — мост между ними даёт tokio-util::compat.
+async-tungstenite = { version = "0.29", default-features = false, features = ["futures-03-sink", "handshake"] }
+ws_stream_tungstenite = { version = "0.15", features = ["tokio_io"] }
+tokio-util = { version = "0.7", features = ["compat"] }
+futures-util = "0.3"
+h2 = "0.4"
+http = "1"
+
+# Этап 5: REALITY — крипто-примитивы клиентской части (X25519 ECDH,
+# HKDF-SHA256, AES-256-GCM, HMAC-SHA512) и разбор Ed25519-сертификата
+# сервера. Версии закреплены на major-ветках, совместимых с уже
+# используемым sha2 0.10 (digest 0.10-экосистема RustCrypto) — не самые
+# свежие мажоры (x25519-dalek 3, hkdf/hmac 0.13), у которых digest/rand_core
+# уже другого поколения и которые пришлось бы тянуть отдельно от sha2.
+x25519-dalek = { version = "2", features = ["static_secrets", "zeroize"] }
+hkdf = "0.12"
+hmac = "0.12"
+aes-gcm = "0.10"
+base64 = "0.22"
+x509-parser = "0.16"
+# Крипто-ревью (см. PLAN.md, Этап 5): секреты, которые живут дольше
+# одной функции (эфемерный X25519-скаляр и общий секрет в
+# `reality/hook.rs`), должны сами стираться из памяти при Drop, а не
+# полагаться на то, что ОС когда-нибудь переиспользует эту страницу.
+# Feature "zeroize" у x25519-dalek включает это для его собственных
+# типов (`StaticSecret`/`SharedSecret`) без единой строчки кода с нашей
+# стороны; `zeroize` как прямая зависимость — для полей, которые мы
+# храним сами (`[u8; 32]`, которые dalek не оборачивает).
+zeroize = "1"
+
+# Этап 5 — находка после первой "полной" версии REALITY: современные
+# серверы Xray-core (26.9.8+) требуют гибридную постквантовую группу
+# `X25519MLKEM768` в key_share ClientHello, не голый X25519 (см. PLAN.md
+# за независимо подтверждёнными багрепортами других REALITY-клиентов).
+# `ml-kem` — pure-Rust реализация ML-KEM (FIPS 203) от RustCrypto, того
+# же семейства крейтов, что `hkdf`/`hmac`/`x25519-dalek` уже в проекте —
+# осознанный выбор в пользу консистентности инструментария, а не
+# "первое, что нашлось". Байты encapsulation key/ciphertext/shared key
+# сверены вручную против стандартных размеров FIPS 203 (1184/1088/32) —
+# см. `reality/hook.rs`. Feature "zeroize" — та же дисциплина, что и для
+# x25519-dalek выше (стирание DecapsulationKey при Drop); "getrandom" —
+# чтобы не тащить в проект второй, несовместимый rand_core (крейт `ml-kem`
+# требует rand_core 0.10, а весь остальной проект — 0.8 через `rand`);
+# с этой feature генерация ключей и encapsulate() берут случайность
+# напрямую из ОС, без необходимости прокидывать наш rng через границу
+# двух несовместимых версий rand_core.
+ml-kem = { version = "0.3", features = ["zeroize", "getrandom"] }
+
+# Этап 5 — спайк по решению "какой TLS-бэкенд": вместо публикации целого
+# форка rustls, здесь минимальный, целиком читаемый патч (3 маленьких
+# правки видимости в msgs/handshake.rs и msgs/persist.rs, ни одна
+# существующая логика не тронута — см. vendor/rustls-reality-patch и
+# PLAN.md, Этап 5), который открывает единственный недостающий публичный
+# API: возможность отдать `ClientSessionStore` заранее вычисленный
+# `SessionId` (нужно для REALITY). Патчит ВСЕ зависимости от
+# `rustls` в графе (включая транзитивную через tokio-rustls) — версия
+# та же (0.23.45), поэтому остальной код не заметил подмены.
+[patch.crates-io]
+rustls = { path = "vendor/rustls-reality-patch" }
+
+[profile.release]
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
