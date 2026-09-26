@@ -92,8 +92,12 @@ JSON
 PIDS+=($!)
 
 LINK="vless://$UUID@127.0.0.1:$SRV_PORT?encryption=none&security=reality&sni=decoy.test&fp=chrome&pbk=$PBK&sid=$SID&type=tcp&flow=xtls-rprx-vision#smoke"
-RUST_LOG="info,reality_core::vless::vision=debug" $CLIENT_RUNNER "$CLIENT_BIN" --server "$LINK" \
-    --listen "127.0.0.1:$SOCKS_PORT" --auth "smoke:s3cret" > "$TMP/client.log" 2>&1 &
+# Ссылка и пароль — из файлов, а не из командной строки (там их видят
+# все пользователи машины).
+printf '%s\n' "$LINK" > "$TMP/link.txt"
+printf 'smoke:s3cret\n' > "$TMP/auth.txt"
+RUST_LOG="info,reality_core::vless::vision=debug" $CLIENT_RUNNER "$CLIENT_BIN" --server-file "$TMP/link.txt" \
+    --listen "127.0.0.1:$SOCKS_PORT" --auth-file "$TMP/auth.txt" > "$TMP/client.log" 2>&1 &
 PIDS+=($!)
 for _ in $(seq 1 300); do grep -q 'SOCKS5 слушает' "$TMP/client.log" && break; sleep 0.1; done
 for _ in $(seq 1 100); do python3 -c "import socket; socket.create_connection(('127.0.0.1',$SRV_PORT),1)" 2>/dev/null && break; sleep 0.1; done
@@ -108,6 +112,14 @@ def greet(user, pw):
     assert s.recv(2) == b"\x05\x02", "сервер должен требовать логин/пароль"
     s.sendall(b"\x01" + bytes([len(user)]) + user + bytes([len(pw)]) + pw)
     return s, s.recv(2)
+
+# Молчащий клиент не должен держать соединение вечно.
+import time
+idle = socket.create_connection(("127.0.0.1", socks), timeout=30)
+t0 = time.time()
+assert idle.recv(1) == b"", "молчащее соединение должно закрываться"
+assert time.time() - t0 < 20, "таймаут приветствия SOCKS5 слишком длинный"
+print(f"OK: молчащий клиент отключён через {time.time() - t0:.0f} с")
 
 s, st = greet(b"smoke", b"wrong")
 assert st == b"\x01\x01", f"неверный пароль должен отвергаться: {st!r}"
