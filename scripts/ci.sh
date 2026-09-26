@@ -19,6 +19,8 @@
 #   8. сквозной smoke бинарника против Xray      (REALITY + Vision +
 #      SOCKS5 с паролем + UDP; если есть Xray)
 #   9. сверка эталона Chrome-отпечатка с utls    (если есть сеть)
+#  10. сборка .exe под Windows и проверка под Wine (если есть mingw-w64;
+#      тесты и smoke — если есть wine64)
 #
 # Код возврата ненулевой, если упал любой обязательный шаг или любой
 # необязательный, который был запущен.
@@ -86,6 +88,14 @@ if [[ $QUICK -eq 0 ]]; then
         step "сверка эталона Chrome-отпечатка" bash scripts/check_chrome_fingerprint.sh
     else
         skip "сверка эталона Chrome-отпечатка" "нет доступа к raw.githubusercontent.com"
+    fi
+fi
+
+if [[ $QUICK -eq 0 ]]; then
+    if command -v x86_64-w64-mingw32-gcc >/dev/null 2>&1; then
+        step "сборка под Windows (+ проверка под Wine)" bash scripts/cross_windows.sh
+    else
+        skip "сборка под Windows" "нет mingw-w64"
     fi
 fi
 

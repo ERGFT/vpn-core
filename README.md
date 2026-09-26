@@ -16,16 +16,17 @@
 |---|---|
 | `security=none` / `tls` / `reality` | ✅ все три проверены против настоящего Xray-core |
 | Транспорт `type=tcp` (он же `raw`) | ✅ |
-| Транспорты `type=ws` (`path=`, `host=`), `type=grpc` (`serviceName=`, режим «gun») | ✅ проверены против настоящего Xray-core |
+| Транспорты `type=ws` (`path=`, `host=`), `type=grpc` (`serviceName=`, режим «gun»), `type=httpupgrade` | ✅ проверены против настоящего Xray-core; HTTP-заголовки запроса — как у Chrome (как у Xray) |
+| Транспорт `type=xhttp` (SplitHTTP): режимы `packet-up`, `stream-up`, `stream-one`, HTTP/2 и HTTP/1.1, `extra=` | ✅ все режимы проверены против Xray-core, в т.ч. поверх REALITY (см. ниже, что не поддерживается) |
 | `flow=xtls-rprx-vision` (XTLS Vision) | ✅ padding, распознавание внутреннего TLS, прямая передача в обе стороны; проверено против Xray-core. Как и в Xray — только `type=tcp` с `tls`/`reality` |
 | REALITY: X25519MLKEM768 (и откат на X25519 для сайтов без ML-KEM), ShortId, `minClientVer`/`maxClientVer`, HMAC-сертификат | ✅ |
 | REALITY: ML-DSA-65 (`pqv=`) | ✅ |
 | TLS-отпечаток как у Chrome 133 | ✅ REALITY — совпадает полностью, включая JA4 `t13d1516h2_8daaf6152771_d8a2da3f94cd`; обычный TLS — без legacy cipher suite'ов и ALPS (см. ниже) |
-| UDP (SOCKS5 UDP ASSOCIATE → VLESS UDP) | ✅ в том числе с Vision-аккаунтом |
+| UDP (SOCKS5 UDP ASSOCIATE) через XUDP — как у клиента Xray: все назначения в одном потоке, Full Cone NAT | ✅ в том числе с Vision (другого способа UDP Vision-аккаунт у Xray не принимает); `--no-xudp` — поток на каждое назначение |
 | Логин/пароль на SOCKS5 (`--auth`) | ✅ |
-| Mux, XUDP, `xhttp`/`httpupgrade`/`kcp`/`quic` | ❌ не поддерживаются — неизвестный `type=` даёт понятную ошибку |
+| Mux.Cool для TCP, транспорт `kcp` | ❌ не поддерживаются (почему — ниже); `quic`/`h2` удалены из самого Xray-core — ошибка подсказывает `xhttp` |
 | Linux | ✅ собирается и проверен |
-| Windows | 🟡 код переносимый, инструкция и скрипт есть ([`docs/WINDOWS.md`](docs/WINDOWS.md)), но реально под Windows не собирался |
+| Windows | 🟡 `.exe` собирается кросс-компиляцией и проходит все тесты и smoke против Xray-core под Wine ([`docs/WINDOWS.md`](docs/WINDOWS.md)); на настоящей Windows не запускался |
 
 Стороннее крипто-ревью реализации REALITY не проводилось (подробности —
 `PLAN.md`, Этап 5).
@@ -36,7 +37,7 @@
 
 ```sh
 cargo build --release -p reality-client
-# -> target/release/reality-client  (~6,4 МБ)
+# -> target/release/reality-client  (~7 МБ)
 ```
 
 На Windows — [`docs/WINDOWS.md`](docs/WINDOWS.md) или
@@ -55,6 +56,8 @@ reality-client --server 'vless://UUID@host:443?encryption=none&security=reality&
   только на `127.0.0.1` без пароля клиент отказывается.
 - `--ca файл.pem` — свои корневые сертификаты для `security=tls`
   (сервер с самоподписанным сертификатом).
+- `--no-xudp` — UDP без XUDP (отдельный поток на каждое назначение) —
+  для серверов, не знающих XUDP.
 - Журнал — в stderr, уровень `info` по умолчанию; подробнее —
   `RUST_LOG=debug`.
 
@@ -72,14 +75,16 @@ curl --socks5-hostname 127.0.0.1:1080 https://example.com
 | Параметр | Значение |
 |---|---|
 | `security` | `none`, `tls`, `reality`; другое — ошибка |
-| `type` | `tcp`/`raw` (по умолчанию), `ws`, `grpc`; другое — ошибка |
+| `type` | `tcp`/`raw` (по умолчанию), `ws`, `grpc`, `httpupgrade`, `xhttp` (`splithttp`); другое — ошибка |
 | `sni` | имя сервера для TLS/REALITY (по умолчанию — host) |
 | `pbk`, `sid` | публичный ключ и ShortId REALITY |
 | `pqv` | ключ ML-DSA-65 сервера REALITY (необязательно) |
 | `flow` | пусто или `xtls-rprx-vision` (`-udp443` тоже); прочее — ошибка |
-| `path`, `host` | путь и заголовок Host для WebSocket |
+| `path`, `host` | путь и заголовок Host для ws, httpupgrade, xhttp (`?ed=` в пути отбрасывается) |
+| `mode` | для xhttp: `auto` (по умолчанию: REALITY — `stream-one`, иначе `packet-up`), `packet-up`, `stream-up`, `stream-one` |
+| `extra` | для xhttp: JSON как у Xray — `headers`, `xPaddingBytes`, `noGRPCHeader`, `scMaxEachPostBytes`, `scMinPostsIntervalMs`, `uplinkHTTPMethod`; настройки, меняющие формат запросов (`xPaddingObfsMode`, размещение session/seq/данных не в пути, `downloadSettings`), — ошибка |
 | `serviceName` | имя gRPC-сервиса |
-| `alpn` | список ALPN через запятую; по умолчанию `h2,http/1.1` (как Chrome), для ws — `http/1.1`, для gRPC — всегда `h2` |
+| `alpn` | список ALPN через запятую; по умолчанию `h2,http/1.1` (как Chrome), для ws и httpupgrade — `http/1.1`, для gRPC — всегда `h2`; для xhttp `alpn=http/1.1` включает HTTP/1.1, `h3` — ошибка |
 | `encryption` | только `none` |
 | `headerType` | только `none` |
 | `fp` | читается; отпечаток всегда Chrome-подобный, другое значение — предупреждение в журнале |
@@ -98,9 +103,10 @@ scripts/ci.sh --quick  # только fmt, clippy, тесты
 
 | Скрипт | Что проверяет |
 |---|---|
-| `cargo test --workspace` | 80 тестов (59 unit + 21 интеграционный), всё на loopback |
-| `scripts/interop_xray.sh` | 11 тестов против **настоящего Xray-core**: REALITY (в т.ч. с сайтом без ML-KEM), Vision (padding и переход на прямую передачу), ML-DSA-65 (и отказ при чужом ключе), WebSocket без TLS и с TLS + `--ca`, gRPC поверх REALITY, UDP, отказ Vision-аккаунта клиенту без flow |
-| `scripts/smoke_xray.sh` | собранный бинарник как у пользователя против Xray-core: SOCKS5 с паролем → REALITY → Vision → VLESS, 1 МиБ внутреннего TLS туда-обратно с переходом на прямую передачу, 20 UDP-датаграмм |
+| `cargo test --workspace` | 92 теста (71 unit + 21 интеграционный), всё на loopback |
+| `scripts/interop_xray.sh` | 15 тестов против **настоящего Xray-core**: REALITY (в т.ч. с сайтом без ML-KEM), Vision (padding и переход на прямую передачу), ML-DSA-65 (и отказ при чужом ключе), WebSocket и httpupgrade без TLS и с TLS + `--ca`, gRPC поверх REALITY, xhttp во всех режимах (HTTP/1.1, h2, поверх REALITY; отказы 404/400 с понятной ошибкой), UDP и XUDP (Full Cone), отказ Vision-аккаунта клиенту без flow |
+| `scripts/smoke_xray.sh` | собранный бинарник как у пользователя против Xray-core: SOCKS5 с паролем → REALITY → Vision → VLESS, 1 МиБ внутреннего TLS туда-обратно с переходом на прямую передачу, 20 UDP-датаграмм через XUDP |
+| `scripts/cross_windows.sh` | `.exe` под Windows (mingw-w64) + все тесты и smoke против Xray-core под Wine |
 | `scripts/interop_go_reality.sh` | 4 теста против REALITY-сервера на Go-библиотеке `XTLS/REALITY` (нужен Go ≥ 1.27) |
 | `scripts/smoke_e2e.sh` | бинарник против Go-стенда; несовместимая ссылка отклоняется при старте |
 | `scripts/check_chrome_fingerprint.sh` | не устарел ли эталон Chrome в utls: cipher suites, набор расширений, `signature_algorithms` (стоит запускать раз в месяц-два) |
@@ -117,9 +123,10 @@ Go-стенд готовит `scripts/interop_sandbox_bootstrap.sh`.
 bin/client/            reality-client: CLI, SOCKS5 -> VLESS
 core/src/
   vless/               разбор vless:// (uri.rs), протокол VLESS (protocol.rs),
-                       XTLS Vision (vision.rs), UDP-пакеты (udp.rs)
+                       XTLS Vision (vision.rs), UDP-пакеты (udp.rs), XUDP (xudp.rs)
   transport/           tcp_tls.rs (TCP, TLS, REALITY), raw.rs (сокет с выдачей
-                       по одному TLS-рекорду для Vision), ws.rs, grpc.rs
+                       по одному TLS-рекорду для Vision), ws.rs, grpc.rs,
+                       httpupgrade.rs, xhttp.rs, browser_headers.rs (заголовки Chrome)
   reality/             REALITY: ключи и SessionId (auth.rs), хук в ClientHello
                        (hook.rs), проверка сертификата: HMAC и ML-DSA-65 (verifier.rs)
   fingerprint/         ClientHello как у Chrome (chrome_profile.rs), разбор, JA3/JA4
@@ -176,13 +183,17 @@ cargo run -p bench --bin memwatch -- --pid <PID> --duration-secs 30 --csv rss.cs
 
 ## Что осталось открытым
 
-- Mux/XUDP и транспорты `xhttp`, `httpupgrade`, `kcp`, `quic` — не
-  реализованы.
+- Mux.Cool для TCP не сделан сознательно: Vision-аккаунт у Xray рвёт
+  Mux-соединения с TCP внутри, а сам Xray для мультиплексирования теперь
+  предлагает xhttp. UDP идёт через XUDP (тот же Mux.Cool, одна сессия).
+- `kcp` (mKCP — свой надёжный протокол поверх UDP, ~2,5 тыс. строк в Xray)
+  не сделан: редкий и заметный для DPI транспорт.
+- xhttp: нет переиспользования соединений между сессиями (`xmux`) — каждая
+  VLESS-сессия открывает своё; нет HTTP/3 и `downloadSettings`.
 - Обычный TLS (`security=tls`) отличается от Chrome двумя вещами — осознанно:
   не заявляются 6 legacy cipher suite'ов (сервер с откатом на TLS 1.2 мог бы
   выбрать такой) и ALPS (если CDN на BoringSSL его согласует, клиент обязан
   ответить, а rustls этого не умеет). В REALITY совпадение полное.
-- Под Windows не собиралось (нет доступа к Windows-цели Rust из среды
-  разработки).
+- Под настоящей Windows не запускалось — только под Wine.
 - Стороннее крипто-ревью (Этап 5) и решение о публикации (Этап 8) —
   за людьми: `docs/stage5-crypto-review-and-interop.md`.

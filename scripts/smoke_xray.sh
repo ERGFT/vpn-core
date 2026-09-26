@@ -19,8 +19,13 @@ cd "$ROOT"
 XRAY_BIN="${XRAY_BIN:-$ROOT/target/xray/xray}"
 [[ -x "$XRAY_BIN" ]] || { echo "нет Xray: $XRAY_BIN" >&2; exit 2; }
 
-cargo build --release -q -p reality-client
-CLIENT_BIN="$ROOT/target/release/reality-client"
+# CLIENT_BIN — готовый бинарник (например, собранный под Windows), тогда
+# сборка пропускается; CLIENT_RUNNER — чем его запускать (например, wine).
+if [[ -z "${CLIENT_BIN:-}" ]]; then
+    cargo build --release -q -p reality-client
+    CLIENT_BIN="$ROOT/target/release/reality-client"
+fi
+CLIENT_RUNNER="${CLIENT_RUNNER:-}"
 
 TMP="$(mktemp -d)"
 PIDS=()
@@ -87,7 +92,7 @@ JSON
 PIDS+=($!)
 
 LINK="vless://$UUID@127.0.0.1:$SRV_PORT?encryption=none&security=reality&sni=decoy.test&fp=chrome&pbk=$PBK&sid=$SID&type=tcp&flow=xtls-rprx-vision#smoke"
-RUST_LOG="info,reality_core::vless::vision=debug" "$CLIENT_BIN" --server "$LINK" \
+RUST_LOG="info,reality_core::vless::vision=debug" $CLIENT_RUNNER "$CLIENT_BIN" --server "$LINK" \
     --listen "127.0.0.1:$SOCKS_PORT" --auth "smoke:s3cret" > "$TMP/client.log" 2>&1 &
 PIDS+=($!)
 for _ in $(seq 1 300); do grep -q 'SOCKS5 слушает' "$TMP/client.log" && break; sleep 0.1; done

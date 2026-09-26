@@ -7,9 +7,12 @@
 //!   для внутреннего TLS 1.3 — с проверкой, что обе стороны реально
 //!   переключились на прямую передачу и данные не исказились;
 //! - Vision с ML-DSA-65 (`pqv=`), в том числе отказ при чужом ключе;
-//! - WebSocket без TLS и поверх TLS с собственным CA (`--ca`);
+//! - WebSocket и httpupgrade без TLS и поверх TLS с собственным CA (`--ca`);
 //! - gRPC поверх REALITY;
-//! - UDP (команда VLESS UDP) — эхо датаграмм.
+//! - xhttp: HTTP/1.1 и h2, все три режима, поверх TLS и REALITY, отказы
+//!   сервера (404, 400) с понятной ошибкой;
+//! - UDP (команда VLESS UDP) — эхо датаграмм; XUDP (как у клиента Xray) —
+//!   с проверкой Full Cone.
 //!
 //! Нужен бинарник Xray-core, поэтому тесты `#[ignore]`. Запуск:
 //! `XRAY_BIN=/путь/к/xray cargo test -p reality-core --test interop_xray -- --ignored`
