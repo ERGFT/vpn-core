@@ -80,16 +80,32 @@ fn tls_acceptor(name: &str, alpn: &[&[u8]]) -> (TlsAcceptor, CertificateDer<'sta
 /// сертификат ~3,5 КБ, и с коротенькой тестовой цепочкой сервер падает
 /// с "handshake did not complete successfully".
 async fn start_decoy() -> u16 {
+    start_decoy_with(false).await
+}
+
+/// `classic_only` — сайт без постквантовой группы (только X25519), как
+/// многие сайты на старом OpenSSL: он выберет X25519, а не гибрид.
+async fn start_decoy_with(classic_only: bool) -> u16 {
     let (cert, key, _, _) = self_signed("decoy.test");
     let mut chain = vec![cert];
     for i in 0..12 {
         chain.push(self_signed(&format!("filler{i}.decoy.test")).0);
     }
-    let mut cfg = ServerConfig::builder()
+    let mut provider = rustls::crypto::aws_lc_rs::default_provider();
+    if classic_only {
+        provider.kx_groups = vec![rustls::crypto::aws_lc_rs::kx_group::X25519];
+    }
+    let mut cfg = ServerConfig::builder_with_provider(Arc::new(provider))
+        .with_safe_default_protocol_versions()
+        .unwrap()
         .with_no_client_auth()
         .with_single_cert(chain, key)
         .unwrap();
     cfg.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
+    // Без сжатия сертификатов: клиент (как Chrome) предлагает brotli, и
+    // сжатая цепочка стала бы короче сертификата REALITY с ML-DSA-65
+    // (см. докстринг выше). Сайт без сжатия — обычный случай.
+    cfg.cert_compressors = Vec::new();
     let acc = TlsAcceptor::from(Arc::new(cfg));
     let l = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let port = l.local_addr().unwrap().port();
@@ -456,8 +472,22 @@ fn target(port: u16) -> (Address, u16) {
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "нужен Xray-core: scripts/interop_xray.sh"]
 async fn reality_tcp_echo_against_xray() {
+    reality_tcp_echo(false).await;
+}
+
+/// Сайт-приманка без ML-KEM: сервер REALITY повторяет его выбор (X25519),
+/// и клиент обязан завершить рукопожатие по классической доле ключа.
+/// Раньше клиент слал только гибридную долю, и с такими сайтами REALITY не
+/// работал вовсе («target sent incorrect server hello»).
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "нужен Xray-core: scripts/interop_xray.sh"]
+async fn reality_with_classic_x25519_decoy_against_xray() {
+    reality_tcp_echo(true).await;
+}
+
+async fn reality_tcp_echo(classic_decoy: bool) {
     ensure_crypto_provider();
-    let decoy = start_decoy().await;
+    let decoy = start_decoy_with(classic_decoy).await;
     let echo = start_echo().await;
     let keys = reality_keys();
     let uuid = uuid::Uuid::new_v4();
@@ -631,7 +661,13 @@ async fn vision_inner_tls(pqv: Option<(&str, &str)>, expect_ok: bool) {
     let (a, p) = target(inner_port);
     let res = connect_and_handshake(&cfg, &cfg.id, a, p).await;
     if !expect_ok {
-        assert!(res.is_err(), "неверный pqv= должен отвергаться");
+        let err = res
+            .expect_err("неверный pqv= должен отвергаться")
+            .to_string();
+        assert!(
+            err.contains("ML-DSA-65"),
+            "отказ должен быть именно из-за подписи ML-DSA-65: {err}"
+        );
         return;
     }
     let s = res.expect("Vision поверх REALITY");

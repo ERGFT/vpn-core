@@ -1022,6 +1022,11 @@ extension_struct! {
         /// эти типы не попадают — сервер и не должен их "отвечать".
         /// Только для отправки: при разборе всегда `None`.
         pub(crate) grease_extensions: Option<(u16, u16)>,
+
+        /// reality-core: дополнительные расширения «как есть» (тип, тело)
+        /// — те, для которых у rustls нет типизированного слота (SCT,
+        /// ALPS). Перемешиваются вместе с остальными. Только для отправки.
+        pub(crate) raw_extensions: Vec<(u16, Vec<u8>)>,
     }
 }
 
@@ -1055,6 +1060,7 @@ impl ClientExtensions<'_> {
             order_seed,
             contiguous_extensions,
             grease_extensions,
+            raw_extensions,
         } = self;
         ClientExtensions {
             server_name: server_name.map(|x| x.into_owned()),
@@ -1084,6 +1090,7 @@ impl ClientExtensions<'_> {
             order_seed,
             contiguous_extensions,
             grease_extensions,
+            raw_extensions,
         }
     }
 
@@ -1131,6 +1138,11 @@ impl ClientExtensions<'_> {
                     | ExtensionType::EncryptedClientHelloOuterExtensions
             ) || self.contiguous_extensions.contains(ext))
         });
+        order.extend(
+            self.raw_extensions
+                .iter()
+                .map(|(t, _)| ExtensionType::from(*t)),
+        );
 
         order.sort_by_cached_key(|new_ext| {
             let seed = ((self.order_seed as u32) << 16) | (u16::from(*new_ext) as u32);
@@ -1169,6 +1181,16 @@ impl<'a> Codec<'a> for ClientExtensions<'a> {
             // (RFC 8446 §4.2.11: pre_shared_key обязано быть последним).
             if item == ExtensionType::PreSharedKey {
                 self.encode_last_grease_extension(body.buf);
+            }
+            if let Some((t, v)) = self
+                .raw_extensions
+                .iter()
+                .find(|(t, _)| ExtensionType::from(*t) == item)
+            {
+                t.encode(body.buf);
+                (v.len() as u16).encode(body.buf);
+                body.buf.extend_from_slice(v);
+                continue;
             }
             self.encode_one(item, body.buf);
         }

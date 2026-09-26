@@ -265,16 +265,20 @@ async fn full_reality_handshake_authenticates_and_completes_tls13() {
         is_grease(info.cipher_suites[0]),
         "GREASE первым cipher suite"
     );
-    assert_eq!(info.elliptic_curves.len(), 2);
+    // Группы и доли ключа — как у Chrome 133: supported_groups
+    // `[GREASE, X25519MLKEM768, X25519, P-256, P-384]`, key_share
+    // `[GREASE, X25519MLKEM768, X25519]` (X25519 — тот же ключ, что в
+    // гибриде; нужен сайтам-приманкам без ML-KEM).
     assert!(is_grease(info.elliptic_curves[0]), "GREASE первой группой");
     assert_eq!(
-        info.elliptic_curves[1], 0x11ec,
-        "затем X25519MLKEM768 — и только она"
+        &info.elliptic_curves[1..],
+        &[0x11ec, 0x001d, 0x0017, 0x0018],
+        "затем группы Chrome"
     );
     assert_eq!(
         info.key_share_groups,
-        vec![info.elliptic_curves[0], 0x11ec],
-        "key_share: та же GREASE-группа, затем единственная реальная — X25519MLKEM768"
+        vec![info.elliptic_curves[0], 0x11ec, 0x001d],
+        "key_share: GREASE, гибрид и его X25519-часть"
     );
     assert!(
         is_grease(info.supported_versions[0]),
@@ -283,7 +287,8 @@ async fn full_reality_handshake_authenticates_and_completes_tls13() {
     assert_eq!(
         &info.supported_versions[1..],
         &[0x0304],
-        "REALITY — только TLS 1.3"
+        "без профиля Chrome (этот тест собирает конфиг сам) REALITY заявляет только TLS 1.3; \
+         полный профиль проверяет fingerprint_chrome_full.rs"
     );
     assert_eq!(
         info.grease_extensions.len(),

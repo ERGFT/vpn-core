@@ -123,6 +123,24 @@ impl ActiveKeyExchange for RealityKeyExchange {
     fn group(&self) -> NamedGroup {
         NamedGroup::X25519MLKEM768
     }
+
+    // reality-core: X25519-часть гибридной доли уходит ещё и отдельной
+    // записью key_share (как у Chrome: `[GREASE, X25519MLKEM768, X25519]`).
+    // Нужно для сайтов-приманок без ML-KEM: они выбирают X25519, и без
+    // этой записи рукопожатие не складывалось вовсе (сервер REALITY
+    // отвечал "target sent incorrect server hello").
+    fn hybrid_component(&self) -> Option<(NamedGroup, &[u8])> {
+        let n = self.key_share_bytes.len();
+        (n >= 32).then(|| (NamedGroup::X25519, &self.key_share_bytes[n - 32..]))
+    }
+
+    fn complete_hybrid_component(
+        self: Box<Self>,
+        peer_pub_key: &[u8],
+    ) -> Result<SharedSecret, Error> {
+        let shared = self.hook.complete_x25519(peer_pub_key)?;
+        Ok(SharedSecret::from(shared.as_slice()))
+    }
 }
 
 pub(super) struct ClientHelloInput {
@@ -334,8 +352,20 @@ fn emit_client_hello_for_retry(
         // GREASE-группа первой в обоих случаях (как у Chrome) — сервер её
         // не знает и в выборе группы не учитывает, так что на анти-HRR
         // логику выше она не влияет: реальная группа по-прежнему одна.
+        //
+        // reality-core: теперь, как у Chrome, `[GREASE, X25519MLKEM768,
+        // X25519, secp256r1, secp384r1]`, а в key_share — гибрид и его
+        // X25519-часть отдельной записью (`hybrid_component` выше). Сервер
+        // выбирает группу из тех, для которых есть доля, так что HRR не
+        // возникает ни с PQ-сайтом, ни с обычным.
         named_groups: Some(if matches!((&config.reality, retryreq), (Some(_), None)) {
-            vec![group_grease, NamedGroup::X25519MLKEM768]
+            vec![
+                group_grease,
+                NamedGroup::X25519MLKEM768,
+                NamedGroup::X25519,
+                NamedGroup::secp256r1,
+                NamedGroup::secp384r1,
+            ]
         } else {
             let mut groups: Vec<NamedGroup> = config
                 .provider
@@ -552,9 +582,40 @@ fn emit_client_hello_for_retry(
     // BoringSSL/Chrome (см. `ClientExtensions::grease_extensions`).
     exts.grease_extensions = Some((grease.extension1, grease.extension2));
 
-    if supported_versions.tls12 {
-        // We don't do renegotiation at all, in fact.
-        cipher_suites.push(CipherSuite::TLS_EMPTY_RENEGOTIATION_INFO_SCSV);
+    match &config.chrome_hello {
+        // reality-core: как Chrome — пустое расширение renegotiation_info
+        // (0xff01) вместо псевдо-suite'а SCSV (0x00ff); оба по RFC 5746
+        // означают одно и то же для первого рукопожатия.
+        Some(ch) if ch.renegotiation_info => {
+            exts.renegotiation_info = Some(crate::msgs::base::PayloadU8::empty());
+        }
+        _ => {
+            if supported_versions.tls12 {
+                // We don't do renegotiation at all, in fact.
+                cipher_suites.push(CipherSuite::TLS_EMPTY_RENEGOTIATION_INFO_SCSV);
+            }
+        }
+    }
+
+    // reality-core: остальное из профиля Chrome (см. `ChromeHello`).
+    if let Some(ch) = &config.chrome_hello {
+        cipher_suites.extend(
+            ch.extra_cipher_suites
+                .iter()
+                .map(|c| CipherSuite::from(*c)),
+        );
+        if !ch.signature_schemes.is_empty() {
+            exts.signature_schemes = Some(ch.signature_schemes.clone());
+        }
+        if ch.advertise_tls12 {
+            if let Some(v) = &mut exts.supported_versions {
+                v.tls12 = true;
+            }
+        }
+        if ch.session_ticket && exts.session_ticket.is_none() {
+            exts.session_ticket = Some(ClientSessionTicket::Request);
+        }
+        exts.raw_extensions = ch.raw_extensions.clone();
     }
 
     let mut chp_payload = ClientHelloPayload {
@@ -626,6 +687,12 @@ fn emit_client_hello_for_retry(
 
     // Note what extensions we sent.
     input.hello.sent_extensions = chp_payload.collect_used();
+    input.hello.sent_extensions.extend(
+        chp_payload
+            .raw_extensions
+            .iter()
+            .map(|(t, _)| ExtensionType::from(*t)),
+    );
     input.hello.offered_cipher_suites = chp_payload.cipher_suites.clone();
 
     let mut chp = HandshakeMessagePayload(HandshakePayload::ClientHello(chp_payload));

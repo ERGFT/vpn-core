@@ -15,7 +15,10 @@ license = "MIT"
 [workspace.dependencies]
 tokio = { version = "1", features = ["full"] }
 tokio-rustls = "0.26"
-rustls = "0.23"
+# feature "brotli": распаковка сжатых сертификатов (RFC 8879) — Chrome
+# заявляет compress_certificate с brotli, и без поддержки этого наш
+# ClientHello отличался от браузера (решение пользователя: добавить).
+rustls = { version = "0.23", features = ["brotli"] }
 rustls-pki-types = "1"
 webpki-roots = "0.26"
 bytes = "1"

@@ -44,6 +44,7 @@ use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
 use rustls::server::{ClientHello, ResolvesServerCert};
 use rustls::sign::CertifiedKey;
 use rustls::ServerConfig;
+use rustls::SignatureScheme;
 use sha2::{Sha256, Sha512};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
@@ -103,9 +104,29 @@ impl ResolvesServerCert for RealityTestResolver {
         patched[self.sig_offset..self.sig_offset + self.sig_len].copy_from_slice(&hmac_sig);
 
         let key_der = PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(self.key_der_bytes.clone()));
-        CertifiedKey::from_der(vec![CertificateDer::from(patched)], key_der, &self.provider)
-            .ok()
-            .map(Arc::new)
+        let key = self.provider.key_provider.load_private_key(key_der).ok()?;
+        Some(Arc::new(CertifiedKey::new(
+            vec![CertificateDer::from(patched)],
+            Arc::new(AlwaysEd25519(key)),
+        )))
+    }
+}
+
+/// Как настоящий REALITY-сервер (`hs.sigAlg = Ed25519` в
+/// `handshake_server_tls13.go`): подписывать CertificateVerify через
+/// Ed25519 всегда, даже если клиент его не заявил. Клиент заявляет
+/// `signature_algorithms` как Chrome (без Ed25519), а обычный rustls-сервер
+/// в таком случае честно отказывается подписывать.
+#[derive(Debug)]
+struct AlwaysEd25519(Arc<dyn rustls::sign::SigningKey>);
+
+impl rustls::sign::SigningKey for AlwaysEd25519 {
+    fn choose_scheme(&self, _offered: &[SignatureScheme]) -> Option<Box<dyn rustls::sign::Signer>> {
+        self.0.choose_scheme(&[SignatureScheme::ED25519])
+    }
+
+    fn algorithm(&self) -> rustls::SignatureAlgorithm {
+        self.0.algorithm()
     }
 }
 

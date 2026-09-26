@@ -88,7 +88,7 @@
 //!   — отдельное решение с касанием протокола, не сделано здесь.
 
 use rustls::crypto::CryptoProvider;
-use rustls::CipherSuite;
+use rustls::{CipherSuite, SignatureScheme};
 
 /// Порядок cipher suites в ClientHello реального Chrome 133
 /// (`HelloChrome_Auto` в `refraction-networking/utls`, `u_parrots.go`,
@@ -127,8 +127,94 @@ pub fn apply_chrome133_cipher_order(mut provider: CryptoProvider) -> CryptoProvi
     provider
 }
 
-/// Расширения ClientHello как у Chrome (заполняется ниже по плану).
-pub fn apply_chrome_extensions(_config: &mut rustls::ClientConfig, _reality: bool) {}
+/// `signature_algorithms` Chrome 133 (`u_parrots.go`, HelloChrome_133),
+/// в его порядке. rustls по умолчанию заявлял 13 схем, включая Ed25519 и
+/// ML-DSA, — это было видно в JA4_c. Проверка подписи сервера от этого не
+/// сужается: её делает верификатор (REALITY-сервер подписывает
+/// CertificateVerify через Ed25519, и наш `RealityCertVerifier` это
+/// по-прежнему принимает — так же работает utls-Chrome у Xray).
+pub const CHROME_SIGNATURE_SCHEMES: &[SignatureScheme] = &[
+    SignatureScheme::ECDSA_NISTP256_SHA256,
+    SignatureScheme::RSA_PSS_SHA256,
+    SignatureScheme::RSA_PKCS1_SHA256,
+    SignatureScheme::ECDSA_NISTP384_SHA384,
+    SignatureScheme::RSA_PSS_SHA384,
+    SignatureScheme::RSA_PKCS1_SHA384,
+    SignatureScheme::RSA_PSS_SHA512,
+    SignatureScheme::RSA_PKCS1_SHA512,
+];
+
+/// Шесть «старых» cipher suite'ов из хвоста списка Chrome 133
+/// (ECDHE-RSA с CBC и голый RSA). Не реализованы и не будут — только
+/// заявляются, и только для REALITY: там возможен лишь TLS 1.3, так что
+/// сервер выбрать их не может в принципе (решение пользователя: «да,
+/// только для REALITY»). Для обычного TLS не заявляются — там сервер
+/// с откатом на TLS 1.2 теоретически мог бы выбрать такой suite.
+pub const CHROME_LEGACY_SUITES: &[u16] = &[
+    0xc013, // TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA
+    0xc014, // TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA
+    0x009c, // TLS_RSA_WITH_AES_128_GCM_SHA256
+    0x009d, // TLS_RSA_WITH_AES_256_GCM_SHA384
+    0x002f, // TLS_RSA_WITH_AES_128_CBC_SHA
+    0x0035, // TLS_RSA_WITH_AES_256_CBC_SHA
+];
+
+/// Тип расширения Signed Certificate Timestamp (RFC 6962).
+const EXT_SCT: u16 = 0x0012;
+/// Тип расширения ALPS в новой нумерации Chrome (`ApplicationSettingsExtensionNew`).
+const EXT_ALPS_NEW: u16 = 0x44cd;
+
+/// Привести расширения ClientHello к Chrome 133 — то, что не сводится к
+/// порядку cipher suites и GREASE (они сделаны отдельно):
+/// - `renegotiation_info` (0xff01) вместо псевдо-suite'а SCSV (0x00ff);
+/// - `signature_algorithms` — ровно 8 схем Chrome в его порядке;
+/// - SCT (0x0012) — пустое, «хочу метки прозрачности»;
+/// - `compress_certificate` с brotli (0x001b) — настоящая поддержка
+///   распаковки, не только заявка;
+/// - ECH GREASE (0xfe0d) — штатный механизм rustls;
+/// - для REALITY дополнительно: `session_ticket` (0x0023), TLS 1.2 в
+///   `supported_versions`, 6 legacy suite'ов (см. [`CHROME_LEGACY_SUITES`])
+///   и ALPS (0x44cd) для `h2`.
+///
+/// ALPS только для REALITY осознанно: если обычный TLS-сервер на
+/// BoringSSL (например, CDN) согласует ALPS, клиент обязан прислать
+/// свои настройки в зашифрованных расширениях — rustls этого не умеет,
+/// и рукопожатие сломалось бы. REALITY-сервер (Go) ALPS не согласует
+/// никогда, а сайт-приманка рукопожатие с нами не завершает.
+pub fn apply_chrome_extensions(config: &mut rustls::ClientConfig, reality: bool) {
+    let mut raw = vec![(EXT_SCT, Vec::new())];
+    if reality && config.alpn_protocols.iter().any(|p| p == b"h2") {
+        // ALPS: u16 длина списка, затем протоколы с u8-длиной — только h2.
+        raw.push((EXT_ALPS_NEW, vec![0x00, 0x03, 0x02, b'h', b'2']));
+    }
+    config.chrome_hello = Some(rustls::client::ChromeHello {
+        signature_schemes: CHROME_SIGNATURE_SCHEMES.to_vec(),
+        extra_cipher_suites: if reality {
+            CHROME_LEGACY_SUITES.to_vec()
+        } else {
+            Vec::new()
+        },
+        advertise_tls12: reality,
+        session_ticket: reality,
+        renegotiation_info: true,
+        raw_extensions: raw,
+    });
+    config.cert_decompressors = vec![rustls::compress::BROTLI_DECOMPRESSOR];
+
+    // ECH GREASE: как у Chrome — HPKE X25519/HKDF-SHA256/AES-128-GCM со
+    // случайным ключом-заглушкой; сервер без ECH просто игнорирует.
+    let mut placeholder = vec![0u8; 32];
+    if rustls::crypto::aws_lc_rs::default_provider()
+        .secure_random
+        .fill(&mut placeholder)
+        .is_ok()
+    {
+        config.set_ech_grease(rustls::client::EchGreaseConfig::new(
+            rustls::crypto::aws_lc_rs::hpke::DH_KEM_X25519_HKDF_SHA256_AES_128,
+            rustls::crypto::hpke::HpkePublicKey(placeholder),
+        ));
+    }
+}
 
 #[cfg(test)]
 mod tests {

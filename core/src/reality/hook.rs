@@ -232,6 +232,24 @@ impl RealityClientHook for RealityHook {
         sealed
     }
 
+    fn complete_x25519(&self, peer_key_share: &[u8]) -> Result<Vec<u8>, rustls::Error> {
+        // Сайт-приманка без ML-KEM выбрал голый X25519: обычный ECDH тем
+        // же эфемерным ключом, что и X25519-часть гибридной доли.
+        let peer: [u8; 32] = peer_key_share.try_into().map_err(|_| {
+            rustls::Error::General(format!(
+                "REALITY: X25519-ключ сервера должен быть 32 байта, получено {}",
+                peer_key_share.len()
+            ))
+        })?;
+        let shared = self.ephemeral.diffie_hellman(&X25519PublicKey::from(peer));
+        if !shared.was_contributory() {
+            return Err(rustls::Error::General(
+                "REALITY: вырожденный X25519-ключ сервера".into(),
+            ));
+        }
+        Ok(shared.as_bytes().to_vec())
+    }
+
     fn server_hello_received(&self, raw: &[u8]) {
         let _ = self.server_hello_raw.set(raw.to_vec());
     }

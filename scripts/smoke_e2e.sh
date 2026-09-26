@@ -84,17 +84,19 @@ grep -q '^EVENT reality-ok' "$TMP/server.log" || { echo "сервер не по�
 grep -q '^EVENT vless-ok cmd=1 target=target.test:443' "$TMP/server.log" || { echo "сервер не разобрал VLESS:"; cat "$TMP/server.log"; exit 1; }
 echo "OK: сервер подтвердил REALITY-аутентификацию и VLESS-запрос к target.test:443"
 
-# Ссылка с flow=xtls-rprx-vision: клиент обязан сразу завершиться с
-# понятной ошибкой, а не поднять SOCKS5 и молча ломаться на сервере.
+# Ссылка, которую этот клиент выполнить не может (Vision поверх
+# WebSocket — так не умеет и сам Xray-core), обязана отклоняться сразу
+# при старте с понятной ошибкой, а не поднимать SOCKS5 и молча ломаться.
 set +e
-VISION_LINK="${LINK%%#*}&flow=xtls-rprx-vision#smoke"   # параметр — до фрагмента
-timeout 10 "$CLIENT_BIN" --server "$VISION_LINK" --listen 127.0.0.1:0 > "$TMP/vision.log" 2>&1
+BAD_LINK="${LINK%%#*}"
+BAD_LINK="${BAD_LINK/type=tcp/type=ws}&flow=xtls-rprx-vision#smoke"
+timeout 10 "$CLIENT_BIN" --server "$BAD_LINK" --listen 127.0.0.1:0 > "$TMP/badlink.log" 2>&1
 code=$?
 set -e
-if [[ $code -eq 0 ]] || ! grep -q 'xtls-rprx-vision' "$TMP/vision.log"; then
-    echo "ожидалась явная ошибка для flow=xtls-rprx-vision, получено (код $code):"; cat "$TMP/vision.log"; exit 1
+if [[ $code -eq 0 ]] || ! grep -q 'xtls-rprx-vision' "$TMP/badlink.log"; then
+    echo "ожидалась явная ошибка для Vision поверх ws, получено (код $code):"; cat "$TMP/badlink.log"; exit 1
 fi
-echo "OK: ссылка с flow=xtls-rprx-vision отклонена при старте с понятной ошибкой"
+echo "OK: несовместимая ссылка (Vision поверх ws) отклонена при старте с понятной ошибкой"
 
 # С обёрткой (valgrind) — корректно остановить клиент, чтобы обёртка
 # успела записать итог, и вернуть её код.

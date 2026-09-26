@@ -71,15 +71,54 @@ fn ed25519_self_signed_cert() -> (Vec<u8>, PrivateKeyDer<'static>) {
     (der, key_der)
 }
 
+/// Как настоящий REALITY-сервер (и `reality_full_stack.rs`): подпись
+/// CertificateVerify — всегда Ed25519, даже если клиент (с Chrome-подобным
+/// `signature_algorithms`) его не заявил.
+#[derive(Debug)]
+struct AlwaysEd25519(Arc<dyn rustls::sign::SigningKey>);
+
+impl rustls::sign::SigningKey for AlwaysEd25519 {
+    fn choose_scheme(
+        &self,
+        _offered: &[rustls::SignatureScheme],
+    ) -> Option<Box<dyn rustls::sign::Signer>> {
+        self.0.choose_scheme(&[rustls::SignatureScheme::ED25519])
+    }
+
+    fn algorithm(&self) -> rustls::SignatureAlgorithm {
+        self.0.algorithm()
+    }
+}
+
+#[derive(Debug)]
+struct FixedCert(Arc<rustls::sign::CertifiedKey>);
+
+impl rustls::server::ResolvesServerCert for FixedCert {
+    fn resolve(
+        &self,
+        _: rustls::server::ClientHello<'_>,
+    ) -> Option<Arc<rustls::sign::CertifiedKey>> {
+        Some(self.0.clone())
+    }
+}
+
+fn ed25519_server_config() -> ServerConfig {
+    let (cert_der, key_der) = ed25519_self_signed_cert();
+    let provider = rustls::crypto::CryptoProvider::get_default()
+        .unwrap()
+        .clone();
+    let key = provider.key_provider.load_private_key(key_der).unwrap();
+    let ck = rustls::sign::CertifiedKey::new(vec![cert_der.into()], Arc::new(AlwaysEd25519(key)));
+    ServerConfig::builder()
+        .with_no_client_auth()
+        .with_cert_resolver(Arc::new(FixedCert(Arc::new(ck))))
+}
+
 #[tokio::test]
 async fn ws_transport_rejects_non_hmac_certificate_via_reality_verifier() {
     ensure_crypto_provider();
 
-    let (cert_der, key_der) = ed25519_self_signed_cert();
-    let server_config = ServerConfig::builder()
-        .with_no_client_auth()
-        .with_single_cert(vec![cert_der.into()], key_der)
-        .expect("собрать серверный TLS-конфиг");
+    let server_config = ed25519_server_config();
     let acceptor = TlsAcceptor::from(Arc::new(server_config));
 
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -118,11 +157,7 @@ async fn ws_transport_rejects_non_hmac_certificate_via_reality_verifier() {
 async fn grpc_transport_rejects_non_hmac_certificate_via_reality_verifier() {
     ensure_crypto_provider();
 
-    let (cert_der, key_der) = ed25519_self_signed_cert();
-    let mut server_config = ServerConfig::builder()
-        .with_no_client_auth()
-        .with_single_cert(vec![cert_der.into()], key_der)
-        .expect("собрать серверный TLS-конфиг");
+    let mut server_config = ed25519_server_config();
     server_config.alpn_protocols = vec![b"h2".to_vec()];
     let acceptor = TlsAcceptor::from(Arc::new(server_config));
 

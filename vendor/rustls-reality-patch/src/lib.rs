@@ -594,7 +594,7 @@ pub mod client {
 
     pub use builder::WantsClientCert;
     pub use client_conn::{
-        ClientConfig, ClientConnectionData, ClientSessionStore, EarlyDataError, RealityClientHook,
+        ClientConfig, ClientConnectionData, ClientSessionStore, EarlyDataError, RealityClientHook, ChromeHello,
         ResolvesClientCert, Resumption, TicketRequest, Tls12Resumption, UnbufferedClientConnection,
     };
     #[cfg(feature = "std")]

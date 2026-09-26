@@ -194,6 +194,37 @@ pub trait RealityClientHook: fmt::Debug + Send + Sync {
     /// проверки подписи ML-DSA-65 (она покрывает ClientHello и
     /// ServerHello). По умолчанию ничего не делает.
     fn server_hello_received(&self, _raw: &[u8]) {}
+
+    /// Сервер выбрал классическую группу X25519 вместо гибридной
+    /// (сайт-приманка без поддержки ML-KEM): завершить обычный X25519 ECDH
+    /// тем же эфемерным ключом, что лежит в X25519-части гибридной доли.
+    /// Должен вернуть 32-байтный общий секрет. По умолчанию — ошибка.
+    fn complete_x25519(&self, _peer_key_share: &[u8]) -> Result<Vec<u8>, Error> {
+        Err(Error::General("REALITY: сервер выбрал X25519, хук этого не умеет".into()))
+    }
+}
+
+/// reality-core: ClientHello, похожий на Chrome, — то, что не выражается
+/// обычными настройками rustls. `None` в [`ClientConfig::chrome_hello`] —
+/// поведение исходного rustls.
+#[derive(Clone, Debug, Default)]
+pub struct ChromeHello {
+    /// Что заявлять в `signature_algorithms` (проверка подписи сервера
+    /// по-прежнему идёт через верификатор и может принимать больше).
+    pub signature_schemes: Vec<SignatureScheme>,
+    /// Кодпоинты cipher suite'ов, которые дописываются в конец списка,
+    /// не будучи реализованными (сервер, выбравший такой, получит отказ).
+    pub extra_cipher_suites: Vec<u16>,
+    /// Заявлять TLS 1.2 в `supported_versions`, даже если конфиг только
+    /// TLS 1.3 (выбор 1.2 сервером всё равно будет отвергнут).
+    pub advertise_tls12: bool,
+    /// Пустое расширение `session_ticket`, если rustls сам его не шлёт.
+    pub session_ticket: bool,
+    /// `renegotiation_info` (пустое) вместо псевдо-suite'а SCSV.
+    pub renegotiation_info: bool,
+    /// Дополнительные расширения как есть: (тип, тело). Участвуют в
+    /// перемешивании порядка наравне с остальными.
+    pub raw_extensions: Vec<(u16, Vec<u8>)>,
 }
 
 /// Common configuration for (typically) all connections made by a program.
@@ -362,6 +393,9 @@ pub struct ClientConfig {
     /// REALITY-хук (см. [`RealityClientHook`]). `None` (по умолчанию) —
     /// поведение полностью как в исходном rustls, ничего не меняется.
     pub reality: Option<Arc<dyn RealityClientHook>>,
+
+    /// reality-core: ClientHello как у Chrome (см. [`ChromeHello`]).
+    pub chrome_hello: Option<ChromeHello>,
 }
 
 /// Desired session ticket counts for the RFC 9149 `ticket_request` extension.
@@ -374,6 +408,13 @@ pub struct TicketRequest {
 }
 
 impl ClientConfig {
+    /// reality-core: включить ECH GREASE, не ограничивая конфиг TLS 1.3
+    /// (в отличие от `with_ech`): GREASE-расширение ничего не шифрует и
+    /// шлётся Chrome'ом при любом наборе версий.
+    pub fn set_ech_grease(&mut self, grease: crate::client::EchGreaseConfig) {
+        self.ech_mode = Some(EchMode::Grease(grease));
+    }
+
     /// Create a builder for a client configuration with
     /// [the process-default `CryptoProvider`][CryptoProvider#using-the-per-process-default-cryptoprovider]
     /// and safe protocol version defaults.
