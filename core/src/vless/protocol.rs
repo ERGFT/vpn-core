@@ -58,7 +58,7 @@ impl Address {
         }
     }
 
-    fn encode(&self, buf: &mut BytesMut) {
+    pub(crate) fn encode(&self, buf: &mut BytesMut) {
         buf.put_u8(self.type_byte());
         match self {
             Address::Ipv4(a) => buf.put_slice(&a.octets()),
@@ -126,8 +126,12 @@ pub fn encode_request_with_flow(
         None => buf.put_u8(0),
     }
     buf.put_u8(command as u8);
-    buf.put_u16(port);
-    addr.encode(&mut buf);
+    // При команде Mux (XUDP) адрес не передаётся — сервер подставляет
+    // `v1.mux.cool` сам (`proxy/vless/encoding/encoding.go`).
+    if command != Command::Mux {
+        buf.put_u16(port);
+        addr.encode(&mut buf);
+    }
     buf
 }
 

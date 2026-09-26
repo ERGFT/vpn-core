@@ -1178,3 +1178,107 @@ async fn xhttp_over_reality_against_xray() {
         echo_roundtrip(&mut st, 1024 * 1024).await;
     }
 }
+
+/// UDP-«отражатель»: отвечает портом, с которого пришёл пакет (2 байта),
+/// и самим пакетом — так видно, один ли внешний UDP-сокет у сервера.
+async fn start_udp_reflector() -> u16 {
+    let s = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+    let port = s.local_addr().unwrap().port();
+    tokio::spawn(async move {
+        let mut b = vec![0u8; 65536];
+        loop {
+            let Ok((n, from)) = s.recv_from(&mut b).await else {
+                return;
+            };
+            let mut out = from.port().to_be_bytes().to_vec();
+            out.extend_from_slice(&b[..n]);
+            let _ = s.send_to(&out, from).await;
+        }
+    });
+    port
+}
+
+/// XUDP (как шлёт UDP клиент Xray): через Vision-аккаунт на REALITY и
+/// через xhttp. Пакеты в два разных назначения идут одним потоком,
+/// ответы приходят с адресом источника, и оба назначения видят один и
+/// тот же порт сервера — это и есть Full Cone.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "нужен Xray-core: scripts/interop_xray.sh"]
+async fn xudp_full_cone_against_xray() {
+    use reality_core::vless::xudp::{self, XudpWriter};
+    ensure_crypto_provider();
+    let decoy = start_decoy().await;
+    let (r1, r2) = (start_udp_reflector().await, start_udp_reflector().await);
+    let keys = reality_keys();
+    let uuid = uuid::Uuid::new_v4();
+    let (p_vision, p_xhttp) = (free_port(), free_port());
+    let _x = Xray::start(
+        vec![
+            vless_inbound(
+                p_vision,
+                &uuid,
+                "xtls-rprx-vision",
+                reality_stream("raw", decoy, &keys, vec![], None),
+            ),
+            vless_inbound(
+                p_xhttp,
+                &uuid,
+                "",
+                obj(vec![
+                    ("network", s("xhttp")),
+                    ("xhttpSettings", obj(vec![("path", s("/u"))])),
+                ]),
+            ),
+        ],
+        &[p_vision, p_xhttp],
+        tempdir::Dir::new(),
+    )
+    .await;
+    let links = [
+        reality_link(p_vision, &uuid, &keys, "&type=tcp&flow=xtls-rprx-vision"),
+        VlessConfig::parse(&format!(
+            "vless://{uuid}@127.0.0.1:{p_xhttp}?encryption=none&type=xhttp&path=%2Fu"
+        ))
+        .unwrap(),
+    ];
+    for cfg in links {
+        let mut st = dial(
+            &cfg,
+            &cfg.id,
+            VlessCommand::Mux,
+            Address::Domain(xudp::MUX_COOL_DOMAIN.into()),
+            xudp::XUDP_PORT,
+        )
+        .await
+        .unwrap();
+        let mut w = XudpWriter::new([7; 8]);
+        let mut seen_ports = Vec::new();
+        for i in 0..10u8 {
+            let dst = if i % 2 == 0 { r1 } else { r2 };
+            let pkt: Vec<u8> = (0..(200 + i as usize * 300)).map(|j| j as u8 ^ i).collect();
+            let frame = w
+                .encode(&Address::Ipv4("127.0.0.1".parse().unwrap()), dst, &pkt)
+                .unwrap();
+            st.write_all(&frame).await.unwrap();
+            st.flush().await.unwrap();
+            let p = tokio::time::timeout(Duration::from_secs(10), xudp::read_packet(&mut st))
+                .await
+                .expect("XUDP-ответ должен прийти")
+                .unwrap()
+                .expect("поток не должен закрыться");
+            assert_eq!(
+                p.source,
+                Some((Address::Ipv4("127.0.0.1".parse().unwrap()), dst)),
+                "адрес источника ответа"
+            );
+            assert_eq!(&p.data[2..], &pkt[..], "датаграмма {i}");
+            seen_ports.push(u16::from_be_bytes([p.data[0], p.data[1]]));
+        }
+        seen_ports.dedup();
+        assert_eq!(
+            seen_ports.len(),
+            1,
+            "оба назначения должны видеть один порт сервера (Full Cone): {seen_ports:?}"
+        );
+    }
+}

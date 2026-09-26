@@ -28,6 +28,14 @@ impl NetworkType {
             "grpc" | "gun" => Ok(NetworkType::Grpc),
             "httpupgrade" => Ok(NetworkType::HttpUpgrade),
             "xhttp" | "splithttp" => Ok(NetworkType::Xhttp),
+            // Удалены из самого Xray-core ("PrintRemovedFeatureError") —
+            // сервер с такой настройкой уже не запустится.
+            "quic" | "h2" | "http" | "h3" => Err(Error::InvalidUri(format!(
+                "транспорт type={s} удалён из Xray-core; его заменяет type=xhttp"
+            ))),
+            "kcp" | "mkcp" => Err(Error::InvalidUri(
+                "транспорт type=kcp (mKCP, UDP) не поддерживается этим клиентом".into(),
+            )),
             other => Err(Error::InvalidUri(format!(
                 "транспорт type={other} не поддерживается (поддерживаются: tcp, ws, grpc, httpupgrade, xhttp)"
             ))),

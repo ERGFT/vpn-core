@@ -7,7 +7,9 @@
 #   2. открывает CONNECT и делает внутри настоящий TLS 1.3 до эхо-сервера,
 #      1 МиБ туда и обратно — это «TLS в TLS», на котором Vision
 #      переключается на прямую передачу (проверяется по журналу клиента);
-#   3. через UDP ASSOCIATE шлёт 20 датаграмм UDP-эхо-серверу.
+#   3. через UDP ASSOCIATE шлёт 20 датаграмм UDP-эхо-серверу (клиент
+#      везёт их через XUDP — как клиент Xray, единственный способ UDP
+#      для Vision-аккаунта).
 #
 # Нужно: Xray ($XRAY_BIN или target/xray/xray — scripts/fetch_xray.sh или
 # scripts/build_xray_from_source.sh), openssl, python3.
@@ -147,8 +149,12 @@ for i in range(20):
     back, _ = u.recvfrom(65536)
     assert back[:10] == hdr and back[10:] == payload, f"UDP-датаграмма {i} не совпала"
 c.close()
-print("OK: 20 UDP-датаграмм прошли через SOCKS5 UDP ASSOCIATE -> VLESS UDP и вернулись")
+print("OK: 20 UDP-датаграмм прошли через SOCKS5 UDP ASSOCIATE -> XUDP (Vision) и вернулись")
 PY
+
+grep -q 'SOCKS5 UDP (XUDP): ассоциация открыта' "$TMP/client.log" \
+    || { echo "UDP шёл не через XUDP:"; cat "$TMP/client.log"; exit 1; }
+echo "OK: UDP шёл через XUDP"
 
 # Направления переключаются независимо. Приём переключается всегда
 # (сервер отдаёт ответы целыми TLS-рекордами). Отправка — как и у

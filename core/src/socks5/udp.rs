@@ -2,10 +2,15 @@
 //!
 //! Приложение (DNS-клиент, QUIC в браузере, игра) шлёт датаграммы на
 //! выданный нами UDP-порт, каждая с заголовком SOCKS5 (адрес назначения).
-//! Для каждого адреса назначения открывается свой VLESS-поток с командой
-//! UDP — так устроен VLESS: один поток — одно назначение, пакеты внутри
-//! с 2-байтной длиной (`crate::vless::udp`). Ответы уходят приложению с
-//! тем же заголовком, где адрес — источник ответа.
+//! Два способа доставки:
+//!
+//! - [`serve_associate_xudp`] (по умолчанию в клиенте) — XUDP, как у
+//!   клиента Xray: все назначения в одном VLESS-потоке, Full Cone NAT
+//!   (`crate::vless::xudp`);
+//! - [`serve_associate`] — для каждого назначения свой VLESS-поток с
+//!   командой UDP, пакеты внутри с 2-байтной длиной (`crate::vless::udp`).
+//!
+//! Ответы уходят приложению с заголовком, где адрес — источник ответа.
 //!
 //! Ассоциация живёт, пока открыто управляющее TCP-соединение (так требует
 //! RFC); поток к назначению закрывается после [`SESSION_IDLE`] тишины.
@@ -24,6 +29,7 @@ use tokio::task::JoinSet;
 
 use super::{reply_success, TargetAddr};
 use crate::error::{Error, Result};
+use crate::vless::{xudp, Address};
 
 /// Поток к назначению закрывается после стольких секунд без пакетов.
 pub const SESSION_IDLE: Duration = Duration::from_secs(120);
@@ -224,6 +230,176 @@ where
         tracing::debug!(target = %addr, port, "SOCKS5 UDP: поток закрыт");
     });
     Some(tx)
+}
+
+fn to_vless(addr: &TargetAddr) -> Address {
+    match addr {
+        TargetAddr::Ip(IpAddr::V4(v4)) => Address::Ipv4(*v4),
+        TargetAddr::Ip(IpAddr::V6(v6)) => Address::Ipv6(*v6),
+        TargetAddr::Domain(d) => Address::Domain(d.clone()),
+    }
+}
+
+fn from_vless(addr: Address) -> TargetAddr {
+    match addr {
+        Address::Ipv4(v4) => TargetAddr::Ip(IpAddr::V4(v4)),
+        Address::Ipv6(v6) => TargetAddr::Ip(IpAddr::V6(v6)),
+        Address::Domain(d) => TargetAddr::Domain(d),
+    }
+}
+
+/// Обслужить UDP-ассоциацию через XUDP (`crate::vless::xudp`): все
+/// назначения — в одном VLESS-потоке, который открывает `open` (команда
+/// Mux). Поток открывается при первой датаграмме и переоткрывается, если
+/// закрылся (ошибка сервера или [`SESSION_IDLE`] тишины в обе стороны);
+/// GlobalID один на всю ассоциацию — сервер сохраняет за ней тот же
+/// внешний UDP-порт.
+pub async fn serve_associate_xudp<F, Fut, S>(mut control: TcpStream, open: F) -> Result<()>
+where
+    F: Fn() -> Fut + Send + Sync + 'static,
+    Fut: Future<Output = Result<S>> + Send + 'static,
+    S: AsyncRead + AsyncWrite + Send + Unpin + 'static,
+{
+    let local_ip = control.local_addr()?.ip();
+    let client_ip = control.peer_addr()?.ip();
+    let udp = Arc::new(UdpSocket::bind(SocketAddr::new(local_ip, 0)).await?);
+    reply_success(&mut control, udp.local_addr()?).await?;
+    tracing::info!(udp = %udp.local_addr()?, "SOCKS5 UDP (XUDP): ассоциация открыта");
+
+    let mut global_id = [0u8; 8];
+    rand::RngCore::fill_bytes(&mut rand::thread_rng(), &mut global_id);
+    let open = Arc::new(open);
+    let mut session: Option<mpsc::Sender<(Address, u16, Vec<u8>)>> = None;
+    let mut tasks = JoinSet::new();
+    let mut buf = vec![0u8; 65536];
+    let mut ctl = [0u8; 64];
+
+    loop {
+        tokio::select! {
+            r = control.read(&mut ctl) => {
+                if matches!(r, Ok(0) | Err(_)) {
+                    break;
+                }
+            }
+            r = udp.recv_from(&mut buf) => {
+                let (n, from) = r?;
+                if from.ip() != client_ip {
+                    tracing::debug!(%from, "SOCKS5 UDP: датаграмма не от владельца ассоциации — отброшена");
+                    continue;
+                }
+                let (addr, port, off) = match parse_datagram(&buf[..n]) {
+                    Ok(v) => v,
+                    Err(e) => {
+                        tracing::debug!(error = %e, "SOCKS5 UDP: датаграмма отброшена");
+                        continue;
+                    }
+                };
+                if n - off > xudp::MAX_PAYLOAD {
+                    tracing::debug!(len = n - off, "SOCKS5 UDP: датаграмма больше, чем принимает XUDP, — отброшена");
+                    continue;
+                }
+                let pkt = (to_vless(&addr), port, buf[off..n].to_vec());
+                // Нет живого потока (ещё не открыт или закрылся) — открываем
+                // новый и отдаём ему пакет; переполненная очередь — пакет
+                // отбрасывается, как при перегрузке любого UDP.
+                let retry = match &session {
+                    Some(tx) => match tx.try_send(pkt) {
+                        Ok(()) | Err(mpsc::error::TrySendError::Full(_)) => None,
+                        Err(mpsc::error::TrySendError::Closed(p)) => Some(p),
+                    },
+                    None => Some(pkt),
+                };
+                if let Some(p) = retry {
+                    let tx = spawn_xudp(&mut tasks, &open, &udp, from, global_id);
+                    let _ = tx.try_send(p);
+                    session = Some(tx);
+                }
+            }
+            Some(_) = tasks.join_next(), if !tasks.is_empty() => {}
+        }
+    }
+    tasks.abort_all();
+    tracing::info!("SOCKS5 UDP (XUDP): ассоциация закрыта");
+    Ok(())
+}
+
+fn spawn_xudp<F, Fut, S>(
+    tasks: &mut JoinSet<()>,
+    open: &Arc<F>,
+    udp: &Arc<UdpSocket>,
+    client: SocketAddr,
+    global_id: [u8; 8],
+) -> mpsc::Sender<(Address, u16, Vec<u8>)>
+where
+    F: Fn() -> Fut + Send + Sync + 'static,
+    Fut: Future<Output = Result<S>> + Send + 'static,
+    S: AsyncRead + AsyncWrite + Send + Unpin + 'static,
+{
+    let (tx, mut rx) = mpsc::channel::<(Address, u16, Vec<u8>)>(QUEUE);
+    let open = open.clone();
+    let udp = udp.clone();
+    tasks.spawn(async move {
+        let stream = match open().await {
+            Ok(s) => s,
+            Err(e) => {
+                tracing::warn!(error = %e, "SOCKS5 UDP: не удалось открыть XUDP-поток");
+                return;
+            }
+        };
+        tracing::debug!("SOCKS5 UDP: XUDP-поток открыт");
+        let (mut r, mut w) = tokio::io::split(stream);
+        // Время последнего пакета в любую сторону — для закрытия по тишине.
+        let last = std::sync::Mutex::new(tokio::time::Instant::now());
+        let touch = || *last.lock().unwrap() = tokio::time::Instant::now();
+        let mut writer = xudp::XudpWriter::new(global_id);
+        // Если сервер не указал источник ответа — считаем им первое назначение.
+        let first_dest: std::sync::Mutex<Option<(Address, u16)>> = std::sync::Mutex::new(None);
+        let up = async {
+            use tokio::io::AsyncWriteExt;
+            while let Some((addr, port, data)) = rx.recv().await {
+                touch();
+                first_dest
+                    .lock()
+                    .unwrap()
+                    .get_or_insert_with(|| (addr.clone(), port));
+                let Some(frame) = writer.encode(&addr, port, &data) else {
+                    continue;
+                };
+                if w.write_all(&frame).await.is_err() || w.flush().await.is_err() {
+                    break;
+                }
+            }
+        };
+        let down = async {
+            while let Ok(Some(p)) = xudp::read_packet(&mut r).await {
+                touch();
+                let Some((addr, port)) = p.source.or_else(|| first_dest.lock().unwrap().clone())
+                else {
+                    continue;
+                };
+                let dg = encode_datagram(&from_vless(addr), port, &p.data);
+                if udp.send_to(&dg, client).await.is_err() {
+                    break;
+                }
+            }
+        };
+        let idle = async {
+            loop {
+                let deadline = *last.lock().unwrap() + SESSION_IDLE;
+                if tokio::time::Instant::now() >= deadline {
+                    break;
+                }
+                tokio::time::sleep_until(deadline).await;
+            }
+        };
+        tokio::select! {
+            _ = up => {}
+            _ = down => {}
+            _ = idle => {}
+        }
+        tracing::debug!("SOCKS5 UDP: XUDP-поток закрыт");
+    });
+    tx
 }
 
 #[cfg(test)]

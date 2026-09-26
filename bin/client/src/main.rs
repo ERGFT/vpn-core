@@ -3,9 +3,10 @@
 //!
 //! Что поддерживается (подробно — README.md):
 //!   security=none / tls / reality;
-//!   type=tcp (по умолчанию) / ws (`path=`) / grpc (`serviceName=`, режим "gun").
+//!   type=tcp (по умолчанию) / ws / grpc / httpupgrade / xhttp.
 //!   flow=xtls-rprx-vision (XTLS Vision, только type=tcp с tls/reality);
-//!   SOCKS5 CONNECT и UDP ASSOCIATE, логин/пароль (`--auth`).
+//!   SOCKS5 CONNECT и UDP ASSOCIATE (UDP — через XUDP, как у Xray),
+//!   логин/пароль (`--auth`).
 //!
 //! Примеры:
 //!   reality-client --server 'vless://UUID@host:443?encryption=none&security=tls&sni=host'
@@ -47,7 +48,7 @@ const DIAL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
 #[command(
     name = "reality-client",
     version,
-    about = "VLESS core — локальный SOCKS5 -> VLESS (tcp/ws/grpc, tls/reality, XTLS Vision)"
+    about = "VLESS core — локальный SOCKS5 -> VLESS (tcp/ws/grpc/httpupgrade/xhttp, tls/reality, XTLS Vision)"
 )]
 struct Args {
     /// vless:// ссылка сервера
@@ -67,6 +68,12 @@ struct Args {
     /// встроенного набора (для сервера с самоподписанным сертификатом)
     #[arg(long, value_name = "ФАЙЛ")]
     ca: Option<std::path::PathBuf>,
+
+    /// UDP без XUDP: отдельный VLESS-поток (команда UDP) на каждое
+    /// назначение. Для серверов без поддержки XUDP; с Vision-аккаунтом
+    /// Xray так UDP не примет
+    #[arg(long)]
+    no_xudp: bool,
 }
 
 fn load_ca(path: &std::path::Path) -> Result<rustls::RootCertStore> {
@@ -174,8 +181,9 @@ async fn main() -> Result<()> {
         socket.set_nodelay(true).ok();
         let cfg = cfg.clone();
         let auth = auth.clone();
+        let xudp = !args.no_xudp;
         tokio::spawn(async move {
-            if let Err(e) = handle_conn(socket, cfg, auth).await {
+            if let Err(e) = handle_conn(socket, cfg, auth, xudp).await {
                 warn!(%peer, error = %e, "соединение завершилось с ошибкой");
             }
         });
@@ -215,9 +223,27 @@ async fn handle_conn(
     mut socket: TcpStream,
     cfg: Arc<VlessConfig>,
     auth: Option<Arc<Credentials>>,
+    xudp: bool,
 ) -> anyhow::Result<()> {
     let req = socks5::handshake_with_auth(&mut socket, auth.as_deref()).await?;
 
+    if req.command == Socks5Command::UdpAssociate && xudp {
+        socks5::udp::serve_associate_xudp(socket, move || {
+            let cfg = cfg.clone();
+            async move {
+                dial(
+                    &cfg,
+                    Command::Mux,
+                    Address::Domain(reality_core::vless::xudp::MUX_COOL_DOMAIN.into()),
+                    reality_core::vless::xudp::XUDP_PORT,
+                )
+                .await
+                .map_err(|e| reality_core::Error::Protocol(e.to_string()))
+            }
+        })
+        .await?;
+        return Ok(());
+    }
     if req.command == Socks5Command::UdpAssociate {
         let cfg2 = cfg.clone();
         socks5::udp::serve_associate(socket, move |addr, port| {

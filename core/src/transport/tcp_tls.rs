@@ -556,7 +556,9 @@ pub async fn connect_command(
     target_port: u16,
 ) -> Result<TcpVlessStream> {
     cfg.ensure_flow_supported()?;
-    let vision = cfg.flow.is_vision() && command == Command::Tcp;
+    // Vision — для TCP и для XUDP (команда Mux): так делает клиент Xray;
+    // команду UDP с flow Vision сервер отвергает, её шлём без flow.
+    let vision = cfg.flow.is_vision() && matches!(command, Command::Tcp | Command::Mux);
     if vision && cfg.security == Security::None {
         return Err(Error::InvalidUri(
             "flow=xtls-rprx-vision работает только поверх security=tls или reality".into(),
