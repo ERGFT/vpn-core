@@ -161,6 +161,56 @@ impl DomainSet {
     }
 }
 
+/// Доменные условия из настроек (правила маршрутизации и DNS).
+pub struct DomainLists<'a> {
+    pub domain: &'a [String],
+    pub domain_suffix: &'a [String],
+    pub domain_keyword: &'a [String],
+    pub domain_regex: &'a [String],
+    pub geosite: &'a [String],
+}
+
+impl DomainSet {
+    /// Собрать набор из списков и категорий geosite.
+    pub fn build(l: &DomainLists<'_>, geo: &GeoFiles) -> Result<Self> {
+        let mut domains = DomainSet::default();
+        for d in l.domain {
+            domains.full.insert(normalize_domain(d));
+        }
+        for d in l.domain_suffix {
+            domains.add_suffix(d);
+        }
+        for k in l.domain_keyword {
+            domains.keywords.push(k.to_ascii_lowercase());
+        }
+        for r in l.domain_regex {
+            regex::Regex::new(r).map_err(|e| Error::Config(format!("domain_regex «{r}»: {e}")))?;
+            domains.regex.push(r.clone());
+        }
+        for code in l.geosite {
+            for e in geo.site(code) {
+                match e {
+                    SiteEntry::Full(d) => {
+                        domains.full.insert(d.clone());
+                    }
+                    SiteEntry::Suffix(d) => domains.add_suffix(d),
+                    SiteEntry::Keyword(k) => domains.keywords.push(k.clone()),
+                    // Выражения из базы пишутся под Go (RE2); если какое-то
+                    // не разбирается здесь — пропускаем его, а не всю категорию.
+                    SiteEntry::Regex(r) => match regex::Regex::new(r) {
+                        Ok(_) => domains.regex.push(r.clone()),
+                        Err(_) => tracing::debug!(regex = %r, "geosite: выражение пропущено"),
+                    },
+                }
+            }
+        }
+        domains.keywords.sort();
+        domains.keywords.dedup();
+        domains.finish()?;
+        Ok(domains)
+    }
+}
+
 /// Набор подсетей: отсортированные непересекающиеся диапазоны, поиск —
 /// двоичный (в geoip у страны бывают тысячи подсетей).
 #[derive(Default)]
@@ -267,6 +317,11 @@ fn target_ip(a: &Address) -> Option<IpAddr> {
 }
 
 impl Rule {
+    /// Есть ли в правиле условия по IP.
+    pub fn has_ip(&self) -> bool {
+        !self.ips.is_empty()
+    }
+
     pub fn matches(&self, meta: &Metadata) -> bool {
         if let Some(n) = self.network {
             if n != meta.network {
@@ -306,10 +361,13 @@ pub struct GeoFiles {
 }
 
 impl GeoFiles {
-    /// Прочитать из баз все категории, упомянутые в правилах.
-    pub fn load(rules: &[RuleConfig], geosite: &Path, geoip: &Path) -> Result<Self> {
-        let mut site_codes: Vec<String> = rules.iter().flat_map(|r| r.geosite.clone()).collect();
-        let mut ip_codes: Vec<String> = rules.iter().flat_map(|r| r.geoip.clone()).collect();
+    /// Прочитать из баз нужные категории (geosite и geoip).
+    pub fn load(
+        mut site_codes: Vec<String>,
+        mut ip_codes: Vec<String>,
+        geosite: &Path,
+        geoip: &Path,
+    ) -> Result<Self> {
         site_codes.sort();
         site_codes.dedup();
         ip_codes.sort();
@@ -352,43 +410,17 @@ pub fn compile(
     geo: &GeoFiles,
 ) -> Result<Rule> {
     let n = index + 1;
-    let mut domains = DomainSet::default();
-    for d in &c.domain {
-        domains.full.insert(normalize_domain(d));
-    }
-    for d in &c.domain_suffix {
-        domains.add_suffix(d);
-    }
-    for k in &c.domain_keyword {
-        domains.keywords.push(k.to_ascii_lowercase());
-    }
-    for r in &c.domain_regex {
-        regex::Regex::new(r)
-            .map_err(|e| Error::Config(format!("правило {n}: domain_regex «{r}»: {e}")))?;
-        domains.regex.push(r.clone());
-    }
-    for code in &c.geosite {
-        for e in geo.site(code) {
-            match e {
-                SiteEntry::Full(d) => {
-                    domains.full.insert(d.clone());
-                }
-                SiteEntry::Suffix(d) => domains.add_suffix(d),
-                SiteEntry::Keyword(k) => domains.keywords.push(k.clone()),
-                // Выражения из базы пишутся под Go (RE2); если какое-то
-                // не разбирается здесь — пропускаем его, а не всю категорию.
-                SiteEntry::Regex(r) => match regex::Regex::new(r) {
-                    Ok(_) => domains.regex.push(r.clone()),
-                    Err(_) => tracing::debug!(regex = %r, "geosite: выражение пропущено"),
-                },
-            }
-        }
-    }
-    domains.keywords.sort();
-    domains.keywords.dedup();
-    domains
-        .finish()
-        .map_err(|e| Error::Config(format!("правило {n}: {e}")))?;
+    let domains = DomainSet::build(
+        &DomainLists {
+            domain: &c.domain,
+            domain_suffix: &c.domain_suffix,
+            domain_keyword: &c.domain_keyword,
+            domain_regex: &c.domain_regex,
+            geosite: &c.geosite,
+        },
+        geo,
+    )
+    .map_err(|e| Error::Config(format!("правило {n}: {e}")))?;
 
     let mut nets: Vec<IpNet> = c.ip_cidr.clone();
     if c.ip_is_private {

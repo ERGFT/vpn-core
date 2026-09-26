@@ -42,6 +42,9 @@ pub struct Config {
     pub outbounds: Vec<OutboundConfig>,
     #[serde(default)]
     pub route: RouteConfig,
+    /// Свой DNS (см. `super::dns`); не задан — имена разрешает система
+    /// (для `direct`) или сервер VLESS.
+    pub dns: Option<super::dns::DnsConfig>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
@@ -53,6 +56,8 @@ pub enum InboundKind {
     Http,
     /// SOCKS5 и HTTP на одном порту.
     Mixed,
+    /// DNS-сервер (UDP и TCP) для системы и программ.
+    Dns,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -83,6 +88,8 @@ pub enum OutboundKind {
     Vless,
     Direct,
     Block,
+    /// Ответить самому DNS-модулем (перехват DNS-запросов).
+    Dns,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -122,6 +129,18 @@ pub struct RouteConfig {
     pub geosite_file: Option<PathBuf>,
     /// База адресов для `geoip = [...]` (по умолчанию `geoip.dat`).
     pub geoip_file: Option<PathBuf>,
+    /// `ip_if_non_match` — если ни одно правило не подошло к имени,
+    /// разрешить его (DNS-модулем) и проверить правила по адресу.
+    #[serde(default)]
+    pub domain_strategy: DomainStrategy,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DomainStrategy {
+    #[default]
+    AsIs,
+    IpIfNonMatch,
 }
 
 impl Config {
@@ -166,6 +185,14 @@ impl Config {
         r.geoip_file.get_or_insert_with(|| "geoip.dat".into());
         fix(&mut r.geosite_file);
         fix(&mut r.geoip_file);
+        if let Some(d) = &mut cfg.dns {
+            for s in &mut d.servers {
+                fix(&mut s.ca_file);
+            }
+            if let Some(f) = &mut d.fakeip {
+                fix(&mut f.cache_file);
+            }
+        }
         Ok(cfg)
     }
 }
@@ -293,6 +320,9 @@ final = "direct"
         assert_eq!(ex.outbounds.len(), 3);
         assert_eq!(ex.route.rules.len(), 3);
         assert_eq!(ex.inbounds[0].kind, InboundKind::Mixed);
+        let dns = ex.dns.expect("в примере есть [dns]");
+        assert_eq!(dns.servers.len(), 2);
+        assert_eq!(dns.rules.len(), 1);
         assert_eq!(ex.route.final_.as_deref(), Some("proxy"));
     }
 }

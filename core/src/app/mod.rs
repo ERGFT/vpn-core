@@ -8,10 +8,14 @@
 //!   базы geosite/geoip, порт, сеть, вход);
 //! - `outbound` — выходы `direct` и `block` и общий интерфейс;
 //! - `vless_out` — выход `vless` (сервер);
-//! - `access` — кто может пользоваться входом (адреса, подбор пароля).
+//! - `access` — кто может пользоваться входом (адреса, подбор пароля);
+//! - `dns`, `dns_in` — свой DNS (DoH/DoT/UDP/TCP, кеш, fake-IP) и вход
+//!   DNS-сервера.
 
 pub mod access;
 pub mod config;
+pub mod dns;
+pub mod dns_in;
 pub mod geo;
 pub mod http_in;
 pub mod outbound;
@@ -24,14 +28,16 @@ pub mod vless_out;
 use std::net::SocketAddr;
 use std::sync::Arc;
 
-use tokio::net::TcpListener;
+use tokio::net::{TcpListener, UdpSocket};
 use tokio::task::JoinSet;
 
 use crate::error::{Error, Result};
 use crate::socks5::Credentials;
 use crate::vless::{Address, Security, VlessConfig};
 use config::{Config, InboundKind, OutboundKind};
-use outbound::{BlockOutbound, DirectOutbound, Outbound};
+use dns::{Dns, DnsSlot};
+use dns_in::DnsInbound;
+use outbound::{BlockOutbound, DirectOutbound, DnsOutbound, Outbound};
 use proxy_in::ProxyInbound;
 use router::Router;
 use vless_out::VlessOutbound;
@@ -61,15 +67,23 @@ pub struct Metadata {
     pub sniffed: Option<String>,
 }
 
+enum InboundSvc {
+    Proxy(Arc<ProxyInbound>),
+    Dns(Arc<DnsInbound>),
+}
+
 struct BuiltInbound {
     listen: SocketAddr,
-    socks: Arc<ProxyInbound>,
+    tag: Arc<str>,
+    kind: InboundKind,
+    svc: InboundSvc,
 }
 
 /// Собранное приложение, готовое к запуску.
 pub struct App {
     inbounds: Vec<BuiltInbound>,
     router: Arc<Router>,
+    dns: Option<Arc<Dns>>,
 }
 
 /// Запущенное приложение: фактические адреса входов и задачи.
@@ -78,6 +92,7 @@ pub struct Running {
     /// Входы: tag, вид и фактический адрес.
     pub inbounds: Vec<(Arc<str>, InboundKind, SocketAddr)>,
     tasks: JoinSet<Result<()>>,
+    dns: Option<Arc<Dns>>,
 }
 
 impl Running {
@@ -91,6 +106,20 @@ impl Running {
             }
         }
         Ok(())
+    }
+
+    /// DNS-модуль (если настроен).
+    pub fn dns(&self) -> Option<&Arc<Dns>> {
+        self.dns.as_ref()
+    }
+}
+
+impl Drop for Running {
+    fn drop(&mut self) {
+        // Таблица fake-IP переживает перезапуск.
+        if let Some(d) = &self.dns {
+            d.save();
+        }
     }
 }
 
@@ -155,19 +184,51 @@ fn build_vless(o: &config::OutboundConfig) -> Result<VlessOutbound> {
     Ok(VlessOutbound::new(o.tag.clone(), cfg, o.xudp))
 }
 
-fn build_socks(i: &config::InboundConfig, n: usize) -> Result<BuiltInbound> {
-    let tag = i.tag.clone().unwrap_or_else(|| {
+fn inbound_tag(i: &config::InboundConfig, n: usize) -> String {
+    i.tag.clone().unwrap_or_else(|| {
         let base = match i.kind {
             InboundKind::Socks => "socks",
             InboundKind::Http => "http",
             InboundKind::Mixed => "mixed",
+            InboundKind::Dns => "dns",
         };
         if n == 0 {
             base.to_string()
         } else {
             format!("{base}-{n}")
         }
-    });
+    })
+}
+
+fn build_dns_inbound(
+    i: &config::InboundConfig,
+    tag: &str,
+    dns: Option<&Arc<Dns>>,
+) -> Result<Arc<DnsInbound>> {
+    let dns = dns.ok_or_else(|| {
+        Error::Config(format!("вход {tag}: type = \"dns\" требует раздела [dns]"))
+    })?;
+    if i.auth.is_some() || i.auth_file.is_some() || i.sniff || i.sniff_override_destination {
+        return Err(Error::Config(format!(
+            "вход {tag}: у DNS-входа не бывает пароля и sniffing"
+        )));
+    }
+    if !proxy_in::is_loopback_listen(&i.listen) && i.allow_ip.is_empty() {
+        return Err(Error::Config(format!(
+            "вход {tag}: DNS-сервер, открытый в сеть ({}), без allow_ip — «открытый \
+             резолвер»: им пользуются для DDoS-атак; перечислите свои устройства в allow_ip",
+            i.listen
+        )));
+    }
+    Ok(Arc::new(DnsInbound {
+        tag: tag.into(),
+        allow_ip: i.allow_ip.clone(),
+        dns: dns.clone(),
+        max_conns: i.max_conns.unwrap_or(512),
+    }))
+}
+
+fn build_proxy_inbound(i: &config::InboundConfig, tag: &str) -> Result<Arc<ProxyInbound>> {
     let auth = match secret(&i.auth, &i.auth_file, &format!("вход {tag}"))? {
         Some(a) => Some(Credentials::parse(&a).ok_or_else(|| {
             Error::Config(format!("вход {tag}: пароль ожидается в виде логин:пароль"))
@@ -201,18 +262,15 @@ fn build_socks(i: &config::InboundConfig, n: usize) -> Result<BuiltInbound> {
             "вход {tag}: sniff_override_destination работает только вместе с sniff = true"
         )));
     }
-    Ok(BuiltInbound {
-        listen: i.listen,
-        socks: Arc::new(ProxyInbound {
-            tag: tag.into(),
-            kind: i.kind,
-            auth,
-            allow_ip: i.allow_ip.clone(),
-            max_conns: i.max_conns.unwrap_or(512),
-            sniff: i.sniff,
-            sniff_override: i.sniff_override_destination,
-        }),
-    })
+    Ok(Arc::new(ProxyInbound {
+        tag: tag.into(),
+        kind: i.kind,
+        auth,
+        allow_ip: i.allow_ip.clone(),
+        max_conns: i.max_conns.unwrap_or(512),
+        sniff: i.sniff,
+        sniff_override: i.sniff_override_destination,
+    }))
 }
 
 impl App {
@@ -222,24 +280,9 @@ impl App {
         if cfg.inbounds.is_empty() {
             return Err(Error::Config("не задан ни один вход (inbounds)".into()));
         }
-        let mut outbounds: Vec<Arc<dyn Outbound>> = Vec::new();
-        for o in &cfg.outbounds {
-            let built: Arc<dyn Outbound> = match o.kind {
-                OutboundKind::Vless => Arc::new(build_vless(o)?),
-                OutboundKind::Direct => Arc::new(DirectOutbound::new(o.tag.clone())),
-                OutboundKind::Block => Arc::new(BlockOutbound::new(o.tag.clone())),
-            };
-            outbounds.push(built);
-        }
-        let inbounds = cfg
-            .inbounds
-            .iter()
-            .enumerate()
-            .map(|(n, i)| build_socks(i, n))
-            .collect::<Result<Vec<_>>>()?;
         let mut tags: Vec<String> = Vec::new();
-        for i in &inbounds {
-            let t = i.socks.tag.to_string();
+        for (n, i) in cfg.inbounds.iter().enumerate() {
+            let t = inbound_tag(i, n);
             if tags.contains(&t) {
                 return Err(Error::Config(format!(
                     "два входа с одинаковым tag = \"{t}\""
@@ -247,8 +290,103 @@ impl App {
             }
             tags.push(t);
         }
-        let router = Arc::new(Router::new(outbounds, &cfg.route, &tags)?);
-        Ok(App { inbounds, router })
+
+        // Выходы `direct` и `dns` получают DNS-модуль позже: он сам ходит
+        // к серверам через выходы.
+        let dns_slot: DnsSlot = Arc::new(std::sync::OnceLock::new());
+        let mut outbounds: Vec<Arc<dyn Outbound>> = Vec::new();
+        for o in &cfg.outbounds {
+            let built: Arc<dyn Outbound> = match o.kind {
+                OutboundKind::Vless => Arc::new(build_vless(o)?),
+                OutboundKind::Direct if cfg.dns.is_some() => {
+                    Arc::new(DirectOutbound::with_dns(o.tag.clone(), dns_slot.clone()))
+                }
+                OutboundKind::Direct => Arc::new(DirectOutbound::new(o.tag.clone())),
+                OutboundKind::Block => Arc::new(BlockOutbound::new(o.tag.clone())),
+                OutboundKind::Dns => {
+                    if cfg.dns.is_none() {
+                        return Err(Error::Config(format!(
+                            "выход {}: type = \"dns\" требует раздела [dns]",
+                            o.tag
+                        )));
+                    }
+                    Arc::new(DnsOutbound::new(o.tag.clone(), dns_slot.clone()))
+                }
+            };
+            outbounds.push(built);
+        }
+
+        let mut site_codes: Vec<String> = cfg
+            .route
+            .rules
+            .iter()
+            .flat_map(|r| r.geosite.clone())
+            .collect();
+        if let Some(d) = &cfg.dns {
+            site_codes.extend(d.rules.iter().flat_map(|r| r.geosite.clone()));
+        }
+        let geo = rules::GeoFiles::load(
+            site_codes,
+            cfg.route
+                .rules
+                .iter()
+                .flat_map(|r| r.geoip.clone())
+                .collect(),
+            cfg.route
+                .geosite_file
+                .as_deref()
+                .unwrap_or(std::path::Path::new("geosite.dat")),
+            cfg.route
+                .geoip_file
+                .as_deref()
+                .unwrap_or(std::path::Path::new("geoip.dat")),
+        )?;
+
+        let dns = match &cfg.dns {
+            Some(dc) => {
+                let default_detour = cfg
+                    .route
+                    .final_
+                    .clone()
+                    .or_else(|| cfg.outbounds.first().map(|o| o.tag.clone()))
+                    .unwrap_or_default();
+                let find = |t: &str| outbounds.iter().find(|o| o.tag() == t).cloned();
+                let d = Arc::new(Dns::build(dc, &find, &default_detour, &geo)?);
+                let _ = dns_slot.set(d.clone());
+                Some(d)
+            }
+            None => None,
+        };
+        if cfg.route.domain_strategy == config::DomainStrategy::IpIfNonMatch && dns.is_none() {
+            return Err(Error::Config(
+                "route.domain_strategy = \"ip_if_non_match\" требует раздела [dns]: \
+                 иначе имена сайтов уходили бы системному DNS мимо туннеля"
+                    .into(),
+            ));
+        }
+        let mut router = Router::new(outbounds, &cfg.route, &tags, &geo)?;
+        if let Some(d) = &dns {
+            router.set_dns(d.clone());
+        }
+
+        let mut inbounds = Vec::new();
+        for (i, tag) in cfg.inbounds.iter().zip(&tags) {
+            let svc = match i.kind {
+                InboundKind::Dns => InboundSvc::Dns(build_dns_inbound(i, tag, dns.as_ref())?),
+                _ => InboundSvc::Proxy(build_proxy_inbound(i, tag)?),
+            };
+            inbounds.push(BuiltInbound {
+                listen: i.listen,
+                tag: tag.as_str().into(),
+                kind: i.kind,
+                svc,
+            });
+        }
+        Ok(App {
+            inbounds,
+            router: Arc::new(router),
+            dns,
+        })
     }
 
     /// Открыть все входы и начать принимать соединения.
@@ -257,27 +395,45 @@ impl App {
         let mut tasks = JoinSet::new();
         let mut listen_addrs = Vec::new();
         let mut inbounds = Vec::new();
+        let bind_err = |a: SocketAddr, e: std::io::Error| {
+            Error::Config(format!("не удалось слушать {a}: {e}"))
+        };
         for i in self.inbounds {
             let listener = TcpListener::bind(i.listen)
                 .await
-                .map_err(|e| Error::Config(format!("не удалось слушать {}: {e}", i.listen)))?;
+                .map_err(|e| bind_err(i.listen, e))?;
             let addr = listener.local_addr()?;
-            tracing::info!(
-                inbound = %i.socks.tag,
-                proto = i.socks.proto_name(),
-                addr = %addr,
-                auth = i.socks.auth.is_some(),
-                sniff = i.socks.sniff,
-                "прокси слушает"
-            );
+            match i.svc {
+                InboundSvc::Proxy(p) => {
+                    tracing::info!(
+                        inbound = %p.tag,
+                        proto = p.proto_name(),
+                        addr = %addr,
+                        auth = p.auth.is_some(),
+                        sniff = p.sniff,
+                        "прокси слушает"
+                    );
+                    tasks.spawn(p.serve(listener, self.router.clone()));
+                }
+                InboundSvc::Dns(d) => {
+                    // UDP — на тот же порт, что и TCP (важно при порте 0).
+                    let udp = UdpSocket::bind(addr).await.map_err(|e| bind_err(addr, e))?;
+                    tracing::info!(inbound = %d.tag, addr = %addr, "DNS слушает (UDP и TCP)");
+                    tasks.spawn(d.clone().serve_tcp(listener));
+                    tasks.spawn(d.serve_udp(udp));
+                }
+            }
             listen_addrs.push(addr);
-            inbounds.push((i.socks.tag.clone(), i.socks.kind, addr));
-            tasks.spawn(i.socks.serve(listener, self.router.clone()));
+            inbounds.push((i.tag, i.kind, addr));
+        }
+        if let Some(d) = &self.dns {
+            d.spawn_persistence();
         }
         Ok(Running {
             listen_addrs,
             inbounds,
             tasks,
+            dns: self.dns,
         })
     }
 }

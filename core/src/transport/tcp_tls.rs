@@ -98,13 +98,57 @@ fn default_root_store() -> RootCertStore {
 }
 
 async fn connect_tcp_stream(cfg: &VlessConfig) -> Result<TcpStream> {
-    connect_host(&cfg.host, cfg.port).await
+    let addrs = resolve_server(&cfg.host, cfg.port).await?;
+    connect_addrs(&addrs, &cfg.host).await
 }
 
-/// TCP-соединение с `host:port`: асинхронное разрешение имени системным
-/// резолвером (с таймаутом) и перебор всех адресов (с таймаутом на
-/// каждый). Используется и для VLESS-сервера, и выходом `direct`.
-pub async fn connect_host(host: &str, port: u16) -> Result<TcpStream> {
+/// Сколько помнить адреса VLESS-сервера и сколько ещё пользоваться ими,
+/// если DNS временно не отвечает.
+const SERVER_CACHE_FRESH: Duration = Duration::from_secs(120);
+const SERVER_CACHE_STALE: Duration = Duration::from_secs(3600);
+
+type ServerCache =
+    std::sync::Mutex<std::collections::HashMap<String, (Vec<SocketAddr>, std::time::Instant)>>;
+
+fn server_cache() -> &'static ServerCache {
+    static C: std::sync::OnceLock<ServerCache> = std::sync::OnceLock::new();
+    C.get_or_init(Default::default)
+}
+
+/// Адреса VLESS-сервера с кешем: не спрашивать DNS на каждое соединение,
+/// а при сбое DNS — продолжать работать по последним известным адресам.
+/// Имя сервера всегда разрешается напрямую, системным резолвером: чтобы
+/// узнать адрес сервера через сам сервер, пришлось бы уже быть к нему
+/// подключённым.
+pub async fn resolve_server(host: &str, port: u16) -> Result<Vec<SocketAddr>> {
+    let key = format!("{host}:{port}");
+    let cached = server_cache().lock().unwrap().get(&key).cloned();
+    if let Some((addrs, at)) = &cached {
+        if at.elapsed() < SERVER_CACHE_FRESH {
+            return Ok(addrs.clone());
+        }
+    }
+    match resolve_host(host, port).await {
+        Ok(addrs) => {
+            let mut c = server_cache().lock().unwrap();
+            if c.len() > 64 {
+                c.clear();
+            }
+            c.insert(key, (addrs.clone(), std::time::Instant::now()));
+            Ok(addrs)
+        }
+        Err(e) => match cached {
+            Some((addrs, at)) if at.elapsed() < SERVER_CACHE_STALE => {
+                tracing::warn!(host, error = %e, "DNS не ответил — использую прежние адреса сервера");
+                Ok(addrs)
+            }
+            _ => Err(e),
+        },
+    }
+}
+
+/// Разрешить имя системным резолвером (асинхронно, с таймаутом).
+pub async fn resolve_host(host: &str, port: u16) -> Result<Vec<SocketAddr>> {
     let addr = if host.contains(':') && !host.starts_with('[') {
         format!("[{host}]:{port}")
     } else {
@@ -132,13 +176,23 @@ pub async fn connect_host(host: &str, port: u16) -> Result<TcpStream> {
             "имя {addr} не разрешилось ни в один адрес"
         )));
     }
+    Ok(addrs)
+}
 
-    // Перебираем ВСЕ адреса, а не только первый. Домен часто отдаёт и
-    // IPv6, и IPv4; если IPv6 у провайдера или в сети не работает (а это
-    // обычное дело), раньше клиент просто не подключался, хотя IPv4 был
-    // рядом в том же ответе.
+/// TCP-соединение с `host:port`: разрешение имени системным резолвером и
+/// перебор всех адресов (с таймаутом на каждый).
+pub async fn connect_host(host: &str, port: u16) -> Result<TcpStream> {
+    let addrs = resolve_host(host, port).await?;
+    connect_addrs(&addrs, host).await
+}
+
+/// Подключиться к первому ответившему из адресов. Перебираем ВСЕ, а не
+/// только первый: домен часто отдаёт и IPv6, и IPv4; если IPv6 в сети не
+/// работает (обычное дело), раньше клиент не подключался, хотя IPv4 был
+/// рядом в том же ответе.
+pub async fn connect_addrs(addrs: &[SocketAddr], what: &str) -> Result<TcpStream> {
     let mut last_err = None;
-    for sa in &addrs {
+    for sa in addrs {
         match tokio::time::timeout(CONNECT_TIMEOUT, TcpStream::connect(sa)).await {
             Ok(Ok(tcp)) => {
                 tcp.set_nodelay(true).ok();
@@ -157,9 +211,8 @@ pub async fn connect_host(host: &str, port: u16) -> Result<TcpStream> {
             }
         }
     }
-
     Err(last_err.unwrap_or_else(|| {
-        Error::Protocol(format!("не удалось подключиться ни к одному адресу {addr}"))
+        Error::Protocol(format!("не удалось подключиться ни к одному адресу {what}"))
     }))
 }
 
@@ -185,6 +238,25 @@ fn build_client_config(roots: RootCertStore, alpn: Vec<Vec<u8>>) -> ClientConfig
     config.alpn_protocols = alpn;
     crate::fingerprint::apply_chrome_extensions(&mut config, false);
     config
+}
+
+/// TLS поверх уже открытого потока (DNS over TLS/HTTPS, в том числе через
+/// выход-прокси): ClientHello как у Chrome, проверка цепочки по `roots`
+/// (или по встроенному набору) и имени `server_name` (домен или IP).
+pub async fn tls_over<S>(
+    stream: S,
+    server_name: &str,
+    roots: Option<RootCertStore>,
+    alpn: Vec<Vec<u8>>,
+) -> Result<TlsStream<S>>
+where
+    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
+{
+    ensure_crypto_provider();
+    let config = build_client_config(roots.unwrap_or_else(default_root_store), alpn);
+    let connector = TlsConnector::from(Arc::new(config));
+    let name = ServerName::try_from(server_name.to_string()).map_err(Error::InvalidDnsName)?;
+    with_handshake_timeout("TLS", connector.connect(name, stream)).await
 }
 
 /// Набор доверенных корней для обычного TLS: заданный пользователем

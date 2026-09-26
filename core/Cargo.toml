@@ -45,6 +45,7 @@ ml-kem.workspace = true
 aws-lc-rs.workspace = true
 brotli-decompressor.workspace = true
 regex.workspace = true
+hickory-proto.workspace = true
 
 [dev-dependencies]
 # В тестах серверу нужно уметь СЖИМАТЬ сертификат (проверка нашего

@@ -2,7 +2,8 @@
 //!
 //! - `vless` — VLESS-сервер (`super::vless_out`);
 //! - `direct` — напрямую, без сервера;
-//! - `block` — сразу отказать.
+//! - `block` — сразу отказать;
+//! - `dns` — ответить самому (перехват DNS-запросов, см. `super::dns`).
 //!
 //! Каждый выход умеет TCP (`connect`) и UDP (`udp` → [`UdpSession`]).
 
@@ -14,6 +15,7 @@ use futures_util::future::BoxFuture;
 use tokio::net::UdpSocket;
 use tokio::sync::Mutex;
 
+use super::dns::{self, Dns, DnsSlot, DNS_INTERNAL};
 use super::Metadata;
 use crate::error::{Error, Result};
 use crate::transport::AsyncStream;
@@ -39,6 +41,10 @@ pub trait Outbound: Send + Sync {
     fn connect<'a>(&'a self, meta: &'a Metadata) -> BoxFuture<'a, Result<Box<dyn AsyncStream>>>;
     /// UDP-сессия для ассоциации, которую открыл `meta.source`.
     fn udp<'a>(&'a self, meta: &'a Metadata) -> BoxFuture<'a, Result<Arc<dyn UdpSession>>>;
+    /// Выход `dns` (перехват DNS) — через него нельзя ходить к DNS-серверам.
+    fn is_dns(&self) -> bool {
+        false
+    }
 }
 
 /// UDP-сессия закрывается после стольких секунд без пакетов.
@@ -69,11 +75,48 @@ fn host_string(a: &Address) -> String {
 /// Напрямую, без сервера.
 pub struct DirectOutbound {
     tag: String,
+    /// Если в настройках есть `[dns]` — имена разрешаются им (с его
+    /// правилами), иначе системным резолвером.
+    dns: Option<DnsSlot>,
 }
 
 impl DirectOutbound {
     pub fn new(tag: impl Into<String>) -> Self {
-        DirectOutbound { tag: tag.into() }
+        DirectOutbound {
+            tag: tag.into(),
+            dns: None,
+        }
+    }
+
+    pub fn with_dns(tag: impl Into<String>, dns: DnsSlot) -> Self {
+        DirectOutbound {
+            tag: tag.into(),
+            dns: Some(dns),
+        }
+    }
+}
+
+/// DNS-модуль для разрешения имени, если он есть и это не запрос самого
+/// DNS-модуля (иначе имя DNS-сервера разрешалось бы через него же).
+fn dns_for<'a>(slot: &'a Option<DnsSlot>, meta: &Metadata) -> Option<&'a Arc<Dns>> {
+    if &*meta.inbound == DNS_INTERNAL {
+        return None;
+    }
+    slot.as_ref()?.get()
+}
+
+/// Адреса для `host:port` — через DNS-модуль или системным резолвером.
+async fn resolve(dns: Option<&Arc<Dns>>, target: &Address, port: u16) -> Result<Vec<SocketAddr>> {
+    match (target, dns) {
+        (Address::Ipv4(v4), _) => Ok(vec![SocketAddr::new(IpAddr::V4(*v4), port)]),
+        (Address::Ipv6(v6), _) => Ok(vec![SocketAddr::new(IpAddr::V6(*v6), port)]),
+        (Address::Domain(d), Some(dns)) => Ok(dns
+            .lookup(d)
+            .await?
+            .into_iter()
+            .map(|ip| SocketAddr::new(ip, port))
+            .collect()),
+        (Address::Domain(d), None) => crate::transport::tcp_tls::resolve_host(d, port).await,
     }
 }
 
@@ -94,8 +137,9 @@ impl Outbound for DirectOutbound {
                 }
             }
             let s = tokio::time::timeout(DIRECT_CONNECT_TIMEOUT, async {
+                let addrs = resolve(dns_for(&self.dns, meta), &meta.target, meta.port).await?;
                 let s =
-                    crate::transport::tcp_tls::connect_host(&host_string(&meta.target), meta.port)
+                    crate::transport::tcp_tls::connect_addrs(&addrs, &host_string(&meta.target))
                         .await?;
                 // Проверка по фактическому адресу: домен мог указывать на
                 // 127.0.0.1.
@@ -121,6 +165,7 @@ impl Outbound for DirectOutbound {
                 source: meta.source,
                 last: std::sync::Mutex::new(tokio::time::Instant::now()),
                 resolved: Mutex::new(std::collections::HashMap::new()),
+                dns: dns_for(&self.dns, meta).cloned(),
             }) as Arc<dyn UdpSession>)
         })
     }
@@ -134,6 +179,7 @@ struct DirectUdp {
     /// Кэш разрешённых имён на время сессии (DNS-запрос на каждую
     /// датаграмму был бы слишком дорог).
     resolved: Mutex<std::collections::HashMap<String, IpAddr>>,
+    dns: Option<Arc<Dns>>,
 }
 
 impl DirectUdp {
@@ -149,15 +195,25 @@ impl DirectUdp {
                 if let Some(ip) = self.resolved.lock().await.get(d) {
                     return Ok(*ip);
                 }
-                let ip = tokio::time::timeout(
-                    Duration::from_secs(5),
-                    tokio::net::lookup_host((d.as_str(), 0)),
-                )
-                .await
-                .map_err(|_| Error::Protocol(format!("direct: имя {d} не разрешилось вовремя")))??
-                .map(|a| a.ip())
-                .next()
-                .ok_or_else(|| Error::Protocol(format!("direct: имя {d} не разрешилось")))?;
+                let ips: Vec<IpAddr> = match &self.dns {
+                    Some(dns) => dns.lookup(d).await?,
+                    None => tokio::time::timeout(
+                        Duration::from_secs(5),
+                        tokio::net::lookup_host((d.as_str(), 0)),
+                    )
+                    .await
+                    .map_err(|_| {
+                        Error::Protocol(format!("direct: имя {d} не разрешилось вовремя"))
+                    })??
+                    .map(|a| a.ip())
+                    .collect(),
+                };
+                // Без IPv6-сокета — первый IPv4.
+                let ip = ips
+                    .iter()
+                    .find(|ip| ip.is_ipv4() || self.v6.is_some())
+                    .copied()
+                    .ok_or_else(|| Error::Protocol(format!("direct: имя {d} не разрешилось")))?;
                 let mut cache = self.resolved.lock().await;
                 if cache.len() < 1024 {
                     cache.insert(d.clone(), ip);
@@ -281,6 +337,124 @@ impl UdpSession for BlockUdp {
         Box::pin(async {
             tokio::time::sleep(UDP_IDLE).await;
             Ok(None)
+        })
+    }
+}
+
+/// Перехват DNS: TCP-соединения и UDP-датаграммы к этому выходу — DNS-
+/// запросы, на них отвечает DNS-модуль (правило вроде `port = [53]`,
+/// `outbound = "dns-out"`).
+pub struct DnsOutbound {
+    tag: String,
+    dns: DnsSlot,
+}
+
+impl DnsOutbound {
+    pub fn new(tag: impl Into<String>, dns: DnsSlot) -> Self {
+        DnsOutbound {
+            tag: tag.into(),
+            dns,
+        }
+    }
+
+    fn get(&self) -> Result<Arc<Dns>> {
+        self.dns
+            .get()
+            .cloned()
+            .ok_or_else(|| Error::Protocol("dns: модуль DNS не настроен".into()))
+    }
+}
+
+/// Сколько DNS-запросов одна UDP-сессия обрабатывает одновременно.
+const DNS_OUT_CONCURRENCY: usize = 64;
+
+impl Outbound for DnsOutbound {
+    fn tag(&self) -> &str {
+        &self.tag
+    }
+
+    fn is_dns(&self) -> bool {
+        true
+    }
+
+    fn connect<'a>(&'a self, _meta: &'a Metadata) -> BoxFuture<'a, Result<Box<dyn AsyncStream>>> {
+        Box::pin(async move {
+            let dns = self.get()?;
+            // DNS поверх TCP: запросы с длиной впереди, ответы так же.
+            let (ours, theirs) = tokio::io::duplex(128 * 1024);
+            tokio::spawn(async move {
+                use tokio::io::{AsyncReadExt, AsyncWriteExt};
+                let mut s = ours;
+                loop {
+                    let mut len = [0u8; 2];
+                    let read = tokio::time::timeout(UDP_IDLE, s.read_exact(&mut len)).await;
+                    if !matches!(read, Ok(Ok(_))) {
+                        break;
+                    }
+                    let mut q = vec![0u8; u16::from_be_bytes(len) as usize];
+                    if s.read_exact(&mut q).await.is_err() {
+                        break;
+                    }
+                    let Some(a) = dns::answer_bytes(&dns, &q, true).await else {
+                        break;
+                    };
+                    let mut out = (a.len() as u16).to_be_bytes().to_vec();
+                    out.extend_from_slice(&a);
+                    if s.write_all(&out).await.is_err() {
+                        break;
+                    }
+                }
+            });
+            Ok(Box::new(theirs) as Box<dyn AsyncStream>)
+        })
+    }
+
+    fn udp<'a>(&'a self, _meta: &'a Metadata) -> BoxFuture<'a, Result<Arc<dyn UdpSession>>> {
+        Box::pin(async move {
+            let (tx, rx) = tokio::sync::mpsc::channel(DNS_OUT_CONCURRENCY);
+            Ok(Arc::new(DnsUdp {
+                dns: self.get()?,
+                tx,
+                rx: Mutex::new(rx),
+                slots: Arc::new(tokio::sync::Semaphore::new(DNS_OUT_CONCURRENCY)),
+            }) as Arc<dyn UdpSession>)
+        })
+    }
+}
+
+struct DnsUdp {
+    dns: Arc<Dns>,
+    tx: tokio::sync::mpsc::Sender<Packet>,
+    rx: Mutex<tokio::sync::mpsc::Receiver<Packet>>,
+    slots: Arc<tokio::sync::Semaphore>,
+}
+
+impl UdpSession for DnsUdp {
+    fn send(&self, dst: Address, port: u16, data: Vec<u8>) -> BoxFuture<'_, Result<()>> {
+        Box::pin(async move {
+            // Слишком много запросов сразу — лишние теряются, как в UDP.
+            let Ok(permit) = self.slots.clone().try_acquire_owned() else {
+                return Ok(());
+            };
+            let (dns, tx) = (self.dns.clone(), self.tx.clone());
+            tokio::spawn(async move {
+                let _permit = permit;
+                if let Some(a) = dns::answer_bytes(&dns, &data, true).await {
+                    // Ответ — «от» того адреса, куда спрашивали.
+                    let _ = tx.send((dst, port, a)).await;
+                }
+            });
+            Ok(())
+        })
+    }
+
+    fn recv(&self) -> BoxFuture<'_, Result<Option<Packet>>> {
+        Box::pin(async move {
+            let mut rx = self.rx.lock().await;
+            match tokio::time::timeout(UDP_IDLE, rx.recv()).await {
+                Ok(p) => Ok(p),
+                Err(_) => Ok(None),
+            }
         })
     }
 }

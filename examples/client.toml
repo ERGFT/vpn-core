@@ -28,6 +28,13 @@ sniff = true                   # домен по TLS SNI / HTTP Host, когда
 # auth_file = "lan-auth.txt"
 # allow_ip = ["192.168.1.23", "192.168.1.40"]
 
+# DNS-сервер для системы: укажите 127.0.0.1 как DNS в настройках сети —
+# и запросы всех программ пойдут через раздел [dns] ниже (DoH через
+# сервер), а не открытым текстом в Wi-Fi.
+# [[inbounds]]
+# type = "dns"
+# listen = "127.0.0.1:53"
+
 # ── Выходы: куда уходят соединения ──────────────────────────────────
 [[outbounds]]
 tag = "proxy"
@@ -65,6 +72,10 @@ geosite = ["category-ru"]
 geoip = ["ru"]
 outbound = "direct"
 
+# [[route.rules]]              # DNS-запросы программ через прокси — отвечает [dns]
+# port = [53]
+# outbound = "dns-out"         # нужен выход: [[outbounds]] tag = "dns-out", type = "dns"
+
 # [[route.rules]]              # QUIC (HTTP/3) запретить: браузер уйдёт на TCP
 # network = "udp"
 # port = [443]
@@ -76,5 +87,40 @@ outbound = "direct"
 
 [route]
 final = "proxy"                # всё остальное — через сервер
+# domain_strategy = "ip_if_non_match"   # нет правила для имени — разрешить его
+#                                        # через [dns] и проверить правила по IP
 # geosite_file = "geosite.dat"
 # geoip_file = "geoip.dat"
+
+# ── DNS ─────────────────────────────────────────────────────────────
+# Свой DNS: им разрешает имена выход direct, им отвечает вход type="dns"
+# и выход type="dns". Без этого раздела direct спрашивает системный DNS.
+# Адреса: 1.1.1.1 (UDP), tcp://…, tls://… (DoT), https://…/dns-query (DoH),
+# local (системный), fakeip. detour — через какой выход ходить к серверу
+# (по умолчанию route.final, то есть через сервер VLESS).
+[dns]
+final = "remote"
+# strategy = "prefer_ipv4"     # prefer_ipv6, ipv4_only, ipv6_only
+
+[[dns.servers]]
+tag = "remote"
+address = "https://1.1.1.1/dns-query"
+detour = "proxy"
+
+[[dns.servers]]
+tag = "local"
+address = "https://common.dot.dns.yandex.net/dns-query"
+detour = "direct"
+
+[[dns.rules]]                  # российские сайты — местным DNS (ближние адреса CDN)
+geosite = ["category-ru"]
+server = "local"
+
+# Fake-IP — только вместе с TUN (или для программ, которые ходят через
+# этот прокси): программа получает адрес из 198.18.0.0/15, а имя
+# разрешает уже сервер.
+# [[dns.servers]]
+# tag = "fake"
+# address = "fakeip"
+# [dns.fakeip]
+# cache_file = "fakeip.txt"

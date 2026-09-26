@@ -29,6 +29,7 @@
 | Маршрутизация: домен (точно, суффикс, подстрока, regex), IP/подсеть, частные адреса, порт, сеть, вход, базы `geosite.dat`/`geoip.dat` (v2fly) | ✅ наборы правил sing-box (`.srs`) — нет |
 | Sniffing: домен по TLS SNI и HTTP Host, когда приложение прислало IP | ✅ QUIC — нет |
 | Системный прокси Windows (`--system-proxy`) | ✅ проверен под Wine |
+| Свой DNS: серверы UDP, TCP, DoT, DoH, системный; выбор сервера по доменам и geosite; кеш; вход DNS-сервера; перехват DNS (выход `dns`); fake-IP; `domain_strategy = "ip_if_non_match"` | ✅ DoH/DoT проверены на своих серверах, UDP-DNS через Xray; DNS over QUIC — нет |
 | Mux.Cool для TCP, транспорт `kcp` | ❌ не поддерживаются (почему — ниже); `quic`/`h2` удалены из самого Xray-core — ошибка подсказывает `xhttp` |
 | Linux | ✅ собирается и проверен |
 | Windows | 🟡 `.exe` собирается кросс-компиляцией и проходит все тесты и smoke против Xray-core под Wine ([`docs/WINDOWS.md`](docs/WINDOWS.md)); на настоящей Windows не запускался |
@@ -159,6 +160,59 @@ final = "proxy"            # куда идёт всё, что не попало 
 (`127.0.0.1`, `localhost`); выход `block` отвечает SOCKS5-кодом 0x02 или
 HTTP 403. Полный пример — [`examples/client.toml`](examples/client.toml).
 
+### DNS
+
+Раздел `[dns]` — свой DNS вместо системного (пример — в
+[`examples/client.toml`](examples/client.toml)):
+
+```toml
+[[inbounds]]               # DNS-сервер для системы и программ
+type = "dns"
+listen = "127.0.0.1:53"
+
+[dns]
+final = "remote"
+
+[[dns.servers]]
+tag = "remote"
+address = "https://1.1.1.1/dns-query"   # DoH
+detour = "proxy"                        # через сервер VLESS
+
+[[dns.servers]]
+tag = "local"
+address = "https://common.dot.dns.yandex.net/dns-query"
+detour = "direct"
+
+[[dns.rules]]
+geosite = ["category-ru"]
+server = "local"
+```
+
+- Адреса серверов: `1.1.1.1` или `udp://…` (UDP), `tcp://…`,
+  `tls://…` (DNS over TLS, порт 853), `https://…/dns-query` (DNS over
+  HTTPS), `local` (системный резолвер), `fakeip`. Для `udp://` и `tcp://`
+  нужен IP: имя самого DNS-сервера разрешить нечем. Сертификаты DoT/DoH
+  проверяются (свои корни — `ca_file`).
+- `detour` — через какой выход ходить к серверу; по умолчанию
+  `route.final`, то есть обычно через сервер VLESS: так ни провайдер, ни
+  соседи по Wi-Fi не видят, какие имена вы спрашиваете.
+- Кто пользуется модулем: вход `type = "dns"` (укажите `127.0.0.1` как
+  DNS в настройках сети — тогда через него пойдут запросы всех программ);
+  выход `type = "dns"` с правилом `port = [53]` (DNS-запросы программ,
+  идущие через прокси); выход `direct` (разрешает имена им, а не
+  системой); `route.domain_strategy = "ip_if_non_match"` (правила по IP
+  для имён).
+- Кеш: по TTL ответа (не дольше часа; отрицательные — не дольше минуты),
+  до 4096 ответов (`cache_size`).
+- Fake-IP (`address = "fakeip"`): программа сразу получает адрес из
+  `198.18.0.0/15` (и `fc00::/18`), а соединяясь с ним через прокси,
+  получает настоящий сайт — имя разрешает сервер. Имеет смысл только
+  вместе с TUN или для программ, которые ходят через этот прокси: без них
+  программа пойдёт на адрес 198.18.x.x напрямую и никуда не попадёт.
+  Таблицу можно сохранять между перезапусками (`[dns.fakeip] cache_file`).
+- DNS-вход, открытый в сеть, требует `allow_ip`: иначе это «открытый
+  резолвер», которым пользуются для DDoS-атак.
+
 ### Какие параметры ссылки понимает
 
 | Параметр | Значение |
@@ -220,6 +274,7 @@ HTTP 403. Полный пример — [`examples/client.toml`](examples/client
 | Прокси открыт в сеть: SOCKS5 и HTTP-прокси **не шифруются** — пароль, адреса сайтов и данные между телефоном и компьютером видны в общей Wi-Fi | так устроены сами эти протоколы, клиент это исправить не может; клиент предупреждает при запуске. Открывайте прокси в сеть только дома, для своих устройств, с `--allow-ip` |
 | Прокси открыт в сеть, и есть правило с выходом `direct`: устройство из сети ходит «от имени» этого компьютера — в том числе в сети, куда оно само не достаёт (рабочий VPN, Docker, WSL) | к службам самого компьютера (`127.0.0.1`, `localhost`) `direct` клиентов из сети не пускает; остальное — пускайте в прокси только свои устройства (пароль, `--allow-ip`) и не направляйте в `direct` подсети, которые им не нужны |
 | Видит сам факт соединения с IP сервера, объём и время трафика | не скрывается никаким VPN; REALITY лишь маскирует его под обращение к обычному сайту |
+| DNS-запросы в локальной сети видны и подменяемы (обычный DNS не шифруется) | `[dns]` с DoH/DoT через сервер и вход `type = "dns"` как системный DNS; ответы UDP проверяются (номер, вопрос, адрес сервера) |
 | Трафик программ, которым **не** указан прокси, идёт мимо него | это прокси, а не системный VPN: настраивайте программы или включите `--system-proxy` (Windows; его слушаются не все программы); в браузере с SOCKS5 включите «DNS через SOCKS v5», иначе имена сайтов уходят в DNS локальной сети (с HTTP-прокси имена и так уходят прокси) |
 
 ## Проверка проекта
@@ -236,9 +291,9 @@ scripts/ci.sh --quick  # только fmt, clippy, тесты
 
 | Скрипт | Что проверяет |
 |---|---|
-| `cargo test --workspace` | 137 тестов (103 unit + 34 интеграционных), всё на loopback; с `GEO_DIR=…` и `--ignored` — ещё проверка на настоящих базах geosite/geoip |
+| `cargo test --workspace` | 153 теста (110 unit + 43 интеграционных), всё на loopback; с `GEO_DIR=…` и `--ignored` — ещё проверка на настоящих базах geosite/geoip |
 | `scripts/interop_xray.sh` | 15 тестов против **настоящего Xray-core**: REALITY (в т.ч. с сайтом без ML-KEM), Vision (padding и переход на прямую передачу), ML-DSA-65 (и отказ при чужом ключе), WebSocket и httpupgrade без TLS и с TLS + `--ca`, gRPC поверх REALITY, xhttp во всех режимах (HTTP/1.1, h2, поверх REALITY; отказы 404/400 с понятной ошибкой), UDP и XUDP (Full Cone), отказ Vision-аккаунта клиенту без flow |
-| `scripts/smoke_xray.sh` | собранный бинарник как у пользователя против Xray-core: SOCKS5 с паролем → REALITY → Vision → VLESS, 1 МиБ внутреннего TLS туда-обратно с переходом на прямую передачу, 20 UDP-датаграмм через XUDP; файл настроек: `--check`, опечатки, вход `mixed` (SOCKS5 и HTTP CONNECT), правило `block` |
+| `scripts/smoke_xray.sh` | собранный бинарник как у пользователя против Xray-core: SOCKS5 с паролем → REALITY → Vision → VLESS, 1 МиБ внутреннего TLS туда-обратно с переходом на прямую передачу, 20 UDP-датаграмм через XUDP; файл настроек: `--check`, опечатки, вход `mixed` (SOCKS5 и HTTP CONNECT), правило `block`, DNS-вход с запросом через Xray |
 | `scripts/cross_windows.sh` | `.exe` под Windows (mingw-w64) + все тесты и smoke против Xray-core под Wine, `--system-proxy`: запись в реестр и возврат по Ctrl+C |
 | `scripts/interop_go_reality.sh` | 4 теста против REALITY-сервера на Go-библиотеке `XTLS/REALITY` (нужен Go ≥ 1.27) |
 | `scripts/smoke_e2e.sh` | бинарник против Go-стенда; несовместимая ссылка отклоняется при старте |
@@ -259,7 +314,9 @@ core/src/
                        config.rs (TOML), proxy_in.rs + http_in.rs (входы
                        socks/http/mixed), sniff.rs, router.rs + rules.rs +
                        geo.rs (правила, geosite/geoip), outbound.rs
-                       (direct, block), vless_out.rs, access.rs
+                       (direct, block, dns), vless_out.rs, access.rs,
+                       dns/ (upstream.rs: UDP/TCP/DoT/DoH, cache.rs,
+                       fakeip.rs), dns_in.rs (вход DNS)
   vless/               разбор vless:// (uri.rs), протокол VLESS (protocol.rs),
                        XTLS Vision (vision.rs), UDP-пакеты (udp.rs), XUDP (xudp.rs)
   transport/           tcp_tls.rs (TCP, TLS, REALITY), raw.rs (сокет с выдачей

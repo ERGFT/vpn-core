@@ -173,6 +173,7 @@ fn config_from_args(args: &Args) -> Result<Config> {
             final_: Some("proxy".into()),
             ..Default::default()
         },
+        dns: None,
     })
 }
 

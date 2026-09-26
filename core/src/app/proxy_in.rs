@@ -35,6 +35,9 @@ use crate::vless::Address;
 /// Потолок на приветствие и запрос: без него молчащий клиент держал
 /// сокет и задачу вечно.
 pub const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
+/// Потолок UDP-сессий на одну ассоциацию (у адресов fake-IP — своя
+/// сессия на каждый адрес).
+const MAX_UDP_SESSIONS: usize = 256;
 
 pub struct ProxyInbound {
     pub tag: Arc<str>,
@@ -55,6 +58,7 @@ impl ProxyInbound {
             InboundKind::Socks => "SOCKS5",
             InboundKind::Http => "HTTP",
             InboundKind::Mixed => "SOCKS5+HTTP",
+            InboundKind::Dns => "DNS",
         }
     }
 }
@@ -277,7 +281,7 @@ impl ProxyInbound {
     ) -> Result<Accepted> {
         let socks = match self.kind {
             InboundKind::Socks => true,
-            InboundKind::Http => false,
+            InboundKind::Http | InboundKind::Dns => false,
             InboundKind::Mixed => {
                 let mut b = [0u8; 1];
                 if socket.peek(&mut b).await? == 0 {
@@ -354,7 +358,16 @@ impl ProxyInbound {
             }
         }
 
-        let outbound = router.select(&meta);
+        let outbound = match router.route(&mut meta).await {
+            Ok(o) => o,
+            Err(e) => {
+                if !replied_early {
+                    send_reply(&mut socket, reply, Err(&e)).await.ok();
+                }
+                tracing::debug!(error = %e, "маршрут не выбран");
+                return Ok(());
+            }
+        };
         let mut remote = match outbound.connect(&meta).await {
             Ok(s) => s,
             Err(e) => {
@@ -408,8 +421,10 @@ async fn udp_associate(
     tracing::info!(udp = %udp.local_addr()?, "SOCKS5 UDP: ассоциация открыта");
 
     let mut filter = ClientFilter::new(peer.ip(), requested_port);
-    // tag выхода → (номер сессии, сессия). Номер отличает пересозданную
-    // сессию от старой, о закрытии которой пришло уведомление.
+    // Ключ сессии: tag выхода, а для адресов fake-IP — ещё и сам адрес:
+    // у такой сессии ответы подписываются этим адресом (приложение ждёт
+    // ответ оттуда, куда отправляло). Номер отличает пересозданную сессию
+    // от старой, о закрытии которой пришло уведомление.
     let mut sessions: HashMap<String, (u64, Arc<dyn UdpSession>)> = HashMap::new();
     let mut next_id = 0u64;
     let (closed_tx, mut closed_rx) = mpsc::unbounded_channel::<(String, u64)>();
@@ -442,7 +457,7 @@ async fn udp_associate(
                         continue;
                     }
                 };
-                let meta = Metadata {
+                let mut meta = Metadata {
                     inbound: inbound.clone(),
                     source: from,
                     network: Network::Udp,
@@ -450,8 +465,24 @@ async fn udp_associate(
                     port,
                     sniffed: None,
                 };
-                let outbound = router.select(&meta);
-                let tag = outbound.tag().to_string();
+                let original = meta.target.clone();
+                let outbound = match router.route(&mut meta).await {
+                    Ok(o) => o,
+                    Err(e) => {
+                        tracing::debug!(error = %e, "SOCKS5 UDP: датаграмма отброшена");
+                        continue;
+                    }
+                };
+                // Адрес был fake-IP (маршрутизатор подставил имя).
+                let reply_as = (meta.target != original).then_some(original);
+                let tag = match &reply_as {
+                    Some(a) => format!("{}|{a}:{port}", outbound.tag()),
+                    None => outbound.tag().to_string(),
+                };
+                if !sessions.contains_key(&tag) && sessions.len() >= MAX_UDP_SESSIONS {
+                    tracing::debug!("SOCKS5 UDP: слишком много сессий в ассоциации — датаграмма отброшена");
+                    continue;
+                }
                 let session = match sessions.get(&tag) {
                     Some((_, s)) => s.clone(),
                     None => {
@@ -469,6 +500,10 @@ async fn udp_associate(
                             (s.clone(), udp.clone(), closed_tx.clone(), tag.clone());
                         readers.spawn(async move {
                             while let Ok(Some((src, sport, data))) = reader_s.recv().await {
+                                let src = match &reply_as {
+                                    Some(fake) => fake.clone(),
+                                    None => src,
+                                };
                                 let dg = encode_datagram(&from_address(src), sport, &data);
                                 // Ошибка отправки одной датаграммы — не повод
                                 // закрывать сессию.

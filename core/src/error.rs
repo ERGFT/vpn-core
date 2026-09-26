@@ -32,7 +32,9 @@ pub enum Error {
     #[error("SOCKS5: неверный логин или пароль")]
     Socks5AuthFailed,
 
-    #[error("VLESS protocol error: {0}")]
+    /// Ошибка протокола или соединения; текст сам говорит, где (VLESS,
+    /// xhttp, DNS, direct…).
+    #[error("{0}")]
     Protocol(String),
 
     #[error("TLS error: {0}")]

@@ -227,13 +227,32 @@ else
 fi
 # Файл настроек вместо ключей: относительный путь к ссылке, проверка
 # --check, опечатка в поле — ошибка, затем TLS-эхо через выход vless.
-SOCKS2_PORT="$(free_port)"
+SOCKS2_PORT="$(free_port)"; DNS_IN_PORT="$(free_port)"; DNS_UP_PORT="$(free_port)"
+# «DNS-сервер интернета» для проверки DNS через Xray: на любое имя A 10.20.30.40.
+cat > "$TMP/dns_up.py" <<'PY'
+import socket, struct, sys
+u = socket.socket(socket.AF_INET, socket.SOCK_DGRAM); u.bind(("127.0.0.1", int(sys.argv[1])))
+while True:
+    q, a = u.recvfrom(4096)
+    i = 12
+    while q[i] != 0: i += 1 + q[i]
+    qend = i + 5
+    hdr = q[:2] + b"\x81\x80" + b"\x00\x01\x00\x01\x00\x00\x00\x00"
+    ans = b"\xc0\x0c\x00\x01\x00\x01" + struct.pack(">I", 60) + b"\x00\x04" + bytes([10, 20, 30, 40])
+    u.sendto(hdr + q[12:qend] + ans, a)
+PY
+python3 "$TMP/dns_up.py" "$DNS_UP_PORT" &
+PIDS+=($!)
 mkdir -p "$TMP/conf"
 cp "$TMP/link.txt" "$TMP/conf/server.txt"
 cat > "$TMP/conf/client.toml" <<TOML
 [[inbounds]]
 type = "mixed"
 listen = "127.0.0.1:$SOCKS2_PORT"
+
+[[inbounds]]
+type = "dns"
+listen = "127.0.0.1:$DNS_IN_PORT"
 
 [[outbounds]]
 tag = "proxy"
@@ -254,6 +273,13 @@ outbound = "block"
 
 [route]
 final = "proxy"
+
+# DNS: запросы уходят через сервер VLESS (XUDP через Xray).
+[dns]
+[[dns.servers]]
+tag = "remote"
+address = "udp://127.0.0.1:$DNS_UP_PORT"
+detour = "proxy"
 TOML
 $CLIENT_RUNNER "$CLIENT_BIN" --config "$TMP/conf/client.toml" --check > "$TMP/check.log" 2>&1 \
     || { echo "--check отверг правильный файл настроек:"; cat "$TMP/check.log"; exit 1; }
@@ -266,9 +292,18 @@ echo "OK: --check и опечатки в файле настроек"
 $CLIENT_RUNNER "$CLIENT_BIN" --config "$TMP/conf/client.toml" > "$TMP/client2.log" 2>&1 &
 PIDS+=($!)
 for _ in $(seq 1 300); do grep -q 'прокси слушает' "$TMP/client2.log" && break; sleep 0.1; done
-python3 - "$SOCKS2_PORT" "$ECHO_PORT" "$TMP/cert.pem" <<'PY' || { cat "$TMP/client2.log"; exit 1; }
+python3 - "$SOCKS2_PORT" "$ECHO_PORT" "$TMP/cert.pem" "$DNS_IN_PORT" <<'PY' || { cat "$TMP/client2.log"; exit 1; }
 import os, socket, ssl, struct, sys
-socks, echo, ca = int(sys.argv[1]), int(sys.argv[2]), sys.argv[3]
+socks, echo, ca, dns_in = int(sys.argv[1]), int(sys.argv[2]), sys.argv[3], int(sys.argv[4])
+
+# DNS-вход: вопрос уходит «DNS-серверу интернета» через Xray.
+u = socket.socket(socket.AF_INET, socket.SOCK_DGRAM); u.settimeout(20)
+q = b"\xbe\xef\x01\x00\x00\x01\x00\x00\x00\x00\x00\x00" + b"\x07example\x04test\x00" + b"\x00\x01\x00\x01"
+u.sendto(q, ("127.0.0.1", dns_in))
+a, _ = u.recvfrom(4096)
+assert a[:2] == b"\xbe\xef" and a[3] & 0x0f == 0, a
+assert a.endswith(bytes([10, 20, 30, 40])), a
+print("OK: --config: DNS-вход, запрос через выход vless (XUDP через Xray)")
 s = socket.create_connection(("127.0.0.1", socks), timeout=30)
 s.sendall(b"\x05\x01\x00"); assert s.recv(2) == b"\x05\x00"
 s.sendall(b"\x05\x01\x00\x01" + socket.inet_aton("127.0.0.1") + struct.pack(">H", echo))

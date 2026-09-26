@@ -1,21 +1,30 @@
 //! Маршрутизатор: по данным соединения выбирает выход — по правилам
 //! (`route.rules`, первое подошедшее), иначе выход по умолчанию
 //! (`route.final`).
+//!
+//! Перед правилами адрес fake-IP заменяется исходным именем. Если ни одно
+//! правило не подошло, а `domain_strategy = "ip_if_non_match"`, имя
+//! разрешается DNS-модулем и правила проверяются ещё раз — по адресу
+//! (например, `geoip = ["ru"]` для сайта, которого нет в geosite).
 
 use std::collections::HashMap;
-use std::path::Path;
 use std::sync::Arc;
 
-use super::config::RouteConfig;
+use super::config::{DomainStrategy, RouteConfig};
+use super::dns::fakeip::Reverse;
+use super::dns::Dns;
 use super::outbound::Outbound;
 use super::rules::{self, GeoFiles, Rule};
 use super::Metadata;
 use crate::error::{Error, Result};
+use crate::vless::Address;
 
 pub struct Router {
     outbounds: HashMap<String, Arc<dyn Outbound>>,
     rules: Vec<Rule>,
     final_: Arc<dyn Outbound>,
+    dns: Option<Arc<Dns>>,
+    domain_strategy: DomainStrategy,
 }
 
 impl Router {
@@ -25,6 +34,7 @@ impl Router {
         outbounds: Vec<Arc<dyn Outbound>>,
         route: &RouteConfig,
         inbound_tags: &[String],
+        geo: &GeoFiles,
     ) -> Result<Self> {
         let first = outbounds
             .first()
@@ -46,17 +56,6 @@ impl Router {
                 .ok_or_else(|| Error::Config(format!("route.final: нет выхода с tag = \"{t}\"")))?,
             None => first,
         };
-        let geo = GeoFiles::load(
-            &route.rules,
-            route
-                .geosite_file
-                .as_deref()
-                .unwrap_or(Path::new("geosite.dat")),
-            route
-                .geoip_file
-                .as_deref()
-                .unwrap_or(Path::new("geoip.dat")),
-        )?;
         let mut rules = Vec::with_capacity(route.rules.len());
         for (i, r) in route.rules.iter().enumerate() {
             let out = map.get(&r.outbound).cloned().ok_or_else(|| {
@@ -72,7 +71,7 @@ impl Router {
                     i + 1
                 )));
             }
-            rules.push(rules::compile(i, r, out, &geo)?);
+            rules.push(rules::compile(i, r, out, geo)?);
         }
         if !rules.is_empty() {
             tracing::info!(rules = rules.len(), "правила маршрутизации загружены");
@@ -81,11 +80,74 @@ impl Router {
             outbounds: map,
             rules,
             final_,
+            dns: None,
+            domain_strategy: route.domain_strategy,
         })
     }
 
-    /// Выход для соединения.
+    /// Подключить DNS-модуль (fake-IP и `ip_if_non_match`).
+    pub fn set_dns(&mut self, dns: Arc<Dns>) {
+        self.dns = Some(dns);
+    }
+
+    /// Выход для соединения с учётом fake-IP и `domain_strategy`.
+    /// `meta.target` с fake-IP заменяется именем. Ошибка — адрес из
+    /// диапазона fake-IP, для которого имя неизвестно.
+    pub async fn route(&self, meta: &mut Metadata) -> Result<Arc<dyn Outbound>> {
+        if let Some(dns) = &self.dns {
+            let ip = match &meta.target {
+                Address::Ipv4(v4) => Some(std::net::IpAddr::V4(*v4)),
+                Address::Ipv6(v6) => Some(std::net::IpAddr::V6(*v6)),
+                Address::Domain(_) => None,
+            };
+            if let Some(ip) = ip {
+                match dns.reverse(ip) {
+                    Reverse::NotFake => {}
+                    Reverse::Name(n) => meta.target = Address::Domain(n),
+                    Reverse::Unknown => {
+                        return Err(Error::Protocol(format!(
+                            "адрес {ip} из диапазона fake-IP, но имя для него неизвестно                              (устарел после перезапуска?)"
+                        )))
+                    }
+                }
+            }
+        }
+        if let Some(o) = self.match_rules(meta) {
+            return Ok(o);
+        }
+        if self.domain_strategy == DomainStrategy::IpIfNonMatch
+            && self.rules.iter().any(Rule::has_ip)
+        {
+            if let (Address::Domain(d), Some(dns)) = (&meta.target, &self.dns) {
+                match dns.lookup(d).await {
+                    Ok(ips) => {
+                        for ip in ips {
+                            let mut m = meta.clone();
+                            m.target = match ip {
+                                std::net::IpAddr::V4(v4) => Address::Ipv4(v4),
+                                std::net::IpAddr::V6(v6) => Address::Ipv6(v6),
+                            };
+                            if let Some(o) = self.match_rules(&m) {
+                                return Ok(o);
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        tracing::debug!(domain = %d, error = %e, "ip_if_non_match: имя не разрешилось")
+                    }
+                }
+            }
+        }
+        Ok(self.final_.clone())
+    }
+
+    /// Выход для соединения только по правилам (без DNS).
     pub fn select(&self, meta: &Metadata) -> Arc<dyn Outbound> {
+        self.match_rules(meta)
+            .unwrap_or_else(|| self.final_.clone())
+    }
+
+    fn match_rules(&self, meta: &Metadata) -> Option<Arc<dyn Outbound>> {
         for r in &self.rules {
             if r.matches(meta) {
                 tracing::debug!(
@@ -95,10 +157,10 @@ impl Router {
                     sniffed = ?meta.sniffed,
                     "маршрут по правилу"
                 );
-                return r.outbound.clone();
+                return Some(r.outbound.clone());
             }
         }
-        self.final_.clone()
+        None
     }
 
     pub fn get(&self, tag: &str) -> Option<Arc<dyn Outbound>> {
@@ -119,6 +181,7 @@ mod tests {
     use crate::app::outbound::{BlockOutbound, DirectOutbound};
     use crate::app::Network;
     use crate::vless::Address;
+    use std::path::Path;
 
     fn outs() -> Vec<Arc<dyn Outbound>> {
         vec![
@@ -151,7 +214,22 @@ mod tests {
             dir.join("geoip.dat").display()
         ))
         .unwrap();
-        Router::new(outs(), &cfg.route, &["in".into()]).unwrap()
+        let geo = GeoFiles::load(
+            cfg.route
+                .rules
+                .iter()
+                .flat_map(|r| r.geosite.clone())
+                .collect(),
+            cfg.route
+                .rules
+                .iter()
+                .flat_map(|r| r.geoip.clone())
+                .collect(),
+            cfg.route.geosite_file.as_deref().unwrap(),
+            cfg.route.geoip_file.as_deref().unwrap(),
+        )
+        .unwrap();
+        Router::new(outs(), &cfg.route, &["in".into()], &geo).unwrap()
     }
 
     #[test]
