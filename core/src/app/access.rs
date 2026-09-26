@@ -41,6 +41,13 @@ impl std::str::FromStr for IpNet {
     }
 }
 
+impl<'de> serde::Deserialize<'de> for IpNet {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        let s = String::deserialize(d)?;
+        s.parse().map_err(serde::de::Error::custom)
+    }
+}
+
 impl IpNet {
     pub fn contains(&self, ip: IpAddr) -> bool {
         let ip = ip.to_canonical();

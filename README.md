@@ -24,6 +24,7 @@
 | TLS-отпечаток как у Chrome 133 | ✅ REALITY — совпадает полностью, включая JA4 `t13d1516h2_8daaf6152771_d8a2da3f94cd`; обычный TLS — без legacy cipher suite'ов и ALPS (см. ниже) |
 | UDP (SOCKS5 UDP ASSOCIATE) через XUDP — как у клиента Xray: все назначения в одном потоке, Full Cone NAT | ✅ в том числе с Vision (другого способа UDP Vision-аккаунт у Xray не принимает); `--no-xudp` — поток на каждое назначение |
 | Логин/пароль на SOCKS5 (`--auth`) | ✅ |
+| Файл настроек (`--config`, TOML): несколько входов и выходов (`vless`, `direct`, `block`), выход по умолчанию | ✅ правила маршрутизации (домены, IP, страны) — следующий этап |
 | Mux.Cool для TCP, транспорт `kcp` | ❌ не поддерживаются (почему — ниже); `quic`/`h2` удалены из самого Xray-core — ошибка подсказывает `xhttp` |
 | Linux | ✅ собирается и проверен |
 | Windows | 🟡 `.exe` собирается кросс-компиляцией и проходит все тесты и smoke против Xray-core под Wine ([`docs/WINDOWS.md`](docs/WINDOWS.md)); на настоящей Windows не запускался |
@@ -82,6 +83,39 @@ curl --socks5-hostname 127.0.0.1:1080 https://example.com
 
 В браузере — указать SOCKS5-прокси `127.0.0.1:1080` (в Firefox —
 «Параметры соединения», вместе с «DNS через SOCKS v5»).
+
+### Файл настроек
+
+Для нескольких входов и выходов вместо ключей — файл TOML
+([`examples/client.toml`](examples/client.toml)):
+
+```sh
+reality-client --config client.toml --check   # только проверить
+reality-client --config client.toml
+```
+
+```toml
+[[inbounds]]
+type = "socks"
+listen = "127.0.0.1:1080"
+
+[[outbounds]]
+tag = "proxy"
+type = "vless"
+link_file = "server.txt"   # ссылка — в отдельном файле
+
+[[outbounds]]
+tag = "direct"             # напрямую, без сервера
+type = "direct"
+
+[route]
+final = "proxy"            # куда идёт всё, что не попало под правила
+```
+
+Ключи командной строки — сокращение для одного входа `socks` и одного
+выхода `proxy`. Опечатка в имени поля — ошибка при запуске. Выход
+`direct` не пускает клиентов из сети к службам этого компьютера
+(`127.0.0.1`, `localhost`), выход `block` отвечает SOCKS5-кодом 0x02.
 
 ### Какие параметры ссылки понимает
 
@@ -176,8 +210,11 @@ Go-стенд готовит `scripts/interop_sandbox_bootstrap.sh`.
 ## Устройство
 
 ```
-bin/client/            reality-client: CLI, SOCKS5 -> VLESS
+bin/client/            reality-client: CLI (ключи или --config)
 core/src/
+  app/                 приложение: входы -> маршрутизатор -> выходы;
+                       config.rs (TOML), socks_in.rs, router.rs,
+                       outbound.rs (direct, block), vless_out.rs, access.rs
   vless/               разбор vless:// (uri.rs), протокол VLESS (protocol.rs),
                        XTLS Vision (vision.rs), UDP-пакеты (udp.rs), XUDP (xudp.rs)
   transport/           tcp_tls.rs (TCP, TLS, REALITY), raw.rs (сокет с выдачей
@@ -186,7 +223,7 @@ core/src/
   reality/             REALITY: ключи и SessionId (auth.rs), хук в ClientHello
                        (hook.rs), проверка сертификата: HMAC и ML-DSA-65 (verifier.rs)
   fingerprint/         ClientHello как у Chrome (chrome_profile.rs), разбор, JA3/JA4
-  socks5/              локальный SOCKS5: CONNECT, UDP ASSOCIATE (udp.rs), логин/пароль
+  socks5/              протокол SOCKS5: приветствие, логин/пароль, UDP-заголовки
   relay.rs             двусторонний релей, один буфер на направление
 core/tests/            интеграционные тесты (loopback) + interop_xray.rs, interop_go_reality.rs
 vendor/rustls-reality-patch/
@@ -199,6 +236,7 @@ bench/                 бенчмарки (criterion) и замер памяти
 scripts/               ci, интероп, smoke, сборка Xray, сверка отпечатка,
                        сборка под Windows, инструкции для Этапов 2 и 8
 docs/                  WINDOWS.md, чек-лист крипто-ревью (Этап 5)
+examples/client.toml   пример файла настроек
 PLAN.md                план по этапам, история решений, открытые риски
 ```
 

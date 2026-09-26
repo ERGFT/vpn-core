@@ -7,6 +7,14 @@ pub enum Error {
     #[error("invalid VLESS URI: {0}")]
     InvalidUri(String),
 
+    /// Ошибка в файле настроек или в сочетании ключей запуска.
+    #[error("настройки: {0}")]
+    Config(String),
+
+    /// Соединение запрещено правилом маршрутизации (выход `block`).
+    #[error("соединение заблокировано правилом маршрутизации")]
+    Blocked,
+
     #[error("unsupported address type: {0}")]
     UnsupportedAddressType(u8),
 

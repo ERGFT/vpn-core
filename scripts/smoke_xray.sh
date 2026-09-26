@@ -208,7 +208,7 @@ c.close()
 print("OK: 20 UDP-датаграмм прошли через SOCKS5 UDP ASSOCIATE -> XUDP (Vision) и вернулись")
 PY
 
-grep -q 'SOCKS5 UDP (XUDP): ассоциация открыта' "$TMP/client.log" \
+grep -q 'UDP: XUDP-поток открыт' "$TMP/client.log" \
     || { echo "UDP шёл не через XUDP:"; cat "$TMP/client.log"; exit 1; }
 echo "OK: UDP шёл через XUDP"
 
@@ -225,4 +225,53 @@ if grep -q 'отправка переключена на прямую перед
 else
     echo "(отправка осталась с padding'ом — приложение не записало ни одного целого рекорда разом)"
 fi
+# Файл настроек вместо ключей: относительный путь к ссылке, проверка
+# --check, опечатка в поле — ошибка, затем TLS-эхо через выход vless.
+SOCKS2_PORT="$(free_port)"
+mkdir -p "$TMP/conf"
+cp "$TMP/link.txt" "$TMP/conf/server.txt"
+cat > "$TMP/conf/client.toml" <<TOML
+[[inbounds]]
+type = "socks"
+listen = "127.0.0.1:$SOCKS2_PORT"
+
+[[outbounds]]
+tag = "proxy"
+type = "vless"
+link_file = "server.txt"
+
+[[outbounds]]
+tag = "direct"
+type = "direct"
+
+[route]
+final = "proxy"
+TOML
+$CLIENT_RUNNER "$CLIENT_BIN" --config "$TMP/conf/client.toml" --check > "$TMP/check.log" 2>&1 \
+    || { echo "--check отверг правильный файл настроек:"; cat "$TMP/check.log"; exit 1; }
+sed 's/^link_file/link_fiel/' "$TMP/conf/client.toml" > "$TMP/conf/typo.toml"
+if $CLIENT_RUNNER "$CLIENT_BIN" --config "$TMP/conf/typo.toml" --check > "$TMP/typo.log" 2>&1; then
+    echo "опечатка в файле настроек должна быть ошибкой"; exit 1
+fi
+grep -q 'link_fiel' "$TMP/typo.log" || { cat "$TMP/typo.log"; exit 1; }
+echo "OK: --check и опечатки в файле настроек"
+$CLIENT_RUNNER "$CLIENT_BIN" --config "$TMP/conf/client.toml" > "$TMP/client2.log" 2>&1 &
+PIDS+=($!)
+for _ in $(seq 1 300); do grep -q 'SOCKS5 слушает' "$TMP/client2.log" && break; sleep 0.1; done
+python3 - "$SOCKS2_PORT" "$ECHO_PORT" "$TMP/cert.pem" <<'PY' || { cat "$TMP/client2.log"; exit 1; }
+import os, socket, ssl, struct, sys
+socks, echo, ca = int(sys.argv[1]), int(sys.argv[2]), sys.argv[3]
+s = socket.create_connection(("127.0.0.1", socks), timeout=30)
+s.sendall(b"\x05\x01\x00"); assert s.recv(2) == b"\x05\x00"
+s.sendall(b"\x05\x01\x00\x01" + socket.inet_aton("127.0.0.1") + struct.pack(">H", echo))
+rep = s.recv(10); assert rep[:2] == b"\x05\x00", rep
+ctx = ssl.create_default_context(cafile=ca)
+t = ctx.wrap_socket(s, server_hostname="inner.test")
+data = os.urandom(64 * 1024); t.sendall(data)
+got = b""
+while len(got) < len(data):
+    b = t.recv(65536); assert b; got += b
+assert got == data
+print("OK: --config: 64 КиБ TLS-эха через выход vless")
+PY
 echo "SMOKE (Xray) PASSED"

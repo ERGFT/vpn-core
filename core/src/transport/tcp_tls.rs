@@ -98,7 +98,18 @@ fn default_root_store() -> RootCertStore {
 }
 
 async fn connect_tcp_stream(cfg: &VlessConfig) -> Result<TcpStream> {
-    let addr = format!("{}:{}", cfg.host, cfg.port);
+    connect_host(&cfg.host, cfg.port).await
+}
+
+/// TCP-соединение с `host:port`: асинхронное разрешение имени системным
+/// резолвером (с таймаутом) и перебор всех адресов (с таймаутом на
+/// каждый). Используется и для VLESS-сервера, и выходом `direct`.
+pub async fn connect_host(host: &str, port: u16) -> Result<TcpStream> {
+    let addr = if host.contains(':') && !host.starts_with('[') {
+        format!("[{host}]:{port}")
+    } else {
+        format!("{host}:{port}")
+    };
 
     // Асинхронное разрешение имени: раньше здесь был блокирующий
     // `to_socket_addrs`, вызванный прямо из async-кода. Рабочих потоков

@@ -42,7 +42,7 @@ pub enum Command {
     Mux = 0x03,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Address {
     Ipv4(Ipv4Addr),
     Domain(String),

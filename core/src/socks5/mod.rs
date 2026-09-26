@@ -30,6 +30,7 @@ const ATYP_IPV6: u8 = 0x04;
 #[derive(Debug, Clone, Copy)]
 pub enum ReplyCode {
     GeneralFailure = 0x01,
+    NotAllowedByRuleset = 0x02,
     CommandNotSupported = 0x07,
     AddressTypeNotSupported = 0x08,
 }
