@@ -6,7 +6,8 @@ use uuid::Uuid;
 use crate::error::{Error, Result};
 
 /// Тип нижележащего транспорта (`type=` в URI): `tcp` (он же `raw` в
-/// новых версиях Xray), `ws`, `grpc`.
+/// новых версиях Xray), `ws`, `grpc`, `httpupgrade`, `xhttp` (он же
+/// `splithttp`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NetworkType {
     Tcp,
@@ -250,6 +251,10 @@ impl VlessConfig {
                 self.network
             )));
         }
+        if self.network == NetworkType::Xhttp {
+            // Параметры xhttp (mode=, extra=, alpn) — тоже до соединения.
+            crate::transport::xhttp::XhttpSettings::from_config(self)?;
+        }
         Ok(())
     }
 
@@ -459,7 +464,8 @@ mod tests {
 
     #[test]
     fn validate_rejects_reality_over_ws_and_httpupgrade() {
-        let base = "vless://11111111-1111-1111-1111-111111111111@1.2.3.4:443?security=reality&pbk=x";
+        let base =
+            "vless://11111111-1111-1111-1111-111111111111@1.2.3.4:443?security=reality&pbk=x";
         for t in ["ws", "httpupgrade"] {
             let c = VlessConfig::parse(&format!("{base}&type={t}")).unwrap();
             assert!(c.validate().is_err(), "{t}");
@@ -484,7 +490,11 @@ mod tests {
     #[test]
     fn http_path_normalizes_and_drops_early_data() {
         let base = "vless://11111111-1111-1111-1111-111111111111@1.2.3.4:443?type=ws";
-        let p = |q: &str| VlessConfig::parse(&format!("{base}{q}")).unwrap().http_path();
+        let p = |q: &str| {
+            VlessConfig::parse(&format!("{base}{q}"))
+                .unwrap()
+                .http_path()
+        };
         assert_eq!(p(""), "/");
         assert_eq!(p("&path=ws"), "/ws");
         assert_eq!(p("&path=%2Fws%3Fed%3D2048"), "/ws");

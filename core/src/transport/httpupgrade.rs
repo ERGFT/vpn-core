@@ -88,7 +88,10 @@ pub fn build_request(host: &str, path: &str) -> String {
     headers.push(("Connection", "Upgrade".into()));
     headers.push(("Upgrade", "websocket".into()));
     headers.sort_by(|a, b| a.0.cmp(b.0));
-    let mut req = format!("GET {path} HTTP/1.1\r\nHost: {host}\r\nUser-Agent: {}\r\n", ua.1);
+    let mut req = format!(
+        "GET {path} HTTP/1.1\r\nHost: {host}\r\nUser-Agent: {}\r\n",
+        ua.1
+    );
     for (k, v) in headers {
         req.push_str(k);
         req.push_str(": ");
@@ -158,7 +161,9 @@ pub async fn connect_httpupgrade(cfg: &VlessConfig) -> Result<HttpUpgradeVlessSt
             break len;
         }
         if buf.len() > MAX_RESPONSE_HEAD {
-            return Err(Error::Protocol("httpupgrade: слишком длинный ответ сервера".into()));
+            return Err(Error::Protocol(
+                "httpupgrade: слишком длинный ответ сервера".into(),
+            ));
         }
     };
     Ok(HttpUpgradeStream {
@@ -210,6 +215,9 @@ mod tests {
         assert_eq!(parse_response(ok).unwrap(), Some(ok.len() - 4));
         assert_eq!(parse_response(b"HTTP/1.1 101 Switching").unwrap(), None);
         assert!(parse_response(b"HTTP/1.1 404 Not Found\r\n\r\n").is_err());
-        assert!(parse_response(b"HTTP/1.1 101 OK\r\nUpgrade: h2c\r\nConnection: upgrade\r\n\r\n").is_err());
+        assert!(
+            parse_response(b"HTTP/1.1 101 OK\r\nUpgrade: h2c\r\nConnection: upgrade\r\n\r\n")
+                .is_err()
+        );
     }
 }

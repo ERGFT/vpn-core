@@ -4,6 +4,7 @@ pub mod httpupgrade;
 pub mod raw;
 pub mod tcp_tls;
 pub mod ws;
+pub mod xhttp;
 
 pub use tcp_tls::{
     connect_and_handshake, connect_tls, connect_tls_capturing_client_hello, connect_tls_with_alpn,
@@ -42,9 +43,7 @@ pub async fn dial(
             httpupgrade::connect_command_httpupgrade(cfg, id, command, target, port).await?,
         ),
         NetworkType::Xhttp => {
-            return Err(crate::Error::InvalidUri(
-                "type=xhttp пока не поддерживается".into(),
-            ))
+            Box::new(xhttp::connect_command_xhttp(cfg, id, command, target, port).await?)
         }
     })
 }

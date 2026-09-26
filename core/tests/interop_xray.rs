@@ -981,3 +981,200 @@ async fn httpupgrade_plain_and_tls_against_xray() {
     let mut st = dial(&cfg, &cfg.id, VlessCommand::Tcp, a, p).await.unwrap();
     echo_roundtrip(&mut st, 300 * 1024).await;
 }
+
+fn tls_link(port: u16, uuid: &uuid::Uuid, sni: &str, rest: &str, cert_pem: &str) -> VlessConfig {
+    let mut cfg = VlessConfig::parse(&format!(
+        "vless://{uuid}@127.0.0.1:{port}?encryption=none&security=tls&sni={sni}{rest}"
+    ))
+    .unwrap();
+    let mut roots = RootCertStore::empty();
+    for c in rustls_pki_types::pem::PemObject::pem_slice_iter(cert_pem.as_bytes()) {
+        roots.add(c.unwrap()).unwrap();
+    }
+    cfg.ca_roots = Some(Arc::new(roots));
+    cfg
+}
+
+/// Запросы xhttp уходят без ожидания ответа (как у Xray), поэтому отказ
+/// сервера всплывает там, куда успеет: в `dial` (при записи заголовка
+/// VLESS), при записи или при первом чтении — в любом случае с пояснением.
+async fn expect_xhttp_error(cfg: &VlessConfig, a: Address, p: u16, needle: &str) {
+    let err = tokio::time::timeout(Duration::from_secs(20), async {
+        let mut st = dial(cfg, &cfg.id, VlessCommand::Tcp, a, p)
+            .await
+            .map_err(|e| e.to_string())?;
+        st.write_all(b"ping").await.map_err(|e| e.to_string())?;
+        st.flush().await.map_err(|e| e.to_string())?;
+        let mut buf = [0u8; 16];
+        st.read(&mut buf).await.map_err(|e| e.to_string())?;
+        Ok::<(), String>(())
+    })
+    .await
+    .expect("ошибка должна прийти, а не зависнуть")
+    .expect_err("ожидалась ошибка");
+    assert!(err.contains("xhttp") && err.contains(needle), "{err}");
+}
+
+/// xhttp (SplitHTTP) без TLS (HTTP/1.1, packet-up) и поверх TLS: h2 во
+/// всех трёх режимах и HTTP/1.1 (`alpn=http/1.1`). Один вход Xray с
+/// mode=auto принимает все режимы. Плюс отказы: неверный путь (404) и
+/// padding вне диапазона сервера (400) — это заодно доказывает, что
+/// сервер реально проверяет наш `Referer` с `x_padding`.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "нужен Xray-core: scripts/interop_xray.sh"]
+async fn xhttp_plain_and_tls_against_xray() {
+    ensure_crypto_provider();
+    init_log();
+    let echo = start_echo().await;
+    let uuid = uuid::Uuid::new_v4();
+    let dir = tempdir::Dir::new();
+    let (_, _, cert_pem, key_pem) = self_signed("xh.test");
+    let cert_path = dir.0.join("cert.pem");
+    let key_path = dir.0.join("key.pem");
+    std::fs::write(&cert_path, &cert_pem).unwrap();
+    std::fs::write(&key_path, &key_pem).unwrap();
+    let (p_plain, p_tls) = (free_port(), free_port());
+    let _x = Xray::start(
+        vec![
+            vless_inbound(
+                p_plain,
+                &uuid,
+                "",
+                obj(vec![
+                    ("network", s("xhttp")),
+                    ("security", s("none")),
+                    (
+                        "xhttpSettings",
+                        obj(vec![("path", s("/xh")), ("host", s("cdn.test"))]),
+                    ),
+                ]),
+            ),
+            vless_inbound(
+                p_tls,
+                &uuid,
+                "",
+                obj(vec![
+                    ("network", s("xhttp")),
+                    ("security", s("tls")),
+                    (
+                        "tlsSettings",
+                        obj(vec![(
+                            "certificates",
+                            arr(vec![obj(vec![
+                                ("certificateFile", s(cert_path.to_string_lossy())),
+                                ("keyFile", s(key_path.to_string_lossy())),
+                            ])]),
+                        )]),
+                    ),
+                    ("xhttpSettings", obj(vec![("path", s("/xht"))])),
+                ]),
+            ),
+        ],
+        &[p_plain, p_tls],
+        dir,
+    )
+    .await;
+    let (a, p) = target(echo);
+
+    // Без TLS: HTTP/1.1, packet-up; 1 МиБ — много POST'ов, порядок по seq.
+    let plain = VlessConfig::parse(&format!(
+        "vless://{uuid}@127.0.0.1:{p_plain}?encryption=none&security=none&type=xhttp&host=cdn.test&path=%2Fxh"
+    ))
+    .unwrap();
+    let mut st = dial(&plain, &plain.id, VlessCommand::Tcp, a.clone(), p)
+        .await
+        .unwrap();
+    echo_roundtrip(&mut st, 1024 * 1024).await;
+    // Пауза дольше таймаутов сервера на простаивающее keep-alive
+    // соединение для POST'ов: следующая порция должна дойти (при
+    // необходимости — по новому соединению), а не потеряться с дырой в seq.
+    tokio::time::sleep(Duration::from_secs(6)).await;
+    echo_roundtrip(&mut st, 64 * 1024).await;
+    drop(st);
+
+    // Небольшой scMaxEachPostBytes — порции заведомо режутся.
+    let small = VlessConfig::parse(&format!(
+        "vless://{uuid}@127.0.0.1:{p_plain}?encryption=none&security=none&type=xhttp&host=cdn.test&path=%2Fxh&extra=%7B%22scMaxEachPostBytes%22%3A%2220000-30000%22%2C%22scMinPostsIntervalMs%22%3A5%7D"
+    ))
+    .unwrap();
+    let mut st = dial(&small, &small.id, VlessCommand::Tcp, a.clone(), p)
+        .await
+        .unwrap();
+    echo_roundtrip(&mut st, 300 * 1024).await;
+    drop(st);
+
+    // Неверный путь и неверный Host — 404.
+    let bad = VlessConfig::parse(&format!(
+        "vless://{uuid}@127.0.0.1:{p_plain}?encryption=none&security=none&type=xhttp&host=cdn.test&path=%2Fwrong"
+    ))
+    .unwrap();
+    expect_xhttp_error(&bad, a.clone(), p, "404").await;
+    let bad = VlessConfig::parse(&format!(
+        "vless://{uuid}@127.0.0.1:{p_plain}?encryption=none&security=none&type=xhttp&host=other.test&path=%2Fxh"
+    ))
+    .unwrap();
+    expect_xhttp_error(&bad, a.clone(), p, "404").await;
+    // Padding короче диапазона сервера (100-1000) — 400.
+    let bad = VlessConfig::parse(&format!(
+        "vless://{uuid}@127.0.0.1:{p_plain}?encryption=none&security=none&type=xhttp&host=cdn.test&path=%2Fxh&extra=%7B%22xPaddingBytes%22%3A%225-10%22%7D"
+    ))
+    .unwrap();
+    expect_xhttp_error(&bad, a.clone(), p, "400").await;
+
+    // TLS: h2 во всех режимах и HTTP/1.1.
+    for rest in [
+        "&type=xhttp&path=%2Fxht",
+        "&type=xhttp&path=%2Fxht&mode=stream-up",
+        "&type=xhttp&path=%2Fxht&mode=stream-one",
+        "&type=xhttp&path=%2Fxht&alpn=http%2F1.1",
+    ] {
+        let cfg = tls_link(p_tls, &uuid, "xh.test", rest, &cert_pem);
+        let mut st = dial(&cfg, &cfg.id, VlessCommand::Tcp, a.clone(), p)
+            .await
+            .unwrap_or_else(|e| panic!("{rest}: {e}"));
+        echo_roundtrip(&mut st, 1024 * 1024).await;
+    }
+}
+
+/// xhttp поверх REALITY: по умолчанию stream-one (как у Xray), а также
+/// stream-up и packet-up на том же входе.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "нужен Xray-core: scripts/interop_xray.sh"]
+async fn xhttp_over_reality_against_xray() {
+    ensure_crypto_provider();
+    init_log();
+    let decoy = start_decoy().await;
+    let echo = start_echo().await;
+    let keys = reality_keys();
+    let uuid = uuid::Uuid::new_v4();
+    let port = free_port();
+    let _x = Xray::start(
+        vec![vless_inbound(
+            port,
+            &uuid,
+            "",
+            reality_stream(
+                "xhttp",
+                decoy,
+                &keys,
+                vec![("xhttpSettings", obj(vec![("path", s("/xr"))]))],
+                None,
+            ),
+        )],
+        &[port],
+        tempdir::Dir::new(),
+    )
+    .await;
+    let (a, p) = target(echo);
+    for rest in [
+        "&type=xhttp&path=%2Fxr",
+        "&type=xhttp&path=%2Fxr&mode=stream-up",
+        "&type=xhttp&path=%2Fxr&mode=packet-up",
+    ] {
+        let cfg = reality_link(port, &uuid, &keys, rest);
+        let mut st = dial(&cfg, &cfg.id, VlessCommand::Tcp, a.clone(), p)
+            .await
+            .unwrap_or_else(|e| panic!("{rest}: {e}"));
+        echo_roundtrip(&mut st, 1024 * 1024).await;
+    }
+}
