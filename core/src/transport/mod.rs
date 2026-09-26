@@ -1,4 +1,6 @@
+pub mod browser_headers;
 pub mod grpc;
+pub mod httpupgrade;
 pub mod raw;
 pub mod tcp_tls;
 pub mod ws;
@@ -35,6 +37,14 @@ pub async fn dial(
         NetworkType::Ws => Box::new(ws::connect_command_ws(cfg, id, command, target, port).await?),
         NetworkType::Grpc => {
             Box::new(grpc::connect_command_grpc(cfg, id, command, target, port).await?)
+        }
+        NetworkType::HttpUpgrade => Box::new(
+            httpupgrade::connect_command_httpupgrade(cfg, id, command, target, port).await?,
+        ),
+        NetworkType::Xhttp => {
+            return Err(crate::Error::InvalidUri(
+                "type=xhttp пока не поддерживается".into(),
+            ))
         }
     })
 }

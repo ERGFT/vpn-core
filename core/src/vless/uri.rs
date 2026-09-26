@@ -12,6 +12,8 @@ pub enum NetworkType {
     Tcp,
     Ws,
     Grpc,
+    HttpUpgrade,
+    Xhttp,
 }
 
 impl NetworkType {
@@ -23,8 +25,10 @@ impl NetworkType {
             "" | "tcp" | "raw" => Ok(NetworkType::Tcp),
             "ws" => Ok(NetworkType::Ws),
             "grpc" | "gun" => Ok(NetworkType::Grpc),
+            "httpupgrade" => Ok(NetworkType::HttpUpgrade),
+            "xhttp" | "splithttp" => Ok(NetworkType::Xhttp),
             other => Err(Error::InvalidUri(format!(
-                "транспорт type={other} не поддерживается (поддерживаются: tcp, ws, grpc)"
+                "транспорт type={other} не поддерживается (поддерживаются: tcp, ws, grpc, httpupgrade, xhttp)"
             ))),
         }
     }
@@ -227,6 +231,28 @@ impl VlessConfig {
         Ok(())
     }
 
+    /// Проверить всю ссылку на совместимость с сервером Xray-core до
+    /// соединения: flow (см. [`Self::ensure_flow_supported`]) и
+    /// сочетание REALITY с транспортом — Xray принимает REALITY только
+    /// поверх tcp, grpc и xhttp ("REALITY only supports RAW, XHTTP and
+    /// gRPC"), так что ws/httpupgrade + reality не заработают ни с одним
+    /// сервером. Библиотечный `transport::dial` такие сочетания не
+    /// запрещает (их используют тесты верификатора REALITY), а клиент
+    /// проверяет ссылку этим методом при старте.
+    pub fn validate(&self) -> Result<()> {
+        self.ensure_flow_supported()?;
+        if self.security == Security::Reality
+            && matches!(self.network, NetworkType::Ws | NetworkType::HttpUpgrade)
+        {
+            return Err(Error::InvalidUri(format!(
+                "security=reality с type={:?} не поддерживает сервер Xray-core \
+                 (REALITY работает только с tcp, grpc и xhttp)",
+                self.network
+            )));
+        }
+        Ok(())
+    }
+
     /// `alpn=` из ссылки (через запятую). `None` — не задан, транспорт
     /// выбирает сам.
     pub fn alpn(&self) -> Option<Vec<Vec<u8>>> {
@@ -238,6 +264,29 @@ impl VlessConfig {
             .map(|s| s.as_bytes().to_vec())
             .collect();
         (!list.is_empty()).then_some(list)
+    }
+
+    /// Путь для HTTP-транспортов (ws, httpupgrade): `path=` из ссылки с
+    /// ведущим `/`, без параметра `ed` (ранние данные у Xray задаются
+    /// им, этот клиент их не использует — а оставленный в пути он лишь
+    /// выдаёт клиента).
+    pub fn http_path(&self) -> String {
+        let raw = self.path();
+        let (p, q) = raw.split_once('?').unwrap_or((raw, ""));
+        let mut path = if p.starts_with('/') {
+            p.to_string()
+        } else {
+            format!("/{p}")
+        };
+        let rest: Vec<&str> = q
+            .split('&')
+            .filter(|kv| !kv.is_empty() && kv.split('=').next() != Some("ed"))
+            .collect();
+        if !rest.is_empty() {
+            path.push('?');
+            path.push_str(&rest.join("&"));
+        }
+        path
     }
 
     /// `Host` для WebSocket: `host=` из ссылки, иначе SNI.
@@ -409,14 +458,37 @@ mod tests {
     }
 
     #[test]
+    fn validate_rejects_reality_over_ws_and_httpupgrade() {
+        let base = "vless://11111111-1111-1111-1111-111111111111@1.2.3.4:443?security=reality&pbk=x";
+        for t in ["ws", "httpupgrade"] {
+            let c = VlessConfig::parse(&format!("{base}&type={t}")).unwrap();
+            assert!(c.validate().is_err(), "{t}");
+        }
+        for t in ["tcp", "grpc", "xhttp"] {
+            let c = VlessConfig::parse(&format!("{base}&type={t}")).unwrap();
+            assert!(c.validate().is_ok(), "{t}");
+        }
+    }
+
+    #[test]
     fn rejects_unknown_transport_and_security() {
         let base = "vless://11111111-1111-1111-1111-111111111111@example.com:443";
-        assert!(VlessConfig::parse(&format!("{base}?type=xhttp")).is_err());
+        assert!(VlessConfig::parse(&format!("{base}?type=kcp")).is_err());
         assert!(VlessConfig::parse(&format!("{base}?security=xtls")).is_err());
         assert!(VlessConfig::parse(&format!("{base}?type=tcp&headerType=http")).is_err());
         let raw = VlessConfig::parse(&format!("{base}?type=raw&security=none")).unwrap();
         assert_eq!(raw.network, NetworkType::Tcp);
         assert_eq!(raw.security, Security::None);
+    }
+
+    #[test]
+    fn http_path_normalizes_and_drops_early_data() {
+        let base = "vless://11111111-1111-1111-1111-111111111111@1.2.3.4:443?type=ws";
+        let p = |q: &str| VlessConfig::parse(&format!("{base}{q}")).unwrap().http_path();
+        assert_eq!(p(""), "/");
+        assert_eq!(p("&path=ws"), "/ws");
+        assert_eq!(p("&path=%2Fws%3Fed%3D2048"), "/ws");
+        assert_eq!(p("&path=%2Fws%3Fa%3D1%26ed%3D2048"), "/ws?a=1");
     }
 
     #[test]

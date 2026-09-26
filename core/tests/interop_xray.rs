@@ -885,3 +885,99 @@ async fn udp_echo_against_xray() {
     }
     let _: SocketAddr = "127.0.0.1:0".parse().unwrap();
 }
+
+/// httpupgrade: без TLS и поверх TLS (REALITY с httpupgrade Xray не
+/// поддерживает: "REALITY only supports RAW, XHTTP and gRPC"). Путь с
+/// `?ed=` (ранние данные у Xray) клиент обязан отбросить и всё равно
+/// попасть в тот же вход.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "нужен Xray-core: scripts/interop_xray.sh"]
+async fn httpupgrade_plain_and_tls_against_xray() {
+    ensure_crypto_provider();
+    let echo = start_echo().await;
+    let uuid = uuid::Uuid::new_v4();
+    let dir = tempdir::Dir::new();
+    let (_, _, cert_pem, key_pem) = self_signed("hu.test");
+    let cert_path = dir.0.join("cert.pem");
+    let key_path = dir.0.join("key.pem");
+    std::fs::write(&cert_path, &cert_pem).unwrap();
+    std::fs::write(&key_path, &key_pem).unwrap();
+    let (p_plain, p_tls) = (free_port(), free_port());
+    let hu = |path: &str| {
+        (
+            "httpupgradeSettings",
+            obj(vec![("path", s(path)), ("host", s("cdn.test"))]),
+        )
+    };
+    let _x = Xray::start(
+        vec![
+            vless_inbound(
+                p_plain,
+                &uuid,
+                "",
+                obj(vec![
+                    ("network", s("httpupgrade")),
+                    ("security", s("none")),
+                    hu("/hu"),
+                ]),
+            ),
+            vless_inbound(
+                p_tls,
+                &uuid,
+                "",
+                obj(vec![
+                    ("network", s("httpupgrade")),
+                    ("security", s("tls")),
+                    (
+                        "tlsSettings",
+                        obj(vec![(
+                            "certificates",
+                            arr(vec![obj(vec![
+                                ("certificateFile", s(cert_path.to_string_lossy())),
+                                ("keyFile", s(key_path.to_string_lossy())),
+                            ])]),
+                        )]),
+                    ),
+                    hu("/hut"),
+                ]),
+            ),
+        ],
+        &[p_plain, p_tls],
+        dir,
+    )
+    .await;
+
+    let (a, p) = target(echo);
+    let cfg = VlessConfig::parse(&format!(
+        "vless://{uuid}@127.0.0.1:{p_plain}?encryption=none&security=none&type=httpupgrade&host=cdn.test&path=%2Fhu%3Fed%3D2048"
+    ))
+    .unwrap();
+    let mut st = dial(&cfg, &cfg.id, VlessCommand::Tcp, a.clone(), p)
+        .await
+        .unwrap();
+    echo_roundtrip(&mut st, 300 * 1024).await;
+
+    // Неверный путь — сервер не отвечает 101, ошибка понятная.
+    let bad = VlessConfig::parse(&format!(
+        "vless://{uuid}@127.0.0.1:{p_plain}?encryption=none&security=none&type=httpupgrade&host=cdn.test&path=%2Fwrong"
+    ))
+    .unwrap();
+    let err = dial(&bad, &bad.id, VlessCommand::Tcp, a.clone(), p)
+        .await
+        .err()
+        .expect("неверный path должен отвергаться")
+        .to_string();
+    assert!(err.contains("httpupgrade"), "{err}");
+
+    let mut cfg = VlessConfig::parse(&format!(
+        "vless://{uuid}@127.0.0.1:{p_tls}?encryption=none&security=tls&sni=hu.test&type=httpupgrade&host=cdn.test&path=%2Fhut"
+    ))
+    .unwrap();
+    let mut roots = RootCertStore::empty();
+    for c in rustls_pki_types::pem::PemObject::pem_slice_iter(cert_pem.as_bytes()) {
+        roots.add(c.unwrap()).unwrap();
+    }
+    cfg.ca_roots = Some(Arc::new(roots));
+    let mut st = dial(&cfg, &cfg.id, VlessCommand::Tcp, a, p).await.unwrap();
+    echo_roundtrip(&mut st, 300 * 1024).await;
+}

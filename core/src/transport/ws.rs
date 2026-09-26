@@ -43,12 +43,21 @@ pub async fn connect_ws(cfg: &VlessConfig) -> Result<WsVlessStream> {
     } else {
         "wss"
     };
-    let uri = format!("{scheme}://{host}{}", cfg.path());
+    let uri = format!("{scheme}://{host}{}", cfg.http_path());
 
-    let request = Request::builder()
+    // Заголовки Chrome, как делает Xray (`TryDefaultHeadersWith(.., "ws")`):
+    // запрос Upgrade без User-Agent и Sec-Fetch-* выделяется среди
+    // браузерных — особенно в логах CDN.
+    let mut builder = Request::builder()
         .method("GET")
         .uri(uri)
-        .header("Host", host)
+        .header("Host", host);
+    for (k, v) in crate::transport::browser_headers::chrome_headers(
+        crate::transport::browser_headers::Variant::Ws,
+    ) {
+        builder = builder.header(k, v);
+    }
+    let request = builder
         .header("Connection", "Upgrade")
         .header("Upgrade", "websocket")
         .header("Sec-WebSocket-Version", "13")

@@ -107,7 +107,7 @@ async fn main() -> Result<()> {
     let mut cfg = VlessConfig::parse(&args.server).context("разбор vless:// ссылки")?;
     // Сразу при старте, а не на каждом соединении: неподходящий flow
     // не должен выглядеть как "SOCKS5 работает, но сайты не открываются".
-    cfg.ensure_flow_supported()
+    cfg.validate()
         .context("ссылка несовместима с этим клиентом")?;
     if cfg.security == reality_core::vless::Security::Reality {
         cfg.reality_params().context("параметры REALITY в ссылке")?;
