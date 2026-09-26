@@ -19,3 +19,6 @@ mimalloc = { version = "0.1.52", optional = true }
 
 [features]
 mimalloc = ["dep:mimalloc"]
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Registry", "Win32_Networking_WinInet"] }

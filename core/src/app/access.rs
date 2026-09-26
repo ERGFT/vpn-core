@@ -49,6 +49,20 @@ impl<'de> serde::Deserialize<'de> for IpNet {
 }
 
 impl IpNet {
+    pub fn new(addr: IpAddr, prefix: u8) -> Option<Self> {
+        let addr = addr.to_canonical();
+        let max = if addr.is_ipv4() { 32 } else { 128 };
+        (prefix <= max).then_some(IpNet { addr, prefix })
+    }
+
+    pub fn addr(&self) -> IpAddr {
+        self.addr
+    }
+
+    pub fn prefix(&self) -> u8 {
+        self.prefix
+    }
+
     pub fn contains(&self, ip: IpAddr) -> bool {
         let ip = ip.to_canonical();
         match (self.addr, ip) {

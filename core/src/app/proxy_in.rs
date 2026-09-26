@@ -1,23 +1,30 @@
-//! Вход `socks`: локальный SOCKS5 (CONNECT и UDP ASSOCIATE) с
-//! маршрутизацией каждого соединения и каждой датаграммы.
+//! Входы `socks`, `http` и `mixed` (SOCKS5 и HTTP на одном порту — вид
+//! определяется по первому байту: 0x05 — SOCKS5, иначе HTTP).
 //!
-//! Защиты (перенесены из клиента): список разрешённых адресов, блокировка
-//! адреса после серии неверных паролей, потолок одновременных соединений,
-//! таймаут приветствия, закрепление UDP-ассоциации за владельцем.
+//! Защиты: список разрешённых адресов, блокировка адреса после серии
+//! неверных паролей, потолок одновременных соединений, таймаут
+//! приветствия, закрепление UDP-ассоциации за владельцем.
+//!
+//! Sniffing (`sniff = true`): если приложение прислало IP, а не домен,
+//! прокси сразу отвечает «соединено», читает первые байты (TLS SNI или
+//! HTTP Host) и выбирает маршрут уже с доменом.
 
 use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use tokio::io::AsyncReadExt;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream, UdpSocket};
 use tokio::sync::mpsc;
 use tokio::task::JoinSet;
 
 use super::access::{self, AuthGuard, IpNet};
+use super::config::InboundKind;
+use super::http_in;
 use super::outbound::UdpSession;
 use super::router::Router;
+use super::sniff;
 use super::{Metadata, Network};
 use crate::error::{Error, Result};
 use crate::relay;
@@ -25,15 +32,31 @@ use crate::socks5::udp::{encode_datagram, parse_datagram, recv_result, ClientFil
 use crate::socks5::{self, Credentials, ReplyCode, Socks5Command, TargetAddr};
 use crate::vless::Address;
 
-/// Потолок на приветствие и запрос SOCKS5: без него молчащий клиент
-/// держал сокет и задачу вечно.
+/// Потолок на приветствие и запрос: без него молчащий клиент держал
+/// сокет и задачу вечно.
 pub const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
 
-pub struct SocksInbound {
+pub struct ProxyInbound {
     pub tag: Arc<str>,
+    pub kind: InboundKind,
     pub auth: Option<Credentials>,
     pub allow_ip: Vec<IpNet>,
     pub max_conns: usize,
+    pub sniff: bool,
+    /// Подставить найденный домен вместо IP: имя разрешит сервер, а не
+    /// этот компьютер.
+    pub sniff_override: bool,
+}
+
+impl ProxyInbound {
+    /// Как вход называется в журнале.
+    pub fn proto_name(&self) -> &'static str {
+        match self.kind {
+            InboundKind::Socks => "SOCKS5",
+            InboundKind::Http => "HTTP",
+            InboundKind::Mixed => "SOCKS5+HTTP",
+        }
+    }
 }
 
 pub fn to_address(a: &TargetAddr) -> Address {
@@ -52,7 +75,64 @@ pub fn from_address(a: Address) -> TargetAddr {
     }
 }
 
-impl SocksInbound {
+/// Как ответить приложению после открытия соединения.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ReplyKind {
+    Socks,
+    HttpConnect,
+    /// Обычный HTTP-запрос: ответа от прокси нет, отвечает сам сайт.
+    HttpForward,
+}
+
+/// Итог приветствия.
+enum Accepted {
+    Connect {
+        target: Address,
+        port: u16,
+        reply: ReplyKind,
+        /// Что отправить сайту первым (заголовок HTTP-запроса, байты,
+        /// пришедшие вслед за заголовком).
+        initial: Vec<u8>,
+    },
+    UdpAssociate {
+        port: u16,
+    },
+    /// Приветствие не удалось (ответ уже отправлен или не нужен).
+    Done,
+}
+
+async fn send_reply(
+    socket: &mut TcpStream,
+    reply: ReplyKind,
+    result: std::result::Result<(), &Error>,
+) -> Result<()> {
+    match (reply, result) {
+        (ReplyKind::Socks, Ok(())) => {
+            let bind = socket.local_addr()?;
+            socks5::reply_success(socket, bind).await
+        }
+        (ReplyKind::Socks, Err(e)) => {
+            let code = if matches!(e, Error::Blocked) {
+                ReplyCode::NotAllowedByRuleset
+            } else {
+                ReplyCode::GeneralFailure
+            };
+            socks5::reply_error(socket, code).await
+        }
+        (ReplyKind::HttpConnect, Ok(())) => Ok(socket.write_all(http_in::RESP_ESTABLISHED).await?),
+        (ReplyKind::HttpForward, Ok(())) => Ok(()),
+        (_, Err(e)) => {
+            let r = if matches!(e, Error::Blocked) {
+                http_in::RESP_FORBIDDEN
+            } else {
+                http_in::RESP_BAD_GATEWAY
+            };
+            Ok(socket.write_all(r).await?)
+        }
+    }
+}
+
+impl ProxyInbound {
     /// Принимать соединения, пока не упадёт сам слушающий сокет.
     pub async fn serve(self: Arc<Self>, listener: TcpListener, router: Arc<Router>) -> Result<()> {
         let slots = Arc::new(tokio::sync::Semaphore::new(self.max_conns.max(1)));
@@ -101,6 +181,118 @@ impl SocksInbound {
         }
     }
 
+    fn auth_failed(&self, guard: &AuthGuard, peer: SocketAddr) {
+        if let access::Verdict::Blocked(d) = guard.failure(peer.ip(), Instant::now()) {
+            tracing::warn!(
+                ip = %peer.ip(),
+                secs = d.as_secs(),
+                "подряд несколько неверных паролей — адрес временно заблокирован"
+            );
+        }
+    }
+
+    async fn greet_socks(
+        &self,
+        socket: &mut TcpStream,
+        peer: SocketAddr,
+        guard: &AuthGuard,
+    ) -> Result<Accepted> {
+        match socks5::handshake_with_auth(socket, self.auth.as_ref()).await {
+            Ok(req) => {
+                if self.auth.is_some() {
+                    guard.success(peer.ip());
+                }
+                Ok(if req.command == Socks5Command::UdpAssociate {
+                    Accepted::UdpAssociate { port: req.port }
+                } else {
+                    Accepted::Connect {
+                        target: to_address(&req.addr),
+                        port: req.port,
+                        reply: ReplyKind::Socks,
+                        initial: Vec::new(),
+                    }
+                })
+            }
+            Err(Error::Socks5AuthFailed) => {
+                self.auth_failed(guard, peer);
+                Ok(Accepted::Done)
+            }
+            Err(e) => Err(e),
+        }
+    }
+
+    async fn greet_http(
+        &self,
+        socket: &mut TcpStream,
+        peer: SocketAddr,
+        guard: &AuthGuard,
+    ) -> Result<Accepted> {
+        let (head, rest) = match http_in::read_head(socket).await {
+            Ok(v) => v,
+            Err(e) => {
+                socket.write_all(http_in::RESP_BAD_REQUEST).await.ok();
+                return Err(e);
+            }
+        };
+        let req = match http_in::parse_request(&head) {
+            Ok(r) => r,
+            Err(e) => {
+                socket.write_all(http_in::RESP_BAD_REQUEST).await.ok();
+                return Err(e);
+            }
+        };
+        if let Some(creds) = &self.auth {
+            // Без заголовка — не ошибка: браузер сначала спрашивает без
+            // пароля и повторяет запрос после ответа 407.
+            if req.auth.is_some() && !http_in::check_auth(&req, creds) {
+                self.auth_failed(guard, peer);
+                tokio::time::sleep(Duration::from_millis(500)).await;
+            }
+            if !http_in::check_auth(&req, creds) {
+                socket.write_all(http_in::RESP_AUTH).await.ok();
+                return Ok(Accepted::Done);
+            }
+            guard.success(peer.ip());
+        }
+        let (reply, initial) = if req.connect {
+            (ReplyKind::HttpConnect, rest)
+        } else {
+            let mut v = req.forward_head;
+            v.extend_from_slice(&rest);
+            (ReplyKind::HttpForward, v)
+        };
+        Ok(Accepted::Connect {
+            target: req.target,
+            port: req.port,
+            reply,
+            initial,
+        })
+    }
+
+    async fn greet(
+        &self,
+        socket: &mut TcpStream,
+        peer: SocketAddr,
+        guard: &AuthGuard,
+    ) -> Result<Accepted> {
+        let socks = match self.kind {
+            InboundKind::Socks => true,
+            InboundKind::Http => false,
+            InboundKind::Mixed => {
+                let mut b = [0u8; 1];
+                if socket.peek(&mut b).await? == 0 {
+                    return Ok(Accepted::Done);
+                }
+                b[0] == 5
+            }
+        };
+        if socks {
+            self.greet_socks(socket, peer, guard).await
+        } else {
+            self.greet_http(socket, peer, guard).await
+        }
+    }
+
     async fn handle(
         &self,
         mut socket: TcpStream,
@@ -110,59 +302,65 @@ impl SocksInbound {
     ) -> Result<()> {
         // Ошибки приветствия — только в debug: иначе перебор паролей или
         // сканер портов заваливали бы журнал.
-        let req = match tokio::time::timeout(
-            HANDSHAKE_TIMEOUT,
-            socks5::handshake_with_auth(&mut socket, self.auth.as_ref()),
-        )
-        .await
-        {
-            Ok(Ok(r)) => {
-                if self.auth.is_some() {
-                    guard.success(peer.ip());
+        let accepted =
+            match tokio::time::timeout(HANDSHAKE_TIMEOUT, self.greet(&mut socket, peer, &guard))
+                .await
+            {
+                Ok(Ok(a)) => a,
+                Ok(Err(e)) => {
+                    tracing::debug!(error = %e, "приветствие отклонено");
+                    return Ok(());
                 }
-                r
-            }
-            Ok(Err(Error::Socks5AuthFailed)) => {
-                if let access::Verdict::Blocked(d) = guard.failure(peer.ip(), Instant::now()) {
-                    tracing::warn!(
-                        ip = %peer.ip(),
-                        secs = d.as_secs(),
-                        "SOCKS5: подряд несколько неверных паролей — адрес временно заблокирован"
-                    );
+                Err(_) => {
+                    tracing::debug!("клиент не прислал запрос вовремя");
+                    return Ok(());
                 }
-                return Ok(());
+            };
+        let (target, port, reply, mut initial) = match accepted {
+            Accepted::Done => return Ok(()),
+            Accepted::UdpAssociate { port } => {
+                return udp_associate(socket, peer, port, self.tag.clone(), router).await;
             }
-            Ok(Err(e)) => {
-                tracing::debug!(error = %e, "SOCKS5: приветствие отклонено");
-                return Ok(());
-            }
-            Err(_) => {
-                tracing::debug!("SOCKS5: клиент не прислал запрос вовремя");
-                return Ok(());
-            }
+            Accepted::Connect {
+                target,
+                port,
+                reply,
+                initial,
+            } => (target, port, reply, initial),
         };
 
-        if req.command == Socks5Command::UdpAssociate {
-            return udp_associate(socket, peer, req.port, self.tag.clone(), router).await;
-        }
-
-        let meta = Metadata {
+        let mut meta = Metadata {
             inbound: self.tag.clone(),
             source: peer,
             network: Network::Tcp,
-            target: to_address(&req.addr),
-            port: req.port,
+            target,
+            port,
+            sniffed: None,
         };
+        // Sniffing нужен, только когда домена нет. Ответ «соединено»
+        // уходит раньше, чем соединение с сайтом открыто, — иначе
+        // приложение не пришлёт первых байт; ошибку потом можно сообщить
+        // только закрытием соединения.
+        let target_is_ip = !matches!(meta.target, Address::Domain(_));
+        let replied_early = self.sniff && target_is_ip && reply != ReplyKind::HttpForward;
+        if replied_early {
+            send_reply(&mut socket, reply, Ok(())).await?;
+            meta.sniffed = sniff::read_and_sniff(&mut socket, &mut initial).await?;
+            if let Some(d) = &meta.sniffed {
+                tracing::debug!(ip = %meta.target, domain = %d, "sniffing: найден домен");
+                if self.sniff_override {
+                    meta.target = Address::Domain(d.clone());
+                }
+            }
+        }
+
         let outbound = router.select(&meta);
-        let remote = match outbound.connect(&meta).await {
+        let mut remote = match outbound.connect(&meta).await {
             Ok(s) => s,
             Err(e) => {
-                let code = if matches!(e, Error::Blocked) {
-                    ReplyCode::NotAllowedByRuleset
-                } else {
-                    ReplyCode::GeneralFailure
-                };
-                socks5::reply_error(&mut socket, code).await.ok();
+                if !replied_early {
+                    send_reply(&mut socket, reply, Err(&e)).await.ok();
+                }
                 if matches!(e, Error::Blocked) {
                     tracing::debug!(target = %meta.target, "заблокировано правилом");
                     return Ok(());
@@ -170,8 +368,12 @@ impl SocksInbound {
                 return Err(e);
             }
         };
-        let bind_addr = socket.local_addr()?;
-        socks5::reply_success(&mut socket, bind_addr).await?;
+        if !replied_early {
+            send_reply(&mut socket, reply, Ok(())).await?;
+        }
+        if !initial.is_empty() {
+            remote.write_all(&initial).await?;
+        }
         // Адреса сайтов — только в debug: иначе журнал — история посещений.
         tracing::debug!(
             target = %meta.target,
@@ -246,6 +448,7 @@ async fn udp_associate(
                     network: Network::Udp,
                     target: to_address(&addr),
                     port,
+                    sniffed: None,
                 };
                 let outbound = router.select(&meta);
                 let tag = outbound.tag().to_string();

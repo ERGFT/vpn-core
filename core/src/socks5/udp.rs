@@ -1,6 +1,6 @@
 //! SOCKS5 UDP ASSOCIATE (RFC 1928 §7): формат датаграмм и правило «кто
 //! владелец ассоциации». Сама ассоциация (маршрутизация датаграмм по
-//! выходам, XUDP) — `crate::app::socks_in`.
+//! выходам, XUDP) — `crate::app::proxy_in`.
 
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 

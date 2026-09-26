@@ -112,7 +112,7 @@ printf 'smoke:s3cret\n' > "$TMP/auth.txt"
 RUST_LOG="info,reality_core::vless::vision=debug" $CLIENT_RUNNER "$CLIENT_BIN" --server-file "$TMP/link.txt" \
     --listen "127.0.0.1:$SOCKS_PORT" --auth-file "$TMP/auth.txt" > "$TMP/client.log" 2>&1 &
 PIDS+=($!)
-for _ in $(seq 1 300); do grep -q 'SOCKS5 слушает' "$TMP/client.log" && break; sleep 0.1; done
+for _ in $(seq 1 300); do grep -q 'прокси слушает' "$TMP/client.log" && break; sleep 0.1; done
 for _ in $(seq 1 100); do python3 -c "import socket; socket.create_connection(('127.0.0.1',$SRV_PORT),1)" 2>/dev/null && break; sleep 0.1; done
 
 python3 - "$SOCKS_PORT" "$ECHO_PORT" "$UDP_PORT" "$TMP/cert.pem" <<'PY'
@@ -232,7 +232,7 @@ mkdir -p "$TMP/conf"
 cp "$TMP/link.txt" "$TMP/conf/server.txt"
 cat > "$TMP/conf/client.toml" <<TOML
 [[inbounds]]
-type = "socks"
+type = "mixed"
 listen = "127.0.0.1:$SOCKS2_PORT"
 
 [[outbounds]]
@@ -243,6 +243,14 @@ link_file = "server.txt"
 [[outbounds]]
 tag = "direct"
 type = "direct"
+
+[[outbounds]]
+tag = "block"
+type = "block"
+
+[[route.rules]]
+domain_suffix = ["blocked.test"]
+outbound = "block"
 
 [route]
 final = "proxy"
@@ -257,7 +265,7 @@ grep -q 'link_fiel' "$TMP/typo.log" || { cat "$TMP/typo.log"; exit 1; }
 echo "OK: --check и опечатки в файле настроек"
 $CLIENT_RUNNER "$CLIENT_BIN" --config "$TMP/conf/client.toml" > "$TMP/client2.log" 2>&1 &
 PIDS+=($!)
-for _ in $(seq 1 300); do grep -q 'SOCKS5 слушает' "$TMP/client2.log" && break; sleep 0.1; done
+for _ in $(seq 1 300); do grep -q 'прокси слушает' "$TMP/client2.log" && break; sleep 0.1; done
 python3 - "$SOCKS2_PORT" "$ECHO_PORT" "$TMP/cert.pem" <<'PY' || { cat "$TMP/client2.log"; exit 1; }
 import os, socket, ssl, struct, sys
 socks, echo, ca = int(sys.argv[1]), int(sys.argv[2]), sys.argv[3]
@@ -273,5 +281,27 @@ while len(got) < len(data):
     b = t.recv(65536); assert b; got += b
 assert got == data
 print("OK: --config: 64 КиБ TLS-эха через выход vless")
+
+# HTTP CONNECT на том же порту (mixed) — тоже через Xray.
+s = socket.create_connection(("127.0.0.1", socks), timeout=30)
+s.sendall(f"CONNECT 127.0.0.1:{echo} HTTP/1.1\r\nHost: 127.0.0.1:{echo}\r\n\r\n".encode())
+head = b""
+while not head.endswith(b"\r\n\r\n"):
+    b = s.recv(1); assert b; head += b
+assert head.startswith(b"HTTP/1.1 200"), head
+t = ctx.wrap_socket(s, server_hostname="inner.test")
+t.sendall(b"http-connect"); assert t.recv(64) == b"http-connect"
+print("OK: --config: HTTP CONNECT (mixed) через выход vless")
+
+# Правило: домен под block — SOCKS5 отвечает 0x02, HTTP — 403.
+s = socket.create_connection(("127.0.0.1", socks), timeout=30)
+s.sendall(b"\x05\x01\x00"); assert s.recv(2) == b"\x05\x00"
+name = b"ads.blocked.test"
+s.sendall(b"\x05\x01\x00\x03" + bytes([len(name)]) + name + struct.pack(">H", 443))
+assert s.recv(10)[1] == 2
+s = socket.create_connection(("127.0.0.1", socks), timeout=30)
+s.sendall(b"CONNECT ads.blocked.test:443 HTTP/1.1\r\n\r\n")
+assert s.recv(64).startswith(b"HTTP/1.1 403")
+print("OK: --config: правило block для домена (SOCKS5 0x02, HTTP 403)")
 PY
 echo "SMOKE (Xray) PASSED"

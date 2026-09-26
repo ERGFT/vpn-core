@@ -297,6 +297,7 @@ mod tests {
             network,
             target,
             port,
+            sniffed: None,
         }
     }
 

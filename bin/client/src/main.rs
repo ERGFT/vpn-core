@@ -1,4 +1,4 @@
-//! CLI: локальный SOCKS5 → VLESS-сервер (или напрямую, или отказ — по
+//! CLI: локальный прокси (SOCKS5 и HTTP на одном порту) → VLESS-сервер (или напрямую, или отказ — по
 //! маршрутизации). Два способа запуска:
 //!
 //! 1. Ключи — один сервер, один SOCKS5-вход (как раньше):
@@ -28,6 +28,8 @@ use std::path::PathBuf;
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
+mod sysproxy;
+
 use anyhow::{Context, Result};
 use clap::Parser;
 
@@ -41,7 +43,7 @@ use reality_core::app::App;
 #[command(
     name = "reality-client",
     version,
-    about = "VLESS core — локальный SOCKS5 -> VLESS (tcp/ws/grpc/httpupgrade/xhttp, tls/reality, XTLS Vision)"
+    about = "VLESS core — локальный SOCKS5/HTTP-прокси -> VLESS (tcp/ws/grpc/httpupgrade/xhttp, tls/reality, XTLS Vision)"
 )]
 struct Args {
     /// Файл настроек (TOML): входы, выходы, маршрутизация. Вместо
@@ -50,13 +52,23 @@ struct Args {
         long,
         short = 'c',
         value_name = "ФАЙЛ",
-        conflicts_with_all = ["server_file", "auth", "auth_file", "ca", "no_xudp", "allow_ip", "allow_insecure"]
+        conflicts_with_all = ["server_file", "auth", "auth_file", "ca", "no_xudp", "allow_ip", "allow_insecure", "sniff"]
     )]
     config: Option<PathBuf>,
 
     /// Только проверить настройки (ссылку, пароль, файл) и выйти
     #[arg(long)]
     check: bool,
+
+    /// Windows: на время работы включить системный прокси (браузеры и
+    /// программы пойдут через HTTP-вход); при выходе вернуть как было
+    #[arg(long)]
+    system_proxy: bool,
+
+    /// Windows: выключить системный прокси и выйти (если клиент был
+    /// завершён аварийно и не вернул настройки)
+    #[arg(long, exclusive = true)]
+    system_proxy_off: bool,
 
     /// vless:// ссылка сервера. В командной строке она видна другим
     /// пользователям машины (список процессов) — надёжнее
@@ -68,9 +80,14 @@ struct Args {
     #[arg(long, value_name = "ФАЙЛ", conflicts_with = "server")]
     server_file: Option<PathBuf>,
 
-    /// Локальный адрес, на котором поднимается SOCKS5
+    /// Локальный адрес прокси: SOCKS5 и HTTP на одном порту
     #[arg(long, default_value = "127.0.0.1:1080")]
     listen: SocketAddr,
+
+    /// Узнавать домен по первым байтам (TLS SNI, HTTP Host), когда
+    /// приложение присылает IP, и отдавать серверу домен, а не IP
+    #[arg(long)]
+    sniff: bool,
 
     /// Требовать логин и пароль на SOCKS5: `логин:пароль`
     /// (обязательно, если слушать не только на 127.0.0.1)
@@ -133,13 +150,15 @@ fn config_from_args(args: &Args) -> Result<Config> {
     };
     Ok(Config {
         inbounds: vec![InboundConfig {
-            kind: InboundKind::Socks,
-            tag: Some("socks".into()),
+            kind: InboundKind::Mixed,
+            tag: None,
             listen: args.listen,
             auth,
             auth_file,
             allow_ip: args.allow_ip.clone(),
             max_conns: Some(args.max_conns),
+            sniff: args.sniff,
+            sniff_override_destination: args.sniff,
         }],
         outbounds: vec![OutboundConfig {
             tag: "proxy".into(),
@@ -152,6 +171,7 @@ fn config_from_args(args: &Args) -> Result<Config> {
         }],
         route: RouteConfig {
             final_: Some("proxy".into()),
+            ..Default::default()
         },
     })
 }
@@ -171,6 +191,11 @@ async fn main() -> Result<()> {
         .with_ansi(ansi)
         .init();
     let args = Args::parse();
+    if args.system_proxy_off {
+        sysproxy::disable()?;
+        println!("системный прокси выключен");
+        return Ok(());
+    }
 
     let cfg = match &args.config {
         Some(path) => {
@@ -184,6 +209,84 @@ async fn main() -> Result<()> {
         return Ok(());
     }
     let running = app.start().await?;
-    running.wait().await?;
+    let _system_proxy = if args.system_proxy {
+        let addr = running
+            .inbounds
+            .iter()
+            .find(|(_, kind, _)| *kind != InboundKind::Socks)
+            .map(|(_, _, a)| *a)
+            .context("--system-proxy: нужен вход type = \"http\" или \"mixed\"")?;
+        Some(sysproxy::enable(addr)?)
+    } else {
+        None
+    };
+    tokio::select! {
+        r = running.wait() => r?,
+        _ = shutdown_signal() => tracing::info!("завершение по сигналу"),
+    }
+    // Здесь `_system_proxy` уничтожается и возвращает прежние настройки.
     Ok(())
 }
+
+/// Ctrl+C, а на Windows — ещё и закрытие окна консоли и выход из системы;
+/// на Unix — SIGTERM.
+async fn shutdown_signal() {
+    #[cfg(windows)]
+    {
+        use tokio::signal::windows;
+        let (mut close, mut shutdown, mut logoff) = (
+            windows::ctrl_close().ok(),
+            windows::ctrl_shutdown().ok(),
+            windows::ctrl_logoff().ok(),
+        );
+        async fn next(s: &mut Option<impl SignalLike>) {
+            match s {
+                Some(s) => s.recv_any().await,
+                None => std::future::pending().await,
+            }
+        }
+        tokio::select! {
+            _ = tokio::signal::ctrl_c() => {}
+            _ = next(&mut close) => {}
+            _ = next(&mut shutdown) => {}
+            _ = next(&mut logoff) => {}
+        }
+    }
+    #[cfg(unix)]
+    {
+        let mut term =
+            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()).ok();
+        tokio::select! {
+            _ = tokio::signal::ctrl_c() => {}
+            _ = async {
+                match &mut term {
+                    Some(t) => { t.recv().await; }
+                    None => std::future::pending::<()>().await,
+                }
+            } => {}
+        }
+    }
+}
+
+#[cfg(windows)]
+trait SignalLike {
+    async fn recv_any(&mut self);
+}
+
+#[cfg(windows)]
+macro_rules! signal_like {
+    ($($t:ty),*) => {$(
+        impl SignalLike for $t {
+            async fn recv_any(&mut self) {
+                self.recv().await;
+            }
+        }
+    )*};
+}
+
+#[cfg(windows)]
+signal_like!(
+    tokio::signal::windows::CtrlClose,
+    tokio::signal::windows::CtrlShutdown,
+    tokio::signal::windows::CtrlLogoff
+);

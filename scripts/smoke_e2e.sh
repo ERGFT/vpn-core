@@ -52,7 +52,7 @@ read -r -a WRAP <<< "${CLIENT_WRAPPER:-}"
 "${WRAP[@]}" "$CLIENT_BIN" --server "$LINK" --listen "127.0.0.1:$SOCKS_PORT" > "$TMP/client.log" 2>&1 &
 CLIENT_PID=$!
 PIDS+=($CLIENT_PID)
-for _ in $(seq 1 300); do grep -q 'SOCKS5 слушает' "$TMP/client.log" && break; sleep 0.1; done
+for _ in $(seq 1 300); do grep -q 'прокси слушает' "$TMP/client.log" && break; sleep 0.1; done
 
 python3 - "$SOCKS_PORT" "${SMOKE_CONNECTIONS:-1}" <<'PY'
 import socket, sys, os

@@ -2,17 +2,23 @@
 //! sing-box). Собирается из файла настроек ([`config::Config`]) или из
 //! ключей командной строки.
 //!
-//! - `socks_in` — вход SOCKS5 (CONNECT, UDP ASSOCIATE);
-//! - `router` — выбор выхода для соединения;
+//! - `proxy_in`, `http_in` — входы SOCKS5, HTTP и mixed (оба на одном
+//!   порту); `sniff` — домен по первым байтам (TLS SNI, HTTP Host);
+//! - `router`, `rules`, `geo` — выбор выхода по правилам (домены, адреса,
+//!   базы geosite/geoip, порт, сеть, вход);
 //! - `outbound` — выходы `direct` и `block` и общий интерфейс;
 //! - `vless_out` — выход `vless` (сервер);
 //! - `access` — кто может пользоваться входом (адреса, подбор пароля).
 
 pub mod access;
 pub mod config;
+pub mod geo;
+pub mod http_in;
 pub mod outbound;
+pub mod proxy_in;
 pub mod router;
-pub mod socks_in;
+pub mod rules;
+pub mod sniff;
 pub mod vless_out;
 
 use std::net::SocketAddr;
@@ -26,14 +32,15 @@ use crate::socks5::Credentials;
 use crate::vless::{Address, Security, VlessConfig};
 use config::{Config, InboundKind, OutboundKind};
 use outbound::{BlockOutbound, DirectOutbound, Outbound};
+use proxy_in::ProxyInbound;
 use router::Router;
-use socks_in::SocksInbound;
 use vless_out::VlessOutbound;
 
 /// Минимальная длина пароля входа, если он открыт в сеть.
 pub const MIN_LAN_PASSWORD: usize = 12;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum Network {
     Tcp,
     Udp,
@@ -49,11 +56,14 @@ pub struct Metadata {
     pub network: Network,
     pub target: Address,
     pub port: u16,
+    /// Домен, распознанный по первым байтам (SNI, Host), — для правил,
+    /// когда приложение прислало IP.
+    pub sniffed: Option<String>,
 }
 
 struct BuiltInbound {
     listen: SocketAddr,
-    socks: Arc<SocksInbound>,
+    socks: Arc<ProxyInbound>,
 }
 
 /// Собранное приложение, готовое к запуску.
@@ -65,6 +75,8 @@ pub struct App {
 /// Запущенное приложение: фактические адреса входов и задачи.
 pub struct Running {
     pub listen_addrs: Vec<SocketAddr>,
+    /// Входы: tag, вид и фактический адрес.
+    pub inbounds: Vec<(Arc<str>, InboundKind, SocketAddr)>,
     tasks: JoinSet<Result<()>>,
 }
 
@@ -145,10 +157,15 @@ fn build_vless(o: &config::OutboundConfig) -> Result<VlessOutbound> {
 
 fn build_socks(i: &config::InboundConfig, n: usize) -> Result<BuiltInbound> {
     let tag = i.tag.clone().unwrap_or_else(|| {
+        let base = match i.kind {
+            InboundKind::Socks => "socks",
+            InboundKind::Http => "http",
+            InboundKind::Mixed => "mixed",
+        };
         if n == 0 {
-            "socks".into()
+            base.to_string()
         } else {
-            format!("socks-{n}")
+            format!("{base}-{n}")
         }
     });
     let auth = match secret(&i.auth, &i.auth_file, &format!("вход {tag}"))? {
@@ -157,7 +174,7 @@ fn build_socks(i: &config::InboundConfig, n: usize) -> Result<BuiltInbound> {
         })?),
         None => None,
     };
-    if !socks_in::is_loopback_listen(&i.listen) {
+    if !proxy_in::is_loopback_listen(&i.listen) {
         let Some(creds) = &auth else {
             return Err(Error::Config(format!(
                 "вход {tag}: {} открывает прокси для всей сети без пароля; задайте логин:пароль",
@@ -171,7 +188,7 @@ fn build_socks(i: &config::InboundConfig, n: usize) -> Result<BuiltInbound> {
             )));
         }
         tracing::warn!(
-            "прокси открыт в сеть: SOCKS5 не шифрует ни пароль, ни адреса сайтов, ни данные \
+            "прокси открыт в сеть: SOCKS5 и HTTP-прокси не шифруют ни пароль, ни адреса сайтов, ни данные \
              между устройством и этим компьютером — в общей Wi-Fi их видят соседи. Пускайте \
              только свои устройства (allow_ip), в чужих сетях не открывайте"
         );
@@ -179,17 +196,23 @@ fn build_socks(i: &config::InboundConfig, n: usize) -> Result<BuiltInbound> {
             tracing::warn!("allow_ip не задан: пароль могут пробовать с любого адреса в сети");
         }
     }
-    match i.kind {
-        InboundKind::Socks => Ok(BuiltInbound {
-            listen: i.listen,
-            socks: Arc::new(SocksInbound {
-                tag: tag.into(),
-                auth,
-                allow_ip: i.allow_ip.clone(),
-                max_conns: i.max_conns.unwrap_or(512),
-            }),
-        }),
+    if i.sniff_override_destination && !i.sniff {
+        return Err(Error::Config(format!(
+            "вход {tag}: sniff_override_destination работает только вместе с sniff = true"
+        )));
     }
+    Ok(BuiltInbound {
+        listen: i.listen,
+        socks: Arc::new(ProxyInbound {
+            tag: tag.into(),
+            kind: i.kind,
+            auth,
+            allow_ip: i.allow_ip.clone(),
+            max_conns: i.max_conns.unwrap_or(512),
+            sniff: i.sniff,
+            sniff_override: i.sniff_override_destination,
+        }),
+    })
 }
 
 impl App {
@@ -208,13 +231,23 @@ impl App {
             };
             outbounds.push(built);
         }
-        let router = Arc::new(Router::new(outbounds, cfg.route.final_.as_deref())?);
         let inbounds = cfg
             .inbounds
             .iter()
             .enumerate()
             .map(|(n, i)| build_socks(i, n))
             .collect::<Result<Vec<_>>>()?;
+        let mut tags: Vec<String> = Vec::new();
+        for i in &inbounds {
+            let t = i.socks.tag.to_string();
+            if tags.contains(&t) {
+                return Err(Error::Config(format!(
+                    "два входа с одинаковым tag = \"{t}\""
+                )));
+            }
+            tags.push(t);
+        }
+        let router = Arc::new(Router::new(outbounds, &cfg.route, &tags)?);
         Ok(App { inbounds, router })
     }
 
@@ -223,6 +256,7 @@ impl App {
         crate::transport::tcp_tls::ensure_crypto_provider();
         let mut tasks = JoinSet::new();
         let mut listen_addrs = Vec::new();
+        let mut inbounds = Vec::new();
         for i in self.inbounds {
             let listener = TcpListener::bind(i.listen)
                 .await
@@ -230,15 +264,19 @@ impl App {
             let addr = listener.local_addr()?;
             tracing::info!(
                 inbound = %i.socks.tag,
+                proto = i.socks.proto_name(),
                 addr = %addr,
                 auth = i.socks.auth.is_some(),
-                "SOCKS5 слушает"
+                sniff = i.socks.sniff,
+                "прокси слушает"
             );
             listen_addrs.push(addr);
+            inbounds.push((i.socks.tag.clone(), i.socks.kind, addr));
             tasks.spawn(i.socks.serve(listener, self.router.clone()));
         }
         Ok(Running {
             listen_addrs,
+            inbounds,
             tasks,
         })
     }

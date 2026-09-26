@@ -97,7 +97,7 @@ impl Credentials {
 
     /// Сравнение без раннего выхода: время ответа не выдаёт, сколько
     /// символов совпало.
-    fn matches(&self, user: &[u8], pass: &[u8]) -> bool {
+    pub fn matches(&self, user: &[u8], pass: &[u8]) -> bool {
         fn ct_eq(a: &[u8], b: &[u8]) -> bool {
             // Сравнение длин — как usize: `(a ^ b) as u8` обнулялось бы
             // при разнице длин, кратной 256.

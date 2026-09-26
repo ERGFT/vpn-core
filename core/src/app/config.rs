@@ -30,6 +30,7 @@ use std::path::{Path, PathBuf};
 use serde::Deserialize;
 
 use super::access::IpNet;
+pub use super::rules::{PortSpec, RuleConfig};
 use crate::error::{Error, Result};
 
 #[derive(Debug, Clone, Deserialize)]
@@ -46,7 +47,12 @@ pub struct Config {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum InboundKind {
+    /// SOCKS5 (CONNECT, UDP ASSOCIATE).
     Socks,
+    /// HTTP-прокси (CONNECT и обычные запросы).
+    Http,
+    /// SOCKS5 и HTTP на одном порту.
+    Mixed,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -62,6 +68,13 @@ pub struct InboundConfig {
     #[serde(default)]
     pub allow_ip: Vec<IpNet>,
     pub max_conns: Option<usize>,
+    /// Узнавать домен по первым байтам (TLS SNI, HTTP Host), когда
+    /// приложение прислало IP, — для правил по доменам.
+    #[serde(default)]
+    pub sniff: bool,
+    /// Подставлять найденный домен вместо IP (имя разрешит сервер).
+    #[serde(default)]
+    pub sniff_override_destination: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
@@ -98,14 +111,32 @@ fn yes() -> bool {
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RouteConfig {
+    /// Правила по порядку; срабатывает первое подошедшее.
+    #[serde(default)]
+    pub rules: Vec<RuleConfig>,
     /// Выход по умолчанию; не задан — первый из `outbounds`.
     #[serde(rename = "final")]
     pub final_: Option<String>,
+    /// База доменов для `geosite = [...]` (по умолчанию `geosite.dat`
+    /// рядом с файлом настроек).
+    pub geosite_file: Option<PathBuf>,
+    /// База адресов для `geoip = [...]` (по умолчанию `geoip.dat`).
+    pub geoip_file: Option<PathBuf>,
 }
 
 impl Config {
     pub fn parse(text: &str) -> Result<Self> {
-        toml::from_str(text).map_err(|e| Error::Config(e.to_string()))
+        toml::from_str(text).map_err(|e| {
+            let mut msg = e.to_string();
+            // Частая ошибка на Windows: путь в двойных кавычках, где «\U»,
+            // «\s» и т.п. читаются как спецсимволы.
+            if msg.contains("escape") || msg.contains("unicode") {
+                msg.push_str(
+                    "\nподсказка: пути Windows пишите в одинарных кавычках: 'C:\\Users\\me\\server.txt'",
+                );
+            }
+            Error::Config(msg)
+        })
     }
 
     /// Прочитать файл настроек; относительные пути внутри него
@@ -130,6 +161,11 @@ impl Config {
             fix(&mut o.link_file);
             fix(&mut o.ca_file);
         }
+        let r = &mut cfg.route;
+        r.geosite_file.get_or_insert_with(|| "geosite.dat".into());
+        r.geoip_file.get_or_insert_with(|| "geoip.dat".into());
+        fix(&mut r.geosite_file);
+        fix(&mut r.geoip_file);
         Ok(cfg)
     }
 }
@@ -237,9 +273,26 @@ final = "direct"
         )
         .is_err());
 
+        // Windows-путь в двойных кавычках — ошибка с подсказкой.
+        let e = Config::parse(
+            "[[outbounds]]\ntag='a'\ntype='vless'\nlink_file=\"C:\\Users\\me\\s.txt\"\n",
+        )
+        .unwrap_err();
+        assert!(e.to_string().contains("одинарных"), "{e}");
+        let ok = Config::parse(
+            "[[outbounds]]\ntag='a'\ntype='vless'\nlink_file='C:\\Users\\me\\s.txt'\n",
+        )
+        .unwrap();
+        assert_eq!(
+            ok.outbounds[0].link_file.as_deref(),
+            Some(Path::new("C:\\Users\\me\\s.txt"))
+        );
+
         // Пример из репозитория разбирается.
         let ex = Config::parse(include_str!("../../../examples/client.toml")).unwrap();
         assert_eq!(ex.outbounds.len(), 3);
+        assert_eq!(ex.route.rules.len(), 3);
+        assert_eq!(ex.inbounds[0].kind, InboundKind::Mixed);
         assert_eq!(ex.route.final_.as_deref(), Some("proxy"));
     }
 }

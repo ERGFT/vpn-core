@@ -27,6 +27,7 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 clap = { version = "4", features = ["derive", "env"] }
 rand = "0.8"
+regex = "1"
 
 # Этап 3: снятие/расчёт TLS-фингерпринта (JA3/JA4) — измерение того, что
 # реально уходит в сеть, а не подмена (см. PLAN.md, Этап 3: rustls не

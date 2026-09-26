@@ -1646,6 +1646,7 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -1670,6 +1671,7 @@ dependencies = [
  "pin-project-lite",
  "rand 0.8.8",
  "rcgen",
+ "regex",
  "rustls",
  "rustls-pki-types",
  "serde",

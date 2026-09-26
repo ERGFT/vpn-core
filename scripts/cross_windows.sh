@@ -68,6 +68,8 @@ export WINEPREFIX="${WINEPREFIX:-$HOME/.wine-reality}"
 export CARGO_TARGET_X86_64_PC_WINDOWS_GNU_RUNNER="$WINE"
 
 echo "== тесты под Wine"
+# Без отладочной информации: иначе тестовые .exe занимают гигабайты.
+export CARGO_PROFILE_DEV_DEBUG=0
 cargo test --workspace --target "$TARGET" "${BUILD_STD_TEST[@]}" \
     || { echo "ТЕСТЫ ПОД WINE УПАЛИ"; exit 1; }
 
@@ -80,4 +82,26 @@ if [[ "${SMOKE:-1}" == 1 ]]; then
         echo "нет Xray ($XRAY_BIN) — smoke пропущен"
     fi
 fi
+# Системный прокси: включается в реестре на время работы и возвращается
+# при Ctrl+C (Wine переводит SIGINT в CTRL_C_EVENT).
+echo "== --system-proxy под Wine"
+KEY='HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings'
+reg_val() { { "$WINE" reg query "$KEY" /v "$1" 2>/dev/null || true; } | tr -d '\r' | awk -v n="$1" '$1==n{print $3}'; }
+BEFORE="$(reg_val ProxyEnable)"
+PBK="$(python3 -c 'import os,base64;print(base64.urlsafe_b64encode(os.urandom(32)).decode().rstrip("="))')"
+SP_LINK="vless://11111111-2222-3333-4444-555555555555@127.0.0.1:9?security=reality&sni=a.test&pbk=$PBK&sid=01&type=tcp"
+SP_PORT="$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1])')"
+SP_LOG="$(mktemp)"
+"$WINE" "$EXE" --server "$SP_LINK" --listen "127.0.0.1:$SP_PORT" --system-proxy > "$SP_LOG" 2>&1 &
+SP_PID=$!
+for _ in $(seq 1 100); do grep -q 'системный прокси Windows включён' "$SP_LOG" && break; sleep 0.1; done
+[[ "$(reg_val ProxyServer)" == "127.0.0.1:$SP_PORT" && "$(reg_val ProxyEnable)" == 0x1 ]] \
+    || { echo "системный прокси не включился:"; cat "$SP_LOG"; kill "$SP_PID"; exit 1; }
+kill -INT "$SP_PID"
+for _ in $(seq 1 100); do kill -0 "$SP_PID" 2>/dev/null || break; sleep 0.1; done
+grep -q 'прежние настройки возвращены' "$SP_LOG" \
+    || { echo "настройки не возвращены:"; cat "$SP_LOG"; exit 1; }
+[[ "$(reg_val ProxyEnable)" == "$BEFORE" ]] || { echo "ProxyEnable не вернулся"; exit 1; }
+rm -f "$SP_LOG"
+echo "OK: системный прокси включён и возвращён при Ctrl+C"
 echo "WINDOWS CROSS-BUILD PASSED"
