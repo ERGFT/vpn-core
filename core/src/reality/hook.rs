@@ -28,6 +28,7 @@
 //! независимое доказательство первого шага), но в бою не используется.
 
 use std::fmt;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::OnceLock;
 
 use ml_kem::kem::{Decapsulate, Kem, KeyExport};
@@ -110,6 +111,14 @@ pub struct RealityHook {
     /// ServerHello), как `VerifyPeerCertificate` в Xray-core.
     client_hello_raw: OnceLock<Vec<u8>>,
     server_hello_raw: OnceLock<Vec<u8>>,
+    /// Сервер прошёл проверку REALITY (HMAC сертификата и, если задан
+    /// `pqv=`, ML-DSA-65). Ставит только `RealityCertVerifier`; пока
+    /// флаг не стоит, по соединению нельзя отправлять ничего, кроме
+    /// «браузерных» запросов (см. `transport::tcp_tls`).
+    verified: AtomicBool,
+    /// `pbk=` оказался точкой малого порядка: общий секрет X25519 — нули,
+    /// AuthKey вычислим кем угодно. Такой хук не пройдёт проверку никогда.
+    degenerate: bool,
 }
 
 impl fmt::Debug for RealityHook {
@@ -166,7 +175,25 @@ impl RealityHook {
             hybrid_key_share,
             client_hello_raw: OnceLock::new(),
             server_hello_raw: OnceLock::new(),
+            verified: AtomicBool::new(false),
+            degenerate: !shared.was_contributory(),
         }
+    }
+
+    /// Ключ сервера `pbk=` вырожденный (точка малого порядка X25519) —
+    /// с ним REALITY-аутентификация ничего не доказывает.
+    pub fn is_degenerate(&self) -> bool {
+        self.degenerate
+    }
+
+    /// Отметить, что сервер прошёл проверку REALITY.
+    pub fn mark_verified(&self) {
+        self.verified.store(true, Ordering::SeqCst);
+    }
+
+    /// Прошёл ли сервер проверку REALITY в этом рукопожатии.
+    pub fn is_verified(&self) -> bool {
+        self.verified.load(Ordering::SeqCst)
     }
 
     /// AuthKey этого рукопожатия — `None` до тех пор, пока ClientHello ещё
@@ -297,6 +324,11 @@ impl RealityClientHook for RealityHook {
         let ecdh_shared = self
             .ephemeral
             .diffie_hellman(&X25519PublicKey::from(server_x25519));
+        if !ecdh_shared.was_contributory() {
+            return Err(rustls::Error::General(
+                "REALITY: вырожденный X25519-ключ сервера в гибридной доле".into(),
+            ));
+        }
 
         // Порядок комбинирования — mlkem || ecdh — байт-в-байт как в
         // `crypto/tls` стандартной библиотеки Go (`hybridKeyExchange.

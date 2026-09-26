@@ -1,4 +1,5 @@
 pub mod browser_headers;
+pub mod browser_mimic;
 pub mod grpc;
 pub mod httpupgrade;
 pub mod raw;

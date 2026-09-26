@@ -25,7 +25,7 @@
 //! честно поднимает TLS (через WS/h2 в точности как обычно) и
 //! предъявляет Ed25519-самоподписанный сертификат с НАСТОЯЩЕЙ (не
 //! HMAC-патченной) подписью — `verify_server_cert` обязан такой
-//! отвергнуть, и конкретно с текстом ошибки "не совпал с подписью", а
+//! отвергнуть, и конкретно с текстом ошибки "HMAC не совпал", а
 //! не с обычной ошибкой rustls про недоверенный корень (`UnknownIssuer`
 //! и т.п.) — только это отличие доказывает, что сработал именно
 //! REALITY-верификатор, а не запасной путь.
@@ -145,7 +145,7 @@ async fn ws_transport_rejects_non_hmac_certificate_via_reality_verifier() {
 
     let msg = err.to_string();
     assert!(
-        msg.contains("не совпал с подписью"),
+        msg.contains("HMAC не совпал"),
         "ошибка должна прийти именно от RealityCertVerifier (HMAC-сравнение), \
          а не от запасного пути проверки цепочки сертификатов — получено: {msg}"
     );
@@ -180,7 +180,7 @@ async fn grpc_transport_rejects_non_hmac_certificate_via_reality_verifier() {
 
     let msg = err.to_string();
     assert!(
-        msg.contains("не совпал с подписью"),
+        msg.contains("HMAC не совпал"),
         "ошибка должна прийти именно от RealityCertVerifier (HMAC-сравнение), \
          а не от запасного пути проверки цепочки сертификатов — получено: {msg}"
     );

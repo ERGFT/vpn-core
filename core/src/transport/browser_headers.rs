@@ -15,11 +15,12 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use rand::Rng;
 
 /// Для чего запрос: `Ws` — Upgrade (ws, httpupgrade), `Fetch` — обычный
-/// XHR/fetch (xhttp).
+/// XHR/fetch (xhttp), `Nav` — открытие страницы (переход по адресу).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Variant {
     Ws,
     Fetch,
+    Nav,
 }
 
 struct Chrome {
@@ -83,6 +84,22 @@ pub fn chrome_headers(variant: Variant) -> Vec<(&'static str, String)> {
         ("Accept-Language", "en-US,en;q=0.9".into()),
     ];
     match variant {
+        Variant::Nav => {
+            h.push(("Cache-Control", "max-age=0".into()));
+            h.push(("Upgrade-Insecure-Requests", "1".into()));
+            h.push((
+                "Accept",
+                "text/html,application/xhtml+xml,application/xml;q=0.9,image/jxl,image/avif,\
+                 image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7"
+                    .into(),
+            ));
+            h.push(("Sec-Fetch-Site", "none".into()));
+            h.push(("Sec-Fetch-Mode", "navigate".into()));
+            h.push(("Sec-Fetch-User", "?1".into()));
+            h.push(("Sec-Fetch-Dest", "document".into()));
+            h.push(("Priority", "u=0, i".into()));
+            return h;
+        }
         Variant::Ws => {
             h.push(("Sec-Fetch-Mode", "websocket".into()));
             h.push(("Sec-Fetch-Dest", "empty".into()));

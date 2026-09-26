@@ -25,7 +25,7 @@ thiserror = "2"
 anyhow = "1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-clap = { version = "4", features = ["derive"] }
+clap = { version = "4", features = ["derive", "env"] }
 rand = "0.8"
 
 # Этап 3: снятие/расчёт TLS-фингерпринта (JA3/JA4) — измерение того, что

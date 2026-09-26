@@ -28,6 +28,11 @@ impl AuthKeySource {
     fn get(&self) -> Result<[u8; 32], TlsError> {
         match self {
             Self::Fixed(key) => Ok(*key),
+            Self::Hook(hook) if hook.is_degenerate() => Err(TlsError::General(
+                "REALITY: ключ сервера pbk= вырожденный (точка малого порядка X25519) — \
+                 проверка REALITY с ним ничего не доказывает"
+                    .into(),
+            )),
             Self::Hook(hook) => hook.auth_key().ok_or_else(|| {
                 TlsError::General(
                     "REALITY: AuthKey ещё не вычислен — verify_server_cert вызван раньше \
@@ -52,6 +57,15 @@ pub struct RealityCertVerifier {
     /// `pqv=`: публичный ключ ML-DSA-65 сервера. Если задан, сертификат
     /// принимается только с верной постквантовой подписью.
     mldsa65: Option<Vec<u8>>,
+    /// Поведение как у Xray при сертификате, не прошедшем REALITY: если
+    /// это настоящий сертификат сайта для SNI (обычная проверка X.509),
+    /// рукопожатие ДОВОДИТСЯ ДО КОНЦА — как у браузера, — но хук не
+    /// получает отметку `verified`, и вызывающий код обязан не отправлять
+    /// по такому соединению ничего своего. Без этого клиент рвал
+    /// рукопожатие сразу после сертификата, чем выдавал себя цензору,
+    /// подменившему сервер настоящим сайтом. `None` — строгий режим:
+    /// любой не-REALITY сертификат — ошибка рукопожатия.
+    fallback: Option<Arc<dyn ServerCertVerifier>>,
 }
 
 impl fmt::Debug for RealityCertVerifier {
@@ -94,6 +108,7 @@ impl RealityCertVerifier {
             auth_key,
             provider,
             mldsa65: None,
+            fallback: None,
         })
     }
 
@@ -104,6 +119,58 @@ impl RealityCertVerifier {
     pub fn with_mldsa65(mut self, public_key: Vec<u8>) -> Self {
         self.mldsa65 = Some(public_key);
         self
+    }
+
+    /// Вести себя как браузер, если вместо REALITY-сервера ответил
+    /// настоящий сайт (см. поле `fallback`). Только для источника
+    /// `from_hook`: результат проверки хранится в хуке, и вызывающий код
+    /// обязан проверить [`RealityHook::is_verified`] после рукопожатия.
+    pub fn with_browser_fallback(
+        mut self,
+        roots: rustls::RootCertStore,
+    ) -> Result<Self, CoreError> {
+        if !matches!(self.auth_key, AuthKeySource::Hook(_)) {
+            return Err(CoreError::Protocol(
+                "REALITY: браузерный режим требует RealityHook".into(),
+            ));
+        }
+        let v = rustls::client::WebPkiServerVerifier::builder_with_provider(
+            Arc::new(roots),
+            self.provider.clone(),
+        )
+        .build()
+        .map_err(|e| CoreError::Protocol(format!("REALITY: проверка X.509: {e}")))?;
+        self.fallback = Some(v);
+        Ok(self)
+    }
+
+    /// Проверка REALITY: ключ сертификата — Ed25519, подпись сертификата
+    /// — HMAC-SHA512(AuthKey, ключ), плюс ML-DSA-65 при `pqv=`.
+    /// `Ok(false)` — это не REALITY-сертификат; `Err` — REALITY-сервер,
+    /// но проверка ML-DSA-65 не прошла (или внутренняя ошибка).
+    fn check_reality(&self, end_entity: &CertificateDer<'_>) -> Result<bool, TlsError> {
+        let Ok((_, cert)) = x509_parser::parse_x509_certificate(end_entity.as_ref()) else {
+            return Ok(false);
+        };
+        // Ed25519 SPKI (RFC 8410) — «сырой» 32-байтный публичный ключ
+        // прямо в BIT STRING. Тип ключа проверяется явно (как у Xray —
+        // `ed25519.PublicKey`), а не только длина.
+        let pk = cert.public_key();
+        if pk.algorithm.algorithm != x509_parser::oid_registry::OID_SIG_ED25519 {
+            return Ok(false);
+        }
+        let spki = pk.subject_public_key.data.as_ref();
+        if spki.len() != 32 {
+            return Ok(false);
+        }
+        let auth_key = self.auth_key.get()?;
+        if !verify_ed25519_hmac(&auth_key, spki, cert.signature_value.data.as_ref()) {
+            return Ok(false);
+        }
+        if let Some(pk) = &self.mldsa65 {
+            self.verify_mldsa65(pk, &auth_key, spki, &cert)?;
+        }
+        Ok(true)
     }
 
     /// Проверка ML-DSA-65 так же, как в `reality.go` (`VerifyPeerCertificate`):
@@ -156,41 +223,37 @@ impl ServerCertVerifier for RealityCertVerifier {
     fn verify_server_cert(
         &self,
         end_entity: &CertificateDer<'_>,
-        _intermediates: &[CertificateDer<'_>],
-        _server_name: &ServerName<'_>,
-        _ocsp_response: &[u8],
-        _now: UnixTime,
+        intermediates: &[CertificateDer<'_>],
+        server_name: &ServerName<'_>,
+        ocsp_response: &[u8],
+        now: UnixTime,
     ) -> Result<ServerCertVerified, TlsError> {
-        let (_, cert) = x509_parser::parse_x509_certificate(end_entity.as_ref()).map_err(|e| {
-            TlsError::General(format!(
-                "REALITY: не удалось разобрать сертификат сервера: {e}"
-            ))
-        })?;
-
-        // Ed25519 SPKI (RFC 8410) — «сырой» 32-байтный публичный ключ
-        // прямо в BIT STRING, без дополнительной ASN.1-обёртки внутри.
-        let spki = cert.public_key().subject_public_key.data.as_ref();
-        if spki.len() != 32 {
-            return Err(TlsError::General(format!(
-                "REALITY: ожидался Ed25519-ключ (32 байта) в сертификате сервера, получено {} байт",
-                spki.len()
-            )));
+        if self.check_reality(end_entity)? {
+            if let AuthKeySource::Hook(hook) = &self.auth_key {
+                hook.mark_verified();
+            }
+            return Ok(ServerCertVerified::assertion());
         }
-
-        let signature = cert.signature_value.data.as_ref();
-        let auth_key = self.auth_key.get()?;
-
-        if !verify_ed25519_hmac(&auth_key, spki, signature) {
-            return Err(TlsError::General(
-                "REALITY: HMAC-SHA512(AuthKey, pubkey сертификата) не совпал с подписью — сервер не прошёл REALITY-аутентификацию (чужой AuthKey или это не REALITY-сервер)".into(),
-            ));
+        // Не REALITY. Настоящий сертификат сайта — довести рукопожатие,
+        // как браузер, оставив соединение неподтверждённым (флаг в хуке
+        // не выставлен). Всё остальное — ошибка рукопожатия.
+        if let Some(fb) = &self.fallback {
+            if fb
+                .verify_server_cert(end_entity, intermediates, server_name, ocsp_response, now)
+                .is_ok()
+            {
+                tracing::warn!(
+                    "REALITY: вместо сервера ответил настоящий сайт с настоящим сертификатом \
+                     (подмена или перенаправление соединения)"
+                );
+                return Ok(ServerCertVerified::assertion());
+            }
         }
-
-        if let Some(pk) = &self.mldsa65 {
-            self.verify_mldsa65(pk, &auth_key, spki, &cert)?;
-        }
-
-        Ok(ServerCertVerified::assertion())
+        Err(TlsError::General(
+            "REALITY: сертификат сервера не прошёл проверку REALITY (HMAC не совпал: чужой \
+             pbk= или это не REALITY-сервер)"
+                .into(),
+        ))
     }
 
     fn verify_tls12_signature(

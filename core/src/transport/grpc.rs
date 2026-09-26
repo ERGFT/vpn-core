@@ -21,9 +21,17 @@
 //! `poll_capacity`): при медленном сервере данные не копятся в памяти
 //! без ограничения.
 
+use std::io;
+use std::pin::Pin;
+use std::task::{Context, Poll};
+use std::time::Duration;
+
 use bytes::{Buf, Bytes, BytesMut};
 use http::{Method, Request};
-use tokio::io::{duplex, AsyncReadExt, AsyncWriteExt, DuplexStream};
+use tokio::io::{
+    duplex, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, DuplexStream, ReadBuf,
+};
+use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 use crate::error::{Error, Result};
@@ -33,13 +41,62 @@ use crate::vless::VlessConfig;
 
 const DUPLEX_CAPACITY: usize = 64 * 1024;
 const READ_CHUNK: usize = 16 * 1024;
+/// Потолок на одно gRPC-сообщение от сервера. Длина в кадре — u32 от
+/// сервера; без потолка злонамеренный или сломанный сервер заставлял
+/// клиента копить до 4 ГиБ и падать целиком. Xray шлёт кусками по
+/// ~8 КиБ, у grpc-go по умолчанию предел 4 МиБ — берём его.
+pub const MAX_MESSAGE: usize = 4 * 1024 * 1024;
+/// Сколько ждать заголовков ответа сервера.
+const RESPONSE_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// Поток gRPC для вызывающего кода. Сброс (`drop`) останавливает фоновые
+/// задачи отправки и приёма — иначе они жили, пока сервер молчит, и
+/// держали h2-соединение с сокетом.
+pub struct GrpcStream {
+    inner: DuplexStream,
+    cancel: CancellationToken,
+}
+
+impl Drop for GrpcStream {
+    fn drop(&mut self) {
+        self.cancel.cancel();
+    }
+}
+
+impl AsyncRead for GrpcStream {
+    fn poll_read(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<io::Result<()>> {
+        Pin::new(&mut self.get_mut().inner).poll_read(cx, buf)
+    }
+}
+
+impl AsyncWrite for GrpcStream {
+    fn poll_write(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<io::Result<usize>> {
+        Pin::new(&mut self.get_mut().inner).poll_write(cx, buf)
+    }
+
+    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        Pin::new(&mut self.get_mut().inner).poll_flush(cx)
+    }
+
+    fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        Pin::new(&mut self.get_mut().inner).poll_shutdown(cx)
+    }
+}
 
 /// Открыть один gRPC bidi-стрим и вернуть его в виде обычного
 /// `AsyncRead + AsyncWrite` (через `tokio::io::duplex` — фактическая
 /// работа с `h2`/protobuf-кадрированием идёт в фоновой задаче, наружу
 /// отдаётся уже плоский байтовый поток). TLS под ALPN `h2` — обычный или
 /// REALITY, по `cfg.security` (Этап 5).
-pub async fn connect_grpc(cfg: &VlessConfig) -> Result<DuplexStream> {
+pub async fn connect_grpc(cfg: &VlessConfig) -> Result<GrpcStream> {
     let service_name = cfg.service_name().to_string();
 
     // gRPC — только HTTP/2, ALPN всегда `h2`.
@@ -83,6 +140,9 @@ pub async fn connect_grpc(cfg: &VlessConfig) -> Result<DuplexStream> {
     // собственный тестовый сервер отвечал заголовками сразу).
     let (user_half, internal_half) = duplex(DUPLEX_CAPACITY);
     let (mut internal_read, mut internal_write) = tokio::io::split(internal_half);
+    let cancel = CancellationToken::new();
+    let cancel_up = cancel.clone();
+    let cancel_down = cancel.clone();
 
     // Отправляющая половина: то, что записал вызывающий код в
     // user_half, режем на чанки, каждый оборачиваем в gRPC/protobuf
@@ -91,71 +151,93 @@ pub async fn connect_grpc(cfg: &VlessConfig) -> Result<DuplexStream> {
     // (`poll_capacity`). Раньше данные отдавались в `send_data` без этого,
     // и при медленном получателе h2 буферизовал их без ограничения.
     tokio::spawn(async move {
-        let mut buf = vec![0u8; READ_CHUNK];
-        'outer: loop {
-            let n = match internal_read.read(&mut buf).await {
-                Ok(0) | Err(_) => break,
-                Ok(n) => n,
-            };
-            let mut frame = Bytes::from(encode_hunk_frame(&buf[..n]));
-            while !frame.is_empty() {
-                send_stream.reserve_capacity(frame.len());
-                let cap = match std::future::poll_fn(|cx| send_stream.poll_capacity(cx)).await {
-                    Some(Ok(c)) if c > 0 => c,
-                    Some(Ok(_)) => continue,
-                    _ => break 'outer,
+        let work = async {
+            let mut buf = vec![0u8; READ_CHUNK];
+            'outer: loop {
+                let n = match internal_read.read(&mut buf).await {
+                    Ok(0) | Err(_) => break,
+                    Ok(n) => n,
                 };
-                let part = frame.split_to(cap.min(frame.len()));
-                if send_stream.send_data(part, false).is_err() {
-                    break 'outer;
+                let mut frame = Bytes::from(encode_hunk_frame(&buf[..n]));
+                while !frame.is_empty() {
+                    send_stream.reserve_capacity(frame.len());
+                    let cap = match std::future::poll_fn(|cx| send_stream.poll_capacity(cx)).await {
+                        Some(Ok(c)) if c > 0 => c,
+                        Some(Ok(_)) => continue,
+                        _ => break 'outer,
+                    };
+                    let part = frame.split_to(cap.min(frame.len()));
+                    if send_stream.send_data(part, false).is_err() {
+                        break 'outer;
+                    }
                 }
             }
+            let _ = send_stream.send_data(Bytes::new(), true);
+        };
+        tokio::select! {
+            _ = cancel_up.cancelled() => {}
+            _ = work => {}
         }
-        let _ = send_stream.send_data(Bytes::new(), true);
     });
 
     // Принимающая половина: сырые DATA-фреймы HTTP/2 не совпадают по
     // границам с gRPC-сообщениями — копим в `HunkDecoder` и отдаём
     // вызывающему коду уже только полезную нагрузку из `Hunk.data`.
     tokio::spawn(async move {
-        let response = match response_fut.await {
-            Ok(r) => r,
-            Err(e) => {
-                tracing::debug!(error = %e, "gRPC-сервер не ответил на поток");
+        let work = async {
+            let response = match tokio::time::timeout(RESPONSE_TIMEOUT, response_fut).await {
+                Ok(Ok(r)) => r,
+                Ok(Err(e)) => {
+                    tracing::debug!(error = %e, "gRPC-сервер не ответил на поток");
+                    return;
+                }
+                Err(_) => {
+                    tracing::debug!("gRPC-сервер не прислал заголовки ответа вовремя");
+                    return;
+                }
+            };
+            if response.status() != http::StatusCode::OK {
+                tracing::warn!(
+                    status = %response.status(),
+                    "gRPC-сервер ответил не 200 (неверный serviceName или это не gRPC-вход)"
+                );
                 return;
             }
-        };
-        if response.status() != http::StatusCode::OK {
-            tracing::warn!(
-                status = %response.status(),
-                "gRPC-сервер ответил не 200 (неверный serviceName или это не gRPC-вход)"
-            );
-            return;
-        }
-        let mut recv_stream = response.into_body();
-        let mut decoder = HunkDecoder::default();
-        while let Some(chunk) = recv_stream.data().await {
-            let chunk = match chunk {
-                Ok(c) => c,
-                Err(_) => break,
-            };
-            let _ = recv_stream.flow_control().release_capacity(chunk.len());
-            decoder.feed(&chunk);
-            loop {
-                match decoder.next_message() {
-                    Ok(Some(payload)) => {
-                        if internal_write.write_all(&payload).await.is_err() {
+            let mut recv_stream = response.into_body();
+            let mut decoder = HunkDecoder::default();
+            while let Some(chunk) = recv_stream.data().await {
+                let chunk = match chunk {
+                    Ok(c) => c,
+                    Err(_) => break,
+                };
+                let _ = recv_stream.flow_control().release_capacity(chunk.len());
+                decoder.feed(&chunk);
+                loop {
+                    match decoder.next_message() {
+                        Ok(Some(payload)) => {
+                            if internal_write.write_all(&payload).await.is_err() {
+                                return;
+                            }
+                        }
+                        Ok(None) => break,
+                        Err(e) => {
+                            tracing::warn!(error = %e, "gRPC: поток от сервера отвергнут");
                             return;
                         }
                     }
-                    Ok(None) => break,
-                    Err(_) => return,
                 }
             }
+        };
+        tokio::select! {
+            _ = cancel_down.cancelled() => {}
+            _ = work => {}
         }
     });
 
-    Ok(user_half)
+    Ok(GrpcStream {
+        inner: user_half,
+        cancel,
+    })
 }
 
 /// Полное открытие соединения Этапа 4 (gRPC): TCP -> TLS(ALPN h2) ->
@@ -166,7 +248,7 @@ pub async fn connect_and_handshake_grpc(
     id: &Uuid,
     target: Address,
     target_port: u16,
-) -> Result<VlessStream<DuplexStream>> {
+) -> Result<VlessStream<GrpcStream>> {
     connect_command_grpc(cfg, id, Command::Tcp, target, target_port).await
 }
 
@@ -177,7 +259,7 @@ pub async fn connect_command_grpc(
     command: Command,
     target: Address,
     target_port: u16,
-) -> Result<VlessStream<DuplexStream>> {
+) -> Result<VlessStream<GrpcStream>> {
     cfg.ensure_flow_supported()?;
     let stream = connect_grpc(cfg).await?;
     vless_connect(stream, id, command, &target, target_port).await
@@ -257,6 +339,11 @@ impl HunkDecoder {
             ));
         }
         let len = u32::from_be_bytes([self.buf[1], self.buf[2], self.buf[3], self.buf[4]]) as usize;
+        if len > MAX_MESSAGE {
+            return Err(Error::Protocol(format!(
+                "gRPC-сообщение {len} байт больше допустимого ({MAX_MESSAGE})"
+            )));
+        }
         if self.buf.len() < 5 + len {
             return Ok(None);
         }
@@ -327,6 +414,16 @@ mod tests {
         assert_eq!(decoder.next_message().unwrap().unwrap(), b"one");
         assert_eq!(decoder.next_message().unwrap().unwrap(), b"two");
         assert_eq!(decoder.next_message().unwrap(), None);
+    }
+
+    #[test]
+    fn rejects_oversized_message_before_buffering_it() {
+        let mut decoder = HunkDecoder::default();
+        decoder.feed(&[0, 0xff, 0xff, 0xff, 0xff, 0x0a]);
+        assert!(decoder.next_message().is_err());
+        let mut decoder = HunkDecoder::default();
+        decoder.feed(&[0, 0, 0x40, 0, 1]); // 4 МиБ + 1
+        assert!(decoder.next_message().is_err());
     }
 
     #[test]

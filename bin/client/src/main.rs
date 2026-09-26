@@ -43,6 +43,9 @@ use reality_core::vless::{Address, Command, VlessConfig};
 /// TLS или REALITY и заголовок VLESS. Щедрый: на плохой сети рукопожатие
 /// занимает секунды, но вечного ожидания быть не должно.
 const DIAL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+/// Потолок на приветствие и запрос SOCKS5: без него молчащий клиент
+/// держал сокет и задачу вечно — тысяча таких исчерпывала дескрипторы.
+const SOCKS_HANDSHAKE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 
 #[derive(Parser, Debug)]
 #[command(
@@ -51,9 +54,15 @@ const DIAL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
     about = "VLESS core — локальный SOCKS5 -> VLESS (tcp/ws/grpc/httpupgrade/xhttp, tls/reality, XTLS Vision)"
 )]
 struct Args {
-    /// vless:// ссылка сервера
-    #[arg(long)]
-    server: String,
+    /// vless:// ссылка сервера. В командной строке она видна другим
+    /// пользователям машины (список процессов) — надёжнее
+    /// --server-file или переменная окружения REALITY_SERVER
+    #[arg(long, env = "REALITY_SERVER", hide_env_values = true)]
+    server: Option<String>,
+
+    /// Файл, в котором лежит vless:// ссылка (первая непустая строка)
+    #[arg(long, value_name = "ФАЙЛ", conflicts_with = "server")]
+    server_file: Option<std::path::PathBuf>,
 
     /// Локальный адрес, на котором поднимается SOCKS5
     #[arg(long, default_value = "127.0.0.1:1080")]
@@ -61,8 +70,22 @@ struct Args {
 
     /// Требовать логин и пароль на SOCKS5: `логин:пароль`
     /// (обязательно, если слушать не только на 127.0.0.1)
-    #[arg(long, value_name = "ЛОГИН:ПАРОЛЬ")]
+    #[arg(
+        long,
+        value_name = "ЛОГИН:ПАРОЛЬ",
+        env = "REALITY_SOCKS_AUTH",
+        hide_env_values = true
+    )]
     auth: Option<String>,
+
+    /// Файл с `логин:пароль` для SOCKS5 (вместо --auth)
+    #[arg(long, value_name = "ФАЙЛ", conflicts_with = "auth")]
+    auth_file: Option<std::path::PathBuf>,
+
+    /// Сколько соединений SOCKS5 обслуживать одновременно; лишние
+    /// сразу закрываются (защита от исчерпания дескрипторов)
+    #[arg(long, default_value_t = 512)]
+    max_conns: usize,
 
     /// PEM-файл с корневыми сертификатами для security=tls вместо
     /// встроенного набора (для сервера с самоподписанным сертификатом)
@@ -74,6 +97,18 @@ struct Args {
     /// Xray так UDP не примет
     #[arg(long)]
     no_xudp: bool,
+}
+
+/// Прочитать секрет (ссылку или логин:пароль) из файла: первая непустая
+/// строка без пробелов по краям.
+fn read_secret_file(path: &std::path::Path) -> Result<String> {
+    let text = std::fs::read_to_string(path)
+        .with_context(|| format!("не удалось прочитать {}", path.display()))?;
+    text.lines()
+        .map(str::trim)
+        .find(|l| !l.is_empty())
+        .map(str::to_string)
+        .with_context(|| format!("файл {} пуст", path.display()))
 }
 
 fn load_ca(path: &std::path::Path) -> Result<rustls::RootCertStore> {
@@ -111,7 +146,14 @@ async fn main() -> Result<()> {
         .init();
     let args = Args::parse();
 
-    let mut cfg = VlessConfig::parse(&args.server).context("разбор vless:// ссылки")?;
+    let server = match (&args.server, &args.server_file) {
+        (_, Some(path)) => read_secret_file(path)?,
+        (Some(s), None) => s.trim().to_string(),
+        (None, None) => anyhow::bail!(
+            "не задан сервер: --server 'vless://...', --server-file ФАЙЛ или REALITY_SERVER"
+        ),
+    };
+    let mut cfg = VlessConfig::parse(&server).context("разбор vless:// ссылки")?;
     // Сразу при старте, а не на каждом соединении: неподходящий flow
     // не должен выглядеть как "SOCKS5 работает, но сайты не открываются".
     cfg.validate()
@@ -130,7 +172,12 @@ async fn main() -> Result<()> {
     if let Some(ca) = &args.ca {
         cfg.ca_roots = Some(Arc::new(load_ca(ca)?));
     }
-    let auth = match &args.auth {
+    let auth_str = match (&args.auth, &args.auth_file) {
+        (_, Some(path)) => Some(read_secret_file(path)?),
+        (Some(a), None) => Some(a.clone()),
+        (None, None) => None,
+    };
+    let auth = match &auth_str {
         Some(a) => Some(Arc::new(
             Credentials::parse(a).context("--auth ожидается в виде логин:пароль")?,
         )),
@@ -166,6 +213,8 @@ async fn main() -> Result<()> {
     // Реальный адрес: при --listen ...:0 порт выбирает система.
     info!(addr = %listener.local_addr()?, auth = auth.is_some(), "SOCKS5 слушает");
 
+    let slots = Arc::new(tokio::sync::Semaphore::new(args.max_conns.max(1)));
+    let mut last_full_warn: Option<std::time::Instant> = None;
     loop {
         let (socket, peer) = match listener.accept().await {
             Ok(v) => v,
@@ -177,12 +226,26 @@ async fn main() -> Result<()> {
                 continue;
             }
         };
+        let Ok(permit) = slots.clone().try_acquire_owned() else {
+            // Лимит соединений исчерпан: закрываем сразу, чтобы не
+            // кончились дескрипторы. Предупреждение — не чаще раза в 10 с.
+            if last_full_warn.is_none_or(|t| t.elapsed().as_secs() >= 10) {
+                warn!(
+                    max = args.max_conns,
+                    "достигнут предел одновременных соединений (--max-conns)"
+                );
+                last_full_warn = Some(std::time::Instant::now());
+            }
+            drop(socket);
+            continue;
+        };
         // Локальный сокет к приложению — тоже без задержки Нагла.
         socket.set_nodelay(true).ok();
         let cfg = cfg.clone();
         let auth = auth.clone();
         let xudp = !args.no_xudp;
         tokio::spawn(async move {
+            let _permit = permit;
             if let Err(e) = handle_conn(socket, cfg, auth, xudp).await {
                 warn!(%peer, error = %e, "соединение завершилось с ошибкой");
             }
@@ -225,10 +288,28 @@ async fn handle_conn(
     auth: Option<Arc<Credentials>>,
     xudp: bool,
 ) -> anyhow::Result<()> {
-    let req = socks5::handshake_with_auth(&mut socket, auth.as_deref()).await?;
+    // Ошибки приветствия (неверный пароль, мусор вместо SOCKS5, молчащий
+    // клиент) — в журнал только на уровне debug: иначе перебор паролей
+    // или сканер портов заваливали бы журнал.
+    let req = match tokio::time::timeout(
+        SOCKS_HANDSHAKE_TIMEOUT,
+        socks5::handshake_with_auth(&mut socket, auth.as_deref()),
+    )
+    .await
+    {
+        Ok(Ok(r)) => r,
+        Ok(Err(e)) => {
+            tracing::debug!(error = %e, "SOCKS5: приветствие отклонено");
+            return Ok(());
+        }
+        Err(_) => {
+            tracing::debug!("SOCKS5: клиент не прислал запрос вовремя");
+            return Ok(());
+        }
+    };
 
     if req.command == Socks5Command::UdpAssociate && xudp {
-        socks5::udp::serve_associate_xudp(socket, move || {
+        socks5::udp::serve_associate_xudp(socket, req.port, move || {
             let cfg = cfg.clone();
             async move {
                 dial(
@@ -246,7 +327,7 @@ async fn handle_conn(
     }
     if req.command == Socks5Command::UdpAssociate {
         let cfg2 = cfg.clone();
-        socks5::udp::serve_associate(socket, move |addr, port| {
+        socks5::udp::serve_associate(socket, req.port, move |addr, port| {
             let cfg = cfg2.clone();
             async move {
                 dial(&cfg, Command::Udp, to_vless_addr(&addr), port)
@@ -273,12 +354,15 @@ async fn handle_conn(
 
     let bind_addr = socket.local_addr()?;
     socks5::reply_success(&mut socket, bind_addr).await?;
-    info!(target = %target, port = req.port, network = ?cfg.network, "проксирую");
+    // Адреса сайтов — только на уровне debug: на уровне по умолчанию
+    // журнал превращался в историю посещений.
+    tracing::debug!(target = %target, port = req.port, network = ?cfg.network, "проксирую");
 
     let stats = relay::copy_bidirectional(socket, remote).await?;
-    info!(
+    tracing::debug!(
         sent = stats.client_to_remote,
         received = stats.remote_to_client,
+        idle_closed = stats.idle_closed,
         "соединение закрыто"
     );
     Ok(())

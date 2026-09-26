@@ -273,21 +273,37 @@ pub fn reality_client_config(
     reality: &crate::vless::uri::RealityParams,
     alpn: Vec<Vec<u8>>,
 ) -> Result<ClientConfig> {
+    Ok(reality_client_config_inner(reality, alpn, None)?.0)
+}
+
+/// Сборка конфига REALITY. `browser_fallback` — корни для обычной
+/// проверки X.509: с ними настоящий сертификат сайта не рвёт рукопожатие
+/// (см. `transport::browser_mimic`), и тогда вызывающий код ОБЯЗАН
+/// проверить `hook.is_verified()` до любой отправки своих данных.
+/// Поэтому этот вариант не публичный: снаружи доступен только строгий
+/// [`reality_client_config`].
+fn reality_client_config_inner(
+    reality: &crate::vless::uri::RealityParams,
+    alpn: Vec<Vec<u8>>,
+    browser_fallback: Option<RootCertStore>,
+) -> Result<(ClientConfig, Arc<RealityHook>)> {
     let mut rng = rand::rngs::OsRng;
     let hook = Arc::new(RealityHook::new(
         &reality.public_key,
         &reality.short_id,
         &mut rng,
     ));
-    let verifier = RealityCertVerifier::from_hook(hook.clone()).map_err(|e| {
+    let mut verifier = RealityCertVerifier::from_hook(hook.clone()).map_err(|e| {
         Error::Protocol(format!(
             "REALITY: не удалось создать верификатор сертификата: {e}"
         ))
     })?;
-    let verifier = match &reality.mldsa65_verify {
-        Some(pk) => verifier.with_mldsa65(pk.clone()),
-        None => verifier,
-    };
+    if let Some(pk) = &reality.mldsa65_verify {
+        verifier = verifier.with_mldsa65(pk.clone());
+    }
+    if let Some(roots) = browser_fallback {
+        verifier = verifier.with_browser_fallback(roots)?;
+    }
 
     let provider = crate::fingerprint::apply_chrome133_cipher_order(
         rustls::crypto::aws_lc_rs::default_provider(),
@@ -298,10 +314,15 @@ pub fn reality_client_config(
         .dangerous()
         .with_custom_certificate_verifier(Arc::new(verifier))
         .with_no_client_auth();
-    config.reality = Some(hook);
+    config.reality = Some(hook.clone());
     config.alpn_protocols = alpn;
+    // Без возобновления сессий, как у Xray (`SessionTicketsDisabled`):
+    // возобновлённое рукопожатие не показывает сертификат, и проверка
+    // REALITY была бы пропущена. Конфиг и так одноразовый, это страховка.
+    // На ClientHello не влияет (psk_key_exchange_modes уходит всегда).
+    config.resumption = rustls::client::Resumption::disabled();
     crate::fingerprint::apply_chrome_extensions(&mut config, true);
-    Ok(config)
+    Ok((config, hook))
 }
 
 async fn connect_tls_reality_inner(
@@ -314,12 +335,22 @@ async fn connect_tls_reality_inner(
 
     let mut tcp = connect_tcp(cfg).await?;
     tcp.set_record_aligned(record_aligned);
-    let config = reality_client_config(reality, alpn)?;
+    let (config, hook) = reality_client_config_inner(reality, alpn, Some(roots_for(cfg)))?;
     let connector = TlsConnector::from(Arc::new(config));
     let server_name =
         ServerName::try_from(cfg.effective_sni().to_string()).map_err(Error::InvalidDnsName)?;
 
     let tls = with_handshake_timeout("REALITY", connector.connect(server_name, tcp)).await?;
+    // Единственная точка, через которую REALITY-соединение попадает к
+    // VLESS: не прошедшее проверку соединение отсюда не выходит никогда.
+    if !hook.is_verified() {
+        crate::transport::browser_mimic::visit_in_background(tls, cfg.effective_sni().to_string());
+        return Err(Error::Protocol(
+            "REALITY: вместо сервера ответил настоящий сайт (подмена соединения или \
+             неверный pbk=/sni=); данные VLESS не отправлялись"
+                .into(),
+        ));
+    }
     Ok(tls)
 }
 

@@ -12,9 +12,10 @@
 //! `tokio::io::AsyncRead + AsyncWrite`, которые ждут `vless_handshake` и
 //! `relay::copy_bidirectional`.
 
-use async_tungstenite::client_async;
+use async_tungstenite::client_async_with_config;
 use async_tungstenite::tungstenite::handshake::client::generate_key;
 use async_tungstenite::tungstenite::http::Request;
+use async_tungstenite::tungstenite::protocol::WebSocketConfig;
 use tokio_util::compat::{Compat, TokioAsyncReadCompatExt};
 use uuid::Uuid;
 use ws_stream_tungstenite::WsStream;
@@ -23,6 +24,9 @@ use crate::error::{Error, Result};
 use crate::transport::tcp_tls::{connect_tls_by_security, SecureStream};
 use crate::vless::protocol::{vless_connect, Address, Command, VlessStream};
 use crate::vless::VlessConfig;
+
+/// Потолок на одно сообщение WebSocket от сервера.
+const MAX_WS_MESSAGE: usize = 1024 * 1024;
 
 pub type WsVlessStream = WsStream<Compat<SecureStream>>;
 
@@ -65,7 +69,13 @@ pub async fn connect_ws(cfg: &VlessConfig) -> Result<WsVlessStream> {
         .body(())
         .map_err(|e| Error::Protocol(format!("не удалось собрать WS-запрос: {e}")))?;
 
-    let (ws, _response) = client_async(request, compat_tls)
+    // Пределы на сообщение и кадр от сервера: по умолчанию у tungstenite
+    // 64 МиБ и 16 МиБ, и каждое соединение могло копить столько в памяти.
+    // Xray шлёт кадры по ~8 КиБ.
+    let limits = WebSocketConfig::default()
+        .max_message_size(Some(MAX_WS_MESSAGE))
+        .max_frame_size(Some(MAX_WS_MESSAGE));
+    let (ws, _response) = client_async_with_config(request, compat_tls, Some(limits))
         .await
         .map_err(|e| Error::Protocol(format!("WS upgrade не удался: {e}")))?;
 

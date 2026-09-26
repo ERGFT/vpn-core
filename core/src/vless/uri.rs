@@ -355,6 +355,19 @@ impl VlessConfig {
         }
         let mut public_key = [0u8; 32];
         public_key.copy_from_slice(&pbk_bytes);
+        // Точка малого порядка (например, все нули) даёт нулевой общий
+        // секрет с любым нашим ключом: AuthKey вычислим кем угодно, и
+        // любой посредник подделает «REALITY-сертификат». Xray такие
+        // ключи тоже отвергает.
+        let probe = x25519_dalek::StaticSecret::random_from_rng(rand::rngs::OsRng)
+            .diffie_hellman(&x25519_dalek::PublicKey::from(public_key));
+        if !probe.was_contributory() {
+            return Err(Error::InvalidUri(
+                "pbk= — вырожденный ключ X25519 (точка малого порядка), такой ключ \
+                 небезопасен"
+                    .into(),
+            ));
+        }
 
         // sid= необязателен у Xray-core (сервер может быть настроен с
         // пустым shortIds), поэтому отсутствие ключа — не ошибка, в

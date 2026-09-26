@@ -19,6 +19,7 @@
 use std::collections::HashMap;
 use std::future::Future;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -38,6 +39,11 @@ const MAX_SESSIONS: usize = 256;
 /// Очередь пакетов к ещё открывающемуся потоку; лишнее отбрасывается
 /// (для UDP это нормальное поведение при перегрузке).
 const QUEUE: usize = 64;
+/// Потолок на данные, ждущие в очередях одной ассоциации (режим без
+/// XUDP): пока потоки к назначениям открываются, датаграммы копятся.
+/// Без него сотня назначений по 64 датаграммы по 64 КиБ занимала
+/// гигабайты.
+const MAX_QUEUED_BYTES: usize = 4 * 1024 * 1024;
 
 /// Разобрать заголовок датаграммы SOCKS5: `RSV(2) FRAG(1) ATYP АДРЕС ПОРТ`.
 /// Возвращает назначение и смещение данных. Фрагменты (`FRAG != 0`) не
@@ -101,7 +107,11 @@ pub fn encode_datagram(addr: &TargetAddr, port: u16, data: &[u8]) -> Vec<u8> {
 /// Обслужить одну UDP-ассоциацию. `control` — управляющее TCP-соединение
 /// (запрос UDP ASSOCIATE уже разобран), `open` — открыть VLESS-поток с
 /// командой UDP до назначения.
-pub async fn serve_associate<F, Fut, S>(mut control: TcpStream, open: F) -> Result<()>
+pub async fn serve_associate<F, Fut, S>(
+    mut control: TcpStream,
+    requested_port: u16,
+    open: F,
+) -> Result<()>
 where
     F: Fn(TargetAddr, u16) -> Fut + Send + Sync + 'static,
     Fut: Future<Output = Result<S>> + Send + 'static,
@@ -113,6 +123,8 @@ where
     reply_success(&mut control, udp.local_addr()?).await?;
     tracing::info!(udp = %udp.local_addr()?, "SOCKS5 UDP: ассоциация открыта");
 
+    let mut filter = ClientFilter::new(client_ip, requested_port);
+    let budget = Arc::new(AtomicUsize::new(0));
     let open = Arc::new(open);
     let mut sessions: HashMap<(TargetAddr, u16), mpsc::Sender<Vec<u8>>> = HashMap::new();
     let mut tasks = JoinSet::new();
@@ -128,8 +140,8 @@ where
                 }
             }
             r = udp.recv_from(&mut buf) => {
-                let (n, from) = r?;
-                if from.ip() != client_ip {
+                let Some((n, from)) = recv_result(r)? else { continue };
+                if !filter.accept(from) {
                     tracing::debug!(%from, "SOCKS5 UDP: датаграмма не от владельца ассоциации — отброшена");
                     continue;
                 }
@@ -140,32 +152,42 @@ where
                         continue;
                     }
                 };
+                // Общий потолок на данные в очередях ассоциации: пока
+                // потоки открываются, датаграммы копятся в памяти.
+                if budget.load(Ordering::Relaxed) + (n - off) > MAX_QUEUED_BYTES {
+                    tracing::debug!("SOCKS5 UDP: очередь переполнена — датаграмма отброшена");
+                    continue;
+                }
+                budget.fetch_add(n - off, Ordering::Relaxed);
                 let payload = buf[off..n].to_vec();
                 let key = (addr.clone(), port);
-                if let Some(tx) = sessions.get(&key) {
-                    match tx.try_send(payload) {
+                let len = payload.len();
+                let payload = match sessions.get(&key) {
+                    Some(tx) => match tx.try_send(payload) {
                         Ok(()) => continue,
-                        Err(mpsc::error::TrySendError::Full(_)) => continue,
-                        Err(mpsc::error::TrySendError::Closed(p)) => {
-                            sessions.remove(&key);
-                            // поток истёк по тишине — откроем заново ниже
-                            if let Some(tx) = spawn_session(&mut tasks, &open, &udp, from, key.clone()) {
-                                let _ = tx.try_send(p);
-                                sessions.insert(key, tx);
-                            }
+                        Err(mpsc::error::TrySendError::Full(_)) => {
+                            budget.fetch_sub(len, Ordering::Relaxed);
                             continue;
                         }
-                    }
-                }
+                        // поток истёк по тишине — откроем заново ниже
+                        Err(mpsc::error::TrySendError::Closed(p)) => {
+                            sessions.remove(&key);
+                            p
+                        }
+                    },
+                    None => payload,
+                };
                 sessions.retain(|_, tx| !tx.is_closed());
                 if sessions.len() >= MAX_SESSIONS {
                     tracing::warn!("SOCKS5 UDP: слишком много назначений в одной ассоциации");
+                    budget.fetch_sub(len, Ordering::Relaxed);
                     continue;
                 }
-                if let Some(tx) = spawn_session(&mut tasks, &open, &udp, from, key.clone()) {
-                    let _ = tx.try_send(payload);
-                    sessions.insert(key, tx);
+                let tx = spawn_session(&mut tasks, &open, &udp, from, key.clone(), budget.clone());
+                if tx.try_send(payload).is_err() {
+                    budget.fetch_sub(len, Ordering::Relaxed);
                 }
+                sessions.insert(key, tx);
             }
             // Уборка завершившихся задач, чтобы JoinSet не рос.
             Some(_) = tasks.join_next(), if !tasks.is_empty() => {}
@@ -182,7 +204,8 @@ fn spawn_session<F, Fut, S>(
     udp: &Arc<UdpSocket>,
     client: SocketAddr,
     (addr, port): (TargetAddr, u16),
-) -> Option<mpsc::Sender<Vec<u8>>>
+    budget: Arc<AtomicUsize>,
+) -> mpsc::Sender<Vec<u8>>
 where
     F: Fn(TargetAddr, u16) -> Fut + Send + Sync + 'static,
     Fut: Future<Output = Result<S>> + Send + 'static,
@@ -192,44 +215,111 @@ where
     let open = open.clone();
     let udp = udp.clone();
     tasks.spawn(async move {
-        let stream = match open(addr.clone(), port).await {
-            Ok(s) => s,
-            Err(e) => {
-                tracing::warn!(target = %addr, port, error = %e, "SOCKS5 UDP: не удалось открыть поток");
-                return;
-            }
-        };
-        tracing::debug!(target = %addr, port, "SOCKS5 UDP: поток открыт");
-        let (mut r, mut w) = tokio::io::split(stream);
-        let up = async {
-            while let Ok(Some(p)) = tokio::time::timeout(SESSION_IDLE, rx.recv()).await {
-                if crate::vless::udp::write_packet(&mut w, &p).await.is_err() {
-                    break;
+        let session = async {
+            let stream = match open(addr.clone(), port).await {
+                Ok(s) => s,
+                Err(e) => {
+                    tracing::warn!(error = %e, "SOCKS5 UDP: не удалось открыть поток");
+                    tracing::debug!(target = %addr, port, "SOCKS5 UDP: назначение неудачного потока");
+                    return;
                 }
-            }
-        };
-        let down = async {
-            let mut pkt = Vec::new();
-            while let Ok(Ok(Some(()))) = tokio::time::timeout(
-                SESSION_IDLE,
-                crate::vless::udp::read_packet(&mut r, &mut pkt),
-            )
-            .await
-            {
-                let dg = encode_datagram(&addr, port, &pkt);
-                if udp.send_to(&dg, client).await.is_err() {
-                    break;
+            };
+            tracing::debug!(target = %addr, port, "SOCKS5 UDP: поток открыт");
+            let (mut r, mut w) = tokio::io::split(stream);
+            let up = async {
+                while let Ok(Some(p)) = tokio::time::timeout(SESSION_IDLE, rx.recv()).await {
+                    budget.fetch_sub(p.len(), Ordering::Relaxed);
+                    if crate::vless::udp::write_packet(&mut w, &p).await.is_err() {
+                        break;
+                    }
                 }
+            };
+            let down = async {
+                let mut pkt = Vec::new();
+                while let Ok(Ok(Some(()))) = tokio::time::timeout(
+                    SESSION_IDLE,
+                    crate::vless::udp::read_packet(&mut r, &mut pkt),
+                )
+                .await
+                {
+                    // Ошибка отправки одной датаграммы — не повод рвать поток.
+                    let dg = encode_datagram(&addr, port, &pkt);
+                    let _ = udp.send_to(&dg, client).await;
+                }
+            };
+            // Кто первый закончил (тишина, ошибка, закрытие) — тот и закрывает поток.
+            tokio::select! {
+                _ = up => {}
+                _ = down => {}
             }
+            tracing::debug!(target = %addr, port, "SOCKS5 UDP: поток закрыт");
         };
-        // Кто первый закончил (тишина, ошибка, закрытие) — тот и закрывает поток.
-        tokio::select! {
-            _ = up => {}
-            _ = down => {}
+        session.await;
+        // Непрочитанное — вернуть в общий бюджет ассоциации.
+        rx.close();
+        while let Ok(p) = rx.try_recv() {
+            budget.fetch_sub(p.len(), Ordering::Relaxed);
         }
-        tracing::debug!(target = %addr, port, "SOCKS5 UDP: поток закрыт");
     });
-    Some(tx)
+    tx
+}
+
+/// Кто может пользоваться UDP-ассоциацией. RFC 1928: DST.ADDR/DST.PORT в
+/// запросе UDP ASSOCIATE — адрес, с которого клиент будет слать
+/// датаграммы. Раньше проверялся только IP, и другой процесс или
+/// пользователь на той же машине мог слать пакеты в туннель и
+/// перехватывать ответы (включая DNS). Теперь: IP управляющего
+/// соединения, порт из запроса (если не 0), а первый принятый отправитель
+/// закрепляется за ассоциацией целиком (IP и порт).
+struct ClientFilter {
+    ip: IpAddr,
+    port: Option<u16>,
+    locked: Option<SocketAddr>,
+}
+
+impl ClientFilter {
+    fn new(control_peer: IpAddr, requested_port: u16) -> Self {
+        ClientFilter {
+            ip: control_peer.to_canonical(),
+            port: (requested_port != 0).then_some(requested_port),
+            locked: None,
+        }
+    }
+
+    fn accept(&mut self, from: SocketAddr) -> bool {
+        if from.ip().to_canonical() != self.ip {
+            return false;
+        }
+        if self.port.is_some_and(|p| p != from.port()) {
+            return false;
+        }
+        match self.locked {
+            None => {
+                self.locked = Some(from);
+                true
+            }
+            Some(l) => l == from,
+        }
+    }
+}
+
+/// Результат `recv_from`: ошибки отдельных датаграмм (на Windows после
+/// ICMP «порт недоступен» приходит WSAECONNRESET) пропускаются, а не
+/// рвут всю ассоциацию.
+fn recv_result(r: std::io::Result<(usize, SocketAddr)>) -> Result<Option<(usize, SocketAddr)>> {
+    match r {
+        Ok(v) => Ok(Some(v)),
+        Err(e)
+            if matches!(
+                e.kind(),
+                std::io::ErrorKind::ConnectionReset | std::io::ErrorKind::ConnectionRefused
+            ) =>
+        {
+            tracing::debug!(error = %e, "SOCKS5 UDP: ошибка отдельной датаграммы пропущена");
+            Ok(None)
+        }
+        Err(e) => Err(e.into()),
+    }
 }
 
 fn to_vless(addr: &TargetAddr) -> Address {
@@ -254,7 +344,11 @@ fn from_vless(addr: Address) -> TargetAddr {
 /// закрылся (ошибка сервера или [`SESSION_IDLE`] тишины в обе стороны);
 /// GlobalID один на всю ассоциацию — сервер сохраняет за ней тот же
 /// внешний UDP-порт.
-pub async fn serve_associate_xudp<F, Fut, S>(mut control: TcpStream, open: F) -> Result<()>
+pub async fn serve_associate_xudp<F, Fut, S>(
+    mut control: TcpStream,
+    requested_port: u16,
+    open: F,
+) -> Result<()>
 where
     F: Fn() -> Fut + Send + Sync + 'static,
     Fut: Future<Output = Result<S>> + Send + 'static,
@@ -265,6 +359,7 @@ where
     let udp = Arc::new(UdpSocket::bind(SocketAddr::new(local_ip, 0)).await?);
     reply_success(&mut control, udp.local_addr()?).await?;
     tracing::info!(udp = %udp.local_addr()?, "SOCKS5 UDP (XUDP): ассоциация открыта");
+    let mut filter = ClientFilter::new(client_ip, requested_port);
 
     let mut global_id = [0u8; 8];
     rand::RngCore::fill_bytes(&mut rand::thread_rng(), &mut global_id);
@@ -282,8 +377,8 @@ where
                 }
             }
             r = udp.recv_from(&mut buf) => {
-                let (n, from) = r?;
-                if from.ip() != client_ip {
+                let Some((n, from)) = recv_result(r)? else { continue };
+                if !filter.accept(from) {
                     tracing::debug!(%from, "SOCKS5 UDP: датаграмма не от владельца ассоциации — отброшена");
                     continue;
                 }
@@ -377,10 +472,9 @@ where
                 else {
                     continue;
                 };
+                // Ошибка отправки одной датаграммы — не повод рвать поток.
                 let dg = encode_datagram(&from_vless(addr), port, &p.data);
-                if udp.send_to(&dg, client).await.is_err() {
-                    break;
-                }
+                let _ = udp.send_to(&dg, client).await;
             }
         };
         let idle = async {
@@ -419,6 +513,26 @@ mod tests {
             assert_eq!(p, 53);
             assert_eq!(&dg[off..], b"payload");
         }
+    }
+
+    #[test]
+    fn association_accepts_only_its_owner() {
+        let owner: SocketAddr = "127.0.0.1:5000".parse().unwrap();
+        let mut f = ClientFilter::new("127.0.0.1".parse().unwrap(), 0);
+        assert!(!f.accept("127.0.0.2:5000".parse().unwrap()), "чужой IP");
+        assert!(f.accept(owner), "первый отправитель закрепляется");
+        assert!(f.accept(owner));
+        assert!(
+            !f.accept("127.0.0.1:5001".parse().unwrap()),
+            "тот же IP, другой порт"
+        );
+        // IPv4 через IPv6-сокет — тот же адрес.
+        let mut f = ClientFilter::new("::ffff:127.0.0.1".parse().unwrap(), 7000);
+        assert!(
+            !f.accept("127.0.0.1:7001".parse().unwrap()),
+            "порт из запроса"
+        );
+        assert!(f.accept("127.0.0.1:7000".parse().unwrap()));
     }
 
     #[test]

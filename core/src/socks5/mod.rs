@@ -56,6 +56,9 @@ pub enum Socks5Command {
     UdpAssociate,
 }
 
+/// Пауза перед ответом «неверный пароль».
+const AUTH_FAILURE_DELAY: std::time::Duration = std::time::Duration::from_millis(500);
+
 #[derive(Debug, Clone)]
 pub struct Socks5Request {
     pub command: Socks5Command,
@@ -95,7 +98,9 @@ impl Credentials {
     /// символов совпало.
     fn matches(&self, user: &[u8], pass: &[u8]) -> bool {
         fn ct_eq(a: &[u8], b: &[u8]) -> bool {
-            let mut diff = (a.len() ^ b.len()) as u8;
+            // Сравнение длин — как usize: `(a ^ b) as u8` обнулялось бы
+            // при разнице длин, кратной 256.
+            let mut diff = u8::from(a.len() != b.len());
             for i in 0..a.len().max(b.len()) {
                 diff |= a.get(i).copied().unwrap_or(0) ^ b.get(i).copied().unwrap_or(0xff);
             }
@@ -169,6 +174,9 @@ where
             let mut pass = vec![0u8; plen[0] as usize];
             stream.read_exact(&mut pass).await?;
             if !creds.matches(&user, &pass) {
+                // Пауза перед отказом замедляет подбор пароля (при
+                // `--listen` в сеть) и не мешает честному клиенту.
+                tokio::time::sleep(AUTH_FAILURE_DELAY).await;
                 stream.write_all(&[USER_PASS_VERSION, 0x01]).await?;
                 return Err(Error::Socks5("неверный логин или пароль".into()));
             }
@@ -204,9 +212,26 @@ where
             stream.read_exact(&mut len_buf).await?;
             let mut b = vec![0u8; len_buf[0] as usize];
             stream.read_exact(&mut b).await?;
-            let domain =
-                String::from_utf8(b).map_err(|_| Error::Socks5("домен не в UTF-8".into()))?;
-            TargetAddr::Domain(domain)
+            let mut port = [0u8; 2];
+            stream.read_exact(&mut port).await?;
+            match String::from_utf8(b) {
+                Ok(d) if !d.is_empty() => {
+                    return Ok(Socks5Request {
+                        command,
+                        addr: TargetAddr::Domain(d),
+                        port: u16::from_be_bytes(port),
+                    })
+                }
+                _ => {
+                    reply(
+                        stream,
+                        ReplyCode::AddressTypeNotSupported as u8,
+                        default_bind(),
+                    )
+                    .await?;
+                    return Err(Error::Socks5("пустой домен или домен не в UTF-8".into()));
+                }
+            }
         }
         ATYP_IPV6 => {
             let mut b = [0u8; 16];
@@ -348,6 +373,34 @@ mod tests {
         let (res, status) = greet_user_pass("alice", "wrong").await;
         assert_eq!(status, [0x01, 0x01]);
         assert!(res.is_err());
+    }
+
+    #[test]
+    fn credentials_compare_lengths_fully() {
+        let c = Credentials {
+            username: b"u".to_vec(),
+            password: Vec::new(),
+        };
+        assert!(c.matches(b"u", b""));
+        assert!(!c.matches(b"u", &[0u8; 256]));
+        assert!(!c.matches(b"u", b"x"));
+        assert!(!c.matches(b"uu", b""));
+    }
+
+    #[tokio::test]
+    async fn empty_or_non_utf8_domain_gets_error_reply() {
+        for domain in [&b""[..], &[0xff, 0xfe][..]] {
+            let (mut client, mut server) = duplex(256);
+            let mut req = vec![0x05, 0x01, 0x00, 0x05, 0x01, 0x00, 0x03, domain.len() as u8];
+            req.extend_from_slice(domain);
+            req.extend_from_slice(&[0, 80]);
+            client.write_all(&req).await.unwrap();
+            assert!(handshake(&mut server).await.is_err());
+            let mut r = [0u8; 12];
+            client.read_exact(&mut r).await.unwrap();
+            assert_eq!(&r[..2], &[0x05, 0x00]);
+            assert_eq!(&r[2..4], &[0x05, ReplyCode::AddressTypeNotSupported as u8]);
+        }
     }
 
     #[tokio::test]

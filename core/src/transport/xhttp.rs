@@ -578,16 +578,37 @@ pub async fn connect_xhttp(cfg: &VlessConfig) -> Result<XhttpStream> {
         host = %st.host,
         "xhttp: соединение"
     );
+    // Фоновые задачи запускаются по ходу настройки; если она оборвётся
+    // (ошибка или таймаут вызывающего кода), XhttpStream не появится и
+    // не остановит их при сбросе — это делает страж.
+    let guard = CancelOnDrop(Some(shared.clone()));
     if st.http11 {
         h1::start(cfg, st, int_down, int_up, shared.clone()).await?;
     } else {
         h2c::start(cfg, st, int_down, int_up, shared.clone()).await?;
     }
+    guard.disarm();
     Ok(XhttpStream {
         down: user_down,
         up: user_up,
         shared,
     })
+}
+
+struct CancelOnDrop(Option<Arc<Shared>>);
+
+impl CancelOnDrop {
+    fn disarm(mut self) {
+        self.0 = None;
+    }
+}
+
+impl Drop for CancelOnDrop {
+    fn drop(&mut self) {
+        if let Some(s) = self.0.take() {
+            s.cancel.cancel();
+        }
+    }
 }
 
 /// Полное открытие соединения: транспорт + заголовок VLESS.
@@ -1036,7 +1057,7 @@ mod h1 {
         match kind {
             BodyKind::Length(mut left) => {
                 while left > 0 {
-                    let want = (left as usize).min(buf.len());
+                    let want = left.min(buf.len() as u64) as usize;
                     let n = r.read(&mut buf[..want]).await?;
                     if n == 0 {
                         return Err(io::ErrorKind::UnexpectedEof.into());
@@ -1067,7 +1088,7 @@ mod h1 {
                     break;
                 }
                 while left > 0 {
-                    let want = (left as usize).min(buf.len());
+                    let want = left.min(buf.len() as u64) as usize;
                     let n = r.read(&mut buf[..want]).await?;
                     if n == 0 {
                         return Err(io::ErrorKind::UnexpectedEof.into());
