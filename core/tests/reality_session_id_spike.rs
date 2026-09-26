@@ -81,11 +81,18 @@ impl ClientSessionStore for FixedSessionIdStore {
         None
     }
 
-    fn set_tls12_session(&self, _server_name: PkiServerName<'static>, _value: Tls12ClientSessionValue) {}
+    fn set_tls12_session(
+        &self,
+        _server_name: PkiServerName<'static>,
+        _value: Tls12ClientSessionValue,
+    ) {
+    }
 
     fn tls12_session(&self, _server_name: &PkiServerName<'_>) -> Option<Tls12ClientSessionValue> {
         let SupportedCipherSuite::Tls12(suite) = TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256 else {
-            unreachable!("TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256 always resolves to the Tls12 variant")
+            unreachable!(
+                "TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256 always resolves to the Tls12 variant"
+            )
         };
         Some(Tls12ClientSessionValue::new(
             suite,
@@ -147,7 +154,10 @@ async fn injected_session_id_reaches_the_wire_over_real_tls13() {
 
     let server_task = tokio::spawn(async move {
         let (tcp, _) = listener.accept().await.unwrap();
-        let tls = acceptor.accept(tcp).await.expect("серверное TLS-рукопожатие");
+        let tls = acceptor
+            .accept(tcp)
+            .await
+            .expect("серверное TLS-рукопожатие");
         // Согласованная версия протокола видна и на сервере — двойная
         // проверка (не только по тому, что видит клиент).
         let negotiated = tls.get_ref().1.protocol_version();
@@ -163,8 +173,9 @@ async fn injected_session_id_reaches_the_wire_over_real_tls13() {
     //     rustls::msgs::persist::ClientSessionCommon::compatible_config
     //     иначе молча отвергнет нашу фейковую сессию как "не для этого
     //     конфига", и мы получим случайный SessionId, ничего не заметив).
-    let webpki_verifier =
-        rustls::client::WebPkiServerVerifier::builder(Arc::new(roots)).build().unwrap();
+    let webpki_verifier = rustls::client::WebPkiServerVerifier::builder(Arc::new(roots))
+        .build()
+        .unwrap();
     let verifier_for_store: Arc<dyn ServerCertVerifier> = webpki_verifier.clone();
     let client_creds: Arc<dyn ResolvesClientCert> = Arc::new(NoClientAuth);
 
@@ -183,9 +194,10 @@ async fn injected_session_id_reaches_the_wire_over_real_tls13() {
     // тикете — сам факт, что TLS1.2 в принципе разрешён конфигом, уже
     // достаточен. Только явное ограничение версий до TLS1.3 убирает эту
     // утечку в фингерпринт.
-    let mut client_config = ClientConfig::builder_with_protocol_versions(&[&rustls::version::TLS13])
-        .with_webpki_verifier(webpki_verifier)
-        .with_client_cert_resolver(client_creds.clone());
+    let mut client_config =
+        ClientConfig::builder_with_protocol_versions(&[&rustls::version::TLS13])
+            .with_webpki_verifier(webpki_verifier)
+            .with_client_cert_resolver(client_creds.clone());
     // TLS1.2 не поддерживаем вообще — иначе даже с пустым тикетом
     // `prepare_resumption` добавит расширение `session_ticket` (request),
     // а это лишний, никем не просимый штрих в фингерпринте (Этап 3).

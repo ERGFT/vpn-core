@@ -39,9 +39,7 @@ pub fn ja4_string(info: &ClientHelloInfo) -> String {
     let part_b = cipher_hash(&ciphers);
     let part_c = extension_hash(&ext_no_grease, &info.signature_algorithms);
 
-    format!(
-        "{proto}{version}{sni_flag}{cipher_count:02}{ext_count:02}{alpn}_{part_b}_{part_c}"
-    )
+    format!("{proto}{version}{sni_flag}{cipher_count:02}{ext_count:02}{alpn}_{part_b}_{part_c}")
 }
 
 fn version_code(info: &ClientHelloInfo) -> &'static str {
@@ -137,12 +135,12 @@ mod tests {
     #[test]
     fn matches_published_foxio_example() {
         let ciphers = vec![
-            0x002f, 0x0035, 0x009c, 0x009d, 0x1301, 0x1302, 0x1303, 0xc013, 0xc014, 0xc02b,
-            0xc02c, 0xc02f, 0xc030, 0xcca8, 0xcca9,
+            0x002f, 0x0035, 0x009c, 0x009d, 0x1301, 0x1302, 0x1303, 0xc013, 0xc014, 0xc02b, 0xc02c,
+            0xc02f, 0xc030, 0xcca8, 0xcca9,
         ];
         let extensions = vec![
-            0x0005, 0x000a, 0x000b, 0x000d, 0x0012, 0x0015, 0x0017, 0x001b, 0x0023, 0x002b,
-            0x002d, 0x0033, 0x4469, 0xff01,
+            0x0005, 0x000a, 0x000b, 0x000d, 0x0012, 0x0015, 0x0017, 0x001b, 0x0023, 0x002b, 0x002d,
+            0x0033, 0x4469, 0xff01,
         ];
         let sig_algs = vec![
             0x0403, 0x0804, 0x0401, 0x0503, 0x0805, 0x0501, 0x0806, 0x0601,

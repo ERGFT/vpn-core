@@ -866,6 +866,12 @@ impl State<ClientConnectionData> for ExpectServerHello {
     where
         Self: 'm,
     {
+        // reality-core: отдать хуку REALITY сырой ServerHello (для ML-DSA-65).
+        if let (Some(hook), MessagePayload::Handshake { encoded, .. }) =
+            (&self.input.config.reality, &m.payload)
+        {
+            hook.server_hello_received(encoded.bytes());
+        }
         let server_hello =
             require_handshake_msg!(m, HandshakeType::ServerHello, HandshakePayload::ServerHello)?;
         trace!("We got ServerHello {server_hello:#?}");

@@ -156,6 +156,9 @@ pub mod auth;
 pub mod hook;
 pub mod verifier;
 
+/// Длина публичного ключа ML-DSA-65 (FIPS 204) — `pqv=` в ссылке.
+pub const MLDSA65_PUBLIC_KEY_LEN: usize = 1952;
+
 pub use auth::{verify_ed25519_hmac, RealityAuth, SESSION_ID_LEN, SHORT_ID_LEN};
 pub use hook::RealityHook;
 pub use verifier::RealityCertVerifier;

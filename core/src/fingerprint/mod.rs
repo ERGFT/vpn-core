@@ -37,7 +37,7 @@ pub mod client_hello;
 pub mod ja3;
 pub mod ja4;
 
-pub use chrome_profile::apply_chrome133_cipher_order;
+pub use chrome_profile::{apply_chrome133_cipher_order, apply_chrome_extensions};
 
 pub use capture::CaptureFirstBytes;
 pub use client_hello::{is_grease, parse_handshake_body, parse_record, ClientHelloInfo};

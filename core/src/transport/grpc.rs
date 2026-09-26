@@ -19,13 +19,9 @@
 //! реализацией. Перед боевым использованием — свериться с реальным
 //! сервером.
 //!
-//! ⚠️ Упрощённый флоу-контроль: пишем через `SendStream::send_data`
-//! напрямую, без ручного `reserve_capacity`/`poll_capacity`. Документация
-//! `h2` явно предупреждает, что при таком использовании библиотека будет
-//! буферизовать данные без ограничения, если окно получателя закрыто.
-//! При типичных размерах чанков (16 КБ, задаются буфером Этапа 2) это
-//! осознанный компромисс простоты; для по-настоящему устойчивого к
-//! медленному получателю транспорта нужен явный контроль — см. PLAN.md.
+//! Отправка уважает окно HTTP/2 получателя (`reserve_capacity` /
+//! `poll_capacity`): при медленном сервере данные не копятся в памяти
+//! без ограничения.
 
 use bytes::{Buf, Bytes, BytesMut};
 use http::{Method, Request};
@@ -48,6 +44,7 @@ const READ_CHUNK: usize = 16 * 1024;
 pub async fn connect_grpc(cfg: &VlessConfig) -> Result<DuplexStream> {
     let service_name = cfg.service_name().to_string();
 
+    // gRPC — только HTTP/2, ALPN всегда `h2`.
     let tls = connect_tls_by_security(cfg, vec![b"h2".to_vec()]).await?;
 
     let (send_request, connection) = h2::client::handshake(tls)
@@ -81,27 +78,39 @@ pub async fn connect_grpc(cfg: &VlessConfig) -> Result<DuplexStream> {
         .send_request(request, false)
         .map_err(|e| Error::Protocol(format!("не удалось открыть gRPC-поток: {e}")))?;
 
-    let response = response_fut
-        .await
-        .map_err(|e| Error::Protocol(format!("gRPC-сервер не ответил на поток: {e}")))?;
-    let mut recv_stream = response.into_body();
-
+    // Ответные заголовки НЕ ждём здесь: gRPC-сервер Xray (grpc-go)
+    // отправляет их только вместе с первым сообщением, а первое сообщение
+    // появится, лишь когда мы пришлём заголовок VLESS. Ожидание здесь было
+    // взаимной блокировкой (поймано интероп-тестом против Xray-core;
+    // собственный тестовый сервер отвечал заголовками сразу).
     let (user_half, internal_half) = duplex(DUPLEX_CAPACITY);
     let (mut internal_read, mut internal_write) = tokio::io::split(internal_half);
 
     // Отправляющая половина: то, что записал вызывающий код в
     // user_half, режем на чанки, каждый оборачиваем в gRPC/protobuf
-    // Hunk-кадр и шлём в h2-поток.
+    // Hunk-кадр и шлём в h2-поток — с учётом окна получателя: сначала
+    // резервируем место (`reserve_capacity`) и ждём, пока h2 его даст
+    // (`poll_capacity`). Раньше данные отдавались в `send_data` без этого,
+    // и при медленном получателе h2 буферизовал их без ограничения.
     tokio::spawn(async move {
         let mut buf = vec![0u8; READ_CHUNK];
-        loop {
+        'outer: loop {
             let n = match internal_read.read(&mut buf).await {
                 Ok(0) | Err(_) => break,
                 Ok(n) => n,
             };
-            let frame = encode_hunk_frame(&buf[..n]);
-            if send_stream.send_data(Bytes::from(frame), false).is_err() {
-                break;
+            let mut frame = Bytes::from(encode_hunk_frame(&buf[..n]));
+            while !frame.is_empty() {
+                send_stream.reserve_capacity(frame.len());
+                let cap = match std::future::poll_fn(|cx| send_stream.poll_capacity(cx)).await {
+                    Some(Ok(c)) if c > 0 => c,
+                    Some(Ok(_)) => continue,
+                    _ => break 'outer,
+                };
+                let part = frame.split_to(cap.min(frame.len()));
+                if send_stream.send_data(part, false).is_err() {
+                    break 'outer;
+                }
             }
         }
         let _ = send_stream.send_data(Bytes::new(), true);
@@ -111,6 +120,21 @@ pub async fn connect_grpc(cfg: &VlessConfig) -> Result<DuplexStream> {
     // границам с gRPC-сообщениями — копим в `HunkDecoder` и отдаём
     // вызывающему коду уже только полезную нагрузку из `Hunk.data`.
     tokio::spawn(async move {
+        let response = match response_fut.await {
+            Ok(r) => r,
+            Err(e) => {
+                tracing::debug!(error = %e, "gRPC-сервер не ответил на поток");
+                return;
+            }
+        };
+        if response.status() != http::StatusCode::OK {
+            tracing::warn!(
+                status = %response.status(),
+                "gRPC-сервер ответил не 200 (неверный serviceName или это не gRPC-вход)"
+            );
+            return;
+        }
+        let mut recv_stream = response.into_body();
         let mut decoder = HunkDecoder::default();
         while let Some(chunk) = recv_stream.data().await {
             let chunk = match chunk {
@@ -145,9 +169,20 @@ pub async fn connect_and_handshake_grpc(
     target: Address,
     target_port: u16,
 ) -> Result<VlessStream<DuplexStream>> {
+    connect_command_grpc(cfg, id, Command::Tcp, target, target_port).await
+}
+
+/// Как [`connect_and_handshake_grpc`], но с явной командой VLESS (TCP/UDP).
+pub async fn connect_command_grpc(
+    cfg: &VlessConfig,
+    id: &Uuid,
+    command: Command,
+    target: Address,
+    target_port: u16,
+) -> Result<VlessStream<DuplexStream>> {
     cfg.ensure_flow_supported()?;
     let stream = connect_grpc(cfg).await?;
-    vless_connect(stream, id, Command::Tcp, &target, target_port).await
+    vless_connect(stream, id, command, &target, target_port).await
 }
 
 fn encode_varint(mut v: u64, out: &mut Vec<u8>) {

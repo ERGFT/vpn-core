@@ -127,6 +127,9 @@ pub fn apply_chrome133_cipher_order(mut provider: CryptoProvider) -> CryptoProvi
     provider
 }
 
+/// Расширения ClientHello как у Chrome (заполняется ниже по плану).
+pub fn apply_chrome_extensions(_config: &mut rustls::ClientConfig, _reality: bool) {}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -40,16 +40,22 @@ async fn main() -> Result<()> {
         .await
         .context("не удалось поднять TCP+TLS (сертификат сервера не прошёл проверку — тогда захвата не будет: см. комментарий в исходнике)")?;
 
-    eprintln!("Захвачено {} байт (TLS-рекорд с ClientHello).\n", captured.len());
+    eprintln!(
+        "Захвачено {} байт (TLS-рекорд с ClientHello).\n",
+        captured.len()
+    );
 
-    let report =
-        fingerprint::analyze_record(&captured).context("не удалось разобрать захваченный ClientHello")?;
+    let report = fingerprint::analyze_record(&captured)
+        .context("не удалось разобрать захваченный ClientHello")?;
 
     println!("JA3:      {}", report.ja3);
     println!("JA3 hash: {}", report.ja3_hash);
     println!("JA4:      {}", report.ja4);
     println!();
-    println!("SNI:                {}", report.info.sni.as_deref().unwrap_or("(нет)"));
+    println!(
+        "SNI:                {}",
+        report.info.sni.as_deref().unwrap_or("(нет)")
+    );
     println!("legacy_version:     {:#06x}", report.info.legacy_version);
     println!(
         "supported_versions: {:?}",
@@ -65,7 +71,10 @@ async fn main() -> Result<()> {
         report.info.extensions.len(),
         hex_list(&report.info.extensions)
     );
-    println!("elliptic_curves:    {:?}", hex_list(&report.info.elliptic_curves));
+    println!(
+        "elliptic_curves:    {:?}",
+        hex_list(&report.info.elliptic_curves)
+    );
     println!("alpn:               {:?}", report.info.alpn);
     println!();
     println!("⚠️  Это ClientHello rustls «как есть» — Этап 3 в этом клиенте пока");

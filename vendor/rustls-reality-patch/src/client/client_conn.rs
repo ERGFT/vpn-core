@@ -188,6 +188,12 @@ pub trait RealityClientHook: fmt::Debug + Send + Sync {
     /// — поэтому не `x25519_dalek::EphemeralSecret` (запрещает повторное
     /// использование), а `StaticSecret`.
     fn complete_real_ecdh(&self, peer_key_share: &[u8]) -> Result<Vec<u8>, Error>;
+
+    /// Получен ServerHello: `raw` — всё Handshake-сообщение (тип + длина
+    /// + тело), как `ServerHello.Raw` в Go. Нужен клиенту REALITY для
+    /// проверки подписи ML-DSA-65 (она покрывает ClientHello и
+    /// ServerHello). По умолчанию ничего не делает.
+    fn server_hello_received(&self, _raw: &[u8]) {}
 }
 
 /// Common configuration for (typically) all connections made by a program.

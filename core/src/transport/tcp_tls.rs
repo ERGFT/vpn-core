@@ -24,11 +24,15 @@ use uuid::Uuid;
 use crate::error::{Error, Result};
 use crate::fingerprint::CaptureFirstBytes;
 use crate::reality::{RealityCertVerifier, RealityHook};
-use crate::vless::protocol::{vless_connect, Address, Command, VlessStream};
+use crate::transport::raw::RawConn;
+use crate::vless::protocol::{
+    encode_request_with_flow, vless_connect, Address, Command, VlessStream,
+};
 use crate::vless::uri::Security;
+use crate::vless::vision::VisionStream;
 use crate::vless::VlessConfig;
 
-pub type TlsBoxedStream = TlsStream<TcpStream>;
+pub type TlsBoxedStream = TlsStream<RawConn>;
 /// TLS-поток поверх обёртки, которая параллельно запоминает первые
 /// байты, записанные в сокет (Этап 3 — снятие собственного ClientHello).
 pub type CapturingTlsStream = TlsStream<CaptureFirstBytes<TcpStream>>;
@@ -97,7 +101,7 @@ fn default_root_store() -> RootCertStore {
     roots
 }
 
-async fn connect_tcp(cfg: &VlessConfig) -> Result<TcpStream> {
+async fn connect_tcp_stream(cfg: &VlessConfig) -> Result<TcpStream> {
     let addr = format!("{}:{}", cfg.host, cfg.port);
 
     // Асинхронное разрешение имени: раньше здесь был блокирующий
@@ -152,15 +156,17 @@ async fn connect_tcp(cfg: &VlessConfig) -> Result<TcpStream> {
     }))
 }
 
+async fn connect_tcp(cfg: &VlessConfig) -> Result<RawConn> {
+    Ok(RawConn::new(connect_tcp_stream(cfg).await?))
+}
+
 fn build_client_config(roots: RootCertStore, alpn: Vec<Vec<u8>>) -> ClientConfig {
     // Этап 3: cipher suites — в порядке реального Chrome, не в дефолтном
     // порядке aws-lc-rs (см. `fingerprint::chrome_profile` за источником
-    // и обоснованием, почему список не полный). Провайдер — тот же самый
-    // aws-lc-rs, только с переставленным `cipher_suites`, поэтому
+    // и обоснованием). Провайдер — тот же самый aws-lc-rs, только с
+    // переставленным `cipher_suites`, поэтому
     // `with_safe_default_protocol_versions()` здесь не может провалиться
-    // по-настоящему (те же suite'ы, те же kx_groups — просто другой
-    // порядок Vec) — `expect` фиксирует это как инвариант, не как то,
-    // что реально может случиться в рантайме.
+    // по-настоящему — `expect` фиксирует это как инвариант.
     let provider = crate::fingerprint::apply_chrome133_cipher_order(
         rustls::crypto::aws_lc_rs::default_provider(),
     );
@@ -170,26 +176,29 @@ fn build_client_config(roots: RootCertStore, alpn: Vec<Vec<u8>>) -> ClientConfig
         .with_root_certificates(roots)
         .with_no_client_auth();
     config.alpn_protocols = alpn;
+    crate::fingerprint::apply_chrome_extensions(&mut config, false);
     config
 }
 
-/// Поднять TCP+TLS до `cfg.host:cfg.port` с SNI = `cfg.effective_sni()`,
-/// проверяя цепочку сертификатов по переданному набору корней и заявляя
-/// переданный список ALPN-протоколов (пусто — ALPN не отправляется;
-/// `[b"h2"]` нужен транспорту Этапа 4 gRPC).
-///
-/// Вынесено отдельно от [`connect_tls`], чтобы тесты могли передать
-/// набор корней, где доверенным является только тестовый
-/// self-signed сертификат — без ослабления проверки в продакшен-пути
-/// (`connect_tls` всегда использует встроенный набор публичных CA).
-pub async fn connect_tls_with_roots_alpn(
+/// Набор доверенных корней для обычного TLS: заданный пользователем
+/// (`--ca`, см. [`VlessConfig::ca_roots`]) или встроенный публичный.
+fn roots_for(cfg: &VlessConfig) -> RootCertStore {
+    match &cfg.ca_roots {
+        Some(r) => (**r).clone(),
+        None => default_root_store(),
+    }
+}
+
+async fn connect_tls_inner(
     cfg: &VlessConfig,
     roots: RootCertStore,
     alpn: Vec<Vec<u8>>,
+    record_aligned: bool,
 ) -> Result<TlsBoxedStream> {
     ensure_crypto_provider();
 
-    let tcp = connect_tcp(cfg).await?;
+    let mut tcp = connect_tcp(cfg).await?;
+    tcp.set_record_aligned(record_aligned);
     let config = build_client_config(roots, alpn);
     let connector = TlsConnector::from(Arc::new(config));
     let server_name =
@@ -199,8 +208,22 @@ pub async fn connect_tls_with_roots_alpn(
     Ok(tls)
 }
 
-/// Как [`connect_tls_with_roots_alpn`], но без ALPN — удобно там, где он
-/// не нужен (Этап 1: голый TCP+TLS).
+/// Поднять TCP+TLS до `cfg.host:cfg.port` с SNI = `cfg.effective_sni()`,
+/// проверяя цепочку сертификатов по переданному набору корней и заявляя
+/// переданный список ALPN-протоколов (пусто — ALPN не отправляется).
+///
+/// Вынесено отдельно от [`connect_tls`], чтобы тесты могли передать
+/// набор корней, где доверенным является только тестовый
+/// self-signed сертификат — без ослабления проверки в продакшен-пути.
+pub async fn connect_tls_with_roots_alpn(
+    cfg: &VlessConfig,
+    roots: RootCertStore,
+    alpn: Vec<Vec<u8>>,
+) -> Result<TlsBoxedStream> {
+    connect_tls_inner(cfg, roots, alpn, false).await
+}
+
+/// Как [`connect_tls_with_roots_alpn`], но без ALPN.
 pub async fn connect_tls_with_roots(
     cfg: &VlessConfig,
     roots: RootCertStore,
@@ -209,19 +232,18 @@ pub async fn connect_tls_with_roots(
 }
 
 /// Поднять TCP+TLS до `cfg.host:cfg.port` с SNI = `cfg.effective_sni()`,
-/// доверяя встроенному набору публичных корневых сертификатов
-/// (webpki-roots). Это единственный путь, которым продакшен-клиент
-/// устанавливает TLS на Этапе 1.
+/// доверяя встроенному набору публичных корней (webpki-roots) или
+/// заданному через `--ca`.
 pub async fn connect_tls(cfg: &VlessConfig) -> Result<TlsBoxedStream> {
-    connect_tls_with_roots(cfg, default_root_store()).await
+    connect_tls_with_roots(cfg, roots_for(cfg)).await
 }
 
-/// Как [`connect_tls`], но с ALPN — используется транспортами Этапа 4.
+/// Как [`connect_tls`], но с ALPN.
 pub async fn connect_tls_with_alpn(
     cfg: &VlessConfig,
     alpn: Vec<Vec<u8>>,
 ) -> Result<TlsBoxedStream> {
-    connect_tls_with_roots_alpn(cfg, default_root_store(), alpn).await
+    connect_tls_with_roots_alpn(cfg, roots_for(cfg), alpn).await
 }
 
 /// Поднять TCP+TLS как [`connect_tls`], но обернуть сокет так, чтобы
@@ -233,10 +255,10 @@ pub async fn connect_tls_capturing_client_hello(
 ) -> Result<(CapturingTlsStream, Vec<u8>)> {
     ensure_crypto_provider();
 
-    let tcp = connect_tcp(cfg).await?;
+    let tcp = connect_tcp_stream(cfg).await?;
     let captured_tcp = CaptureFirstBytes::new(tcp, CLIENT_HELLO_CAPTURE_CAP);
 
-    let config = build_client_config(default_root_store(), Vec::new());
+    let config = build_client_config(roots_for(cfg), default_alpn(cfg));
     let connector = TlsConnector::from(Arc::new(config));
     let server_name =
         ServerName::try_from(cfg.effective_sni().to_string()).map_err(Error::InvalidDnsName)?;
@@ -246,40 +268,31 @@ pub async fn connect_tls_capturing_client_hello(
     Ok((tls, captured))
 }
 
-/// Поднять TCP+TLS до `cfg.host:cfg.port` с REALITY-аутентификацией
-/// (Этап 5) вместо проверки цепочки X.509. `reality` — уже разобранные
-/// `pbk=`/`sid=` (см. `VlessConfig::reality_params`). SNI по-прежнему
-/// `cfg.effective_sni()` — это домен "сайта прикрытия", под который
-/// маскируется сервер, а не отдельный REALITY-специфичный хост. `alpn` —
-/// как в [`connect_tls_with_alpn`]: пусто для голого TCP-транспорта
-/// (Этап 1/5), `[b"h2"]` для gRPC (Этап 4) поверх REALITY.
-///
-/// Только TLS1.3 (REALITY не поддерживает TLS1.2 — сама вставка
-/// SessionId и переиспользование эфемерного key_share рассчитаны только
-/// на TLS1.3, см. `vendor/rustls-reality-patch` и `reality/hook.rs`).
-pub async fn connect_tls_reality_with_alpn(
-    cfg: &VlessConfig,
+/// Конфиг rustls для REALITY: только TLS 1.3, проверка сертификата —
+/// HMAC REALITY (и ML-DSA-65, если в ссылке есть `pqv=`), ClientHello —
+/// как у Chrome, включая заявленные, но не реализованные legacy
+/// cipher suite'ы (для REALITY сервер выбрать их не может в принципе —
+/// только TLS 1.3; см. `fingerprint::chrome_profile`).
+pub fn reality_client_config(
     reality: &crate::vless::uri::RealityParams,
     alpn: Vec<Vec<u8>>,
-) -> Result<TlsBoxedStream> {
-    ensure_crypto_provider();
-
-    let tcp = connect_tcp(cfg).await?;
-
+) -> Result<ClientConfig> {
     let mut rng = rand::rngs::OsRng;
     let hook = Arc::new(RealityHook::new(
         &reality.public_key,
         &reality.short_id,
         &mut rng,
     ));
-    let verifier = Arc::new(RealityCertVerifier::from_hook(hook.clone()).map_err(|e| {
+    let verifier = RealityCertVerifier::from_hook(hook.clone()).map_err(|e| {
         Error::Protocol(format!(
             "REALITY: не удалось создать верификатор сертификата: {e}"
         ))
-    })?);
+    })?;
+    let verifier = match &reality.mldsa65_verify {
+        Some(pk) => verifier.with_mldsa65(pk.clone()),
+        None => verifier,
+    };
 
-    // Этап 3: тот же Chrome-порядок cipher suites, что и в обычном
-    // TLS-пути (`build_client_config`) — см. комментарий там же.
     let provider = crate::fingerprint::apply_chrome133_cipher_order(
         rustls::crypto::aws_lc_rs::default_provider(),
     );
@@ -287,11 +300,25 @@ pub async fn connect_tls_reality_with_alpn(
         .with_protocol_versions(&[&rustls::version::TLS13])
         .expect("переупорядочивание cipher_suites не может сделать TLS1.3 непригодным")
         .dangerous()
-        .with_custom_certificate_verifier(verifier)
+        .with_custom_certificate_verifier(Arc::new(verifier))
         .with_no_client_auth();
     config.reality = Some(hook);
     config.alpn_protocols = alpn;
+    crate::fingerprint::apply_chrome_extensions(&mut config, true);
+    Ok(config)
+}
 
+async fn connect_tls_reality_inner(
+    cfg: &VlessConfig,
+    reality: &crate::vless::uri::RealityParams,
+    alpn: Vec<Vec<u8>>,
+    record_aligned: bool,
+) -> Result<TlsBoxedStream> {
+    ensure_crypto_provider();
+
+    let mut tcp = connect_tcp(cfg).await?;
+    tcp.set_record_aligned(record_aligned);
+    let config = reality_client_config(reality, alpn)?;
     let connector = TlsConnector::from(Arc::new(config));
     let server_name =
         ServerName::try_from(cfg.effective_sni().to_string()).map_err(Error::InvalidDnsName)?;
@@ -300,8 +327,18 @@ pub async fn connect_tls_reality_with_alpn(
     Ok(tls)
 }
 
-/// Как [`connect_tls_reality_with_alpn`], но без ALPN — путь Этапа 1/5
-/// (голый TCP-транспорт).
+/// Поднять TCP+TLS до `cfg.host:cfg.port` с REALITY-аутентификацией
+/// (Этап 5) вместо проверки цепочки X.509. SNI — `cfg.effective_sni()`,
+/// домен "сайта прикрытия". Только TLS1.3.
+pub async fn connect_tls_reality_with_alpn(
+    cfg: &VlessConfig,
+    reality: &crate::vless::uri::RealityParams,
+    alpn: Vec<Vec<u8>>,
+) -> Result<TlsBoxedStream> {
+    connect_tls_reality_inner(cfg, reality, alpn, false).await
+}
+
+/// Как [`connect_tls_reality_with_alpn`], но без ALPN.
 pub async fn connect_tls_reality(
     cfg: &VlessConfig,
     reality: &crate::vless::uri::RealityParams,
@@ -309,36 +346,241 @@ pub async fn connect_tls_reality(
     connect_tls_reality_with_alpn(cfg, reality, Vec::new()).await
 }
 
-/// Общая точка входа для TCP-подобных транспортов (голый TCP — Этап 1/5,
-/// и база для gRPC — Этап 4): TLS либо обычный (проверка цепочки X.509),
-/// либо REALITY, по `cfg.security` — не дублировать это ветвление в
-/// каждом транспорте отдельно.
-pub async fn connect_tls_by_security(
-    cfg: &VlessConfig,
-    alpn: Vec<Vec<u8>>,
-) -> Result<TlsBoxedStream> {
-    match cfg.security {
-        Security::Reality => {
-            let reality = cfg.reality_params()?;
-            connect_tls_reality_with_alpn(cfg, &reality, alpn).await
-        }
-        Security::Tls | Security::None => {
-            connect_tls_with_roots_alpn(cfg, default_root_store(), alpn).await
+/// Соединение с сервером после выбора `security=`: голый TCP
+/// (`security=none`) или TLS/REALITY. Раньше `security=none` всё равно
+/// поднимал TLS — ссылка на сервер без TLS не работала вообще.
+pub enum SecureStream {
+    Plain(RawConn),
+    Tls(Box<TlsBoxedStream>),
+}
+
+impl std::fmt::Debug for SecureStream {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SecureStream::Plain(_) => f.write_str("SecureStream::Plain"),
+            SecureStream::Tls(_) => f.write_str("SecureStream::Tls"),
         }
     }
 }
 
-/// Полное открытие соединения Этапа 1/5: TCP -> TLS (обычный или REALITY,
-/// по `cfg.security`) -> заголовок запроса VLESS. Заголовок ответа
-/// сервера снимается лениво, при первом чтении из возвращённого
-/// [`VlessStream`] (см. `vless_connect` — почему ждать его заранее нельзя).
+impl SecureStream {
+    /// Согласованная версия TLS (`None` для голого TCP).
+    pub fn tls_version(&self) -> Option<rustls::ProtocolVersion> {
+        match self {
+            SecureStream::Plain(_) => None,
+            SecureStream::Tls(t) => t.get_ref().1.protocol_version(),
+        }
+    }
+
+    /// Согласованный ALPN (`None` для голого TCP или если не согласован).
+    pub fn alpn(&self) -> Option<Vec<u8>> {
+        match self {
+            SecureStream::Plain(_) => None,
+            SecureStream::Tls(t) => t.get_ref().1.alpn_protocol().map(|p| p.to_vec()),
+        }
+    }
+}
+
+macro_rules! delegate {
+    ($self:ident, $s:ident => $e:expr) => {
+        match $self.get_mut() {
+            SecureStream::Plain($s) => {
+                let $s = std::pin::Pin::new($s);
+                $e
+            }
+            SecureStream::Tls($s) => {
+                let $s = std::pin::Pin::new(&mut **$s);
+                $e
+            }
+        }
+    };
+}
+
+impl tokio::io::AsyncRead for SecureStream {
+    fn poll_read(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &mut tokio::io::ReadBuf<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        delegate!(self, s => s.poll_read(cx, buf))
+    }
+}
+
+impl tokio::io::AsyncWrite for SecureStream {
+    fn poll_write(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &[u8],
+    ) -> std::task::Poll<std::io::Result<usize>> {
+        delegate!(self, s => s.poll_write(cx, buf))
+    }
+
+    fn poll_flush(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        delegate!(self, s => s.poll_flush(cx))
+    }
+
+    fn poll_shutdown(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        delegate!(self, s => s.poll_shutdown(cx))
+    }
+}
+
+/// ALPN для TCP-транспорта: `alpn=` из ссылки, иначе как у Chrome
+/// (`h2, http/1.1`). Раньше ALPN на TCP не отправлялся вовсе — для
+/// ClientHello, выдающего себя за браузер, это заметная аномалия.
+pub fn default_alpn(cfg: &VlessConfig) -> Vec<Vec<u8>> {
+    cfg.alpn()
+        .unwrap_or_else(|| vec![b"h2".to_vec(), b"http/1.1".to_vec()])
+}
+
+async fn connect_secure(
+    cfg: &VlessConfig,
+    alpn: Vec<Vec<u8>>,
+    record_aligned: bool,
+) -> Result<SecureStream> {
+    match cfg.security {
+        Security::Reality => {
+            let reality = cfg.reality_params()?;
+            let tls = connect_tls_reality_inner(cfg, &reality, alpn, record_aligned).await?;
+            Ok(SecureStream::Tls(Box::new(tls)))
+        }
+        Security::Tls => {
+            let tls = connect_tls_inner(cfg, roots_for(cfg), alpn, record_aligned).await?;
+            Ok(SecureStream::Tls(Box::new(tls)))
+        }
+        Security::None => Ok(SecureStream::Plain(connect_tcp(cfg).await?)),
+    }
+}
+
+/// Общая точка входа для TCP-подобных транспортов: голый TCP, обычный
+/// TLS (проверка цепочки X.509) или REALITY — по `cfg.security`.
+pub async fn connect_tls_by_security(
+    cfg: &VlessConfig,
+    alpn: Vec<Vec<u8>>,
+) -> Result<SecureStream> {
+    connect_secure(cfg, alpn, false).await
+}
+
+/// Поток VLESS поверх TCP-транспорта: обычный или с XTLS Vision.
+pub enum TcpVlessStream {
+    Plain(VlessStream<SecureStream>),
+    Vision(Box<VisionStream>),
+}
+
+impl std::fmt::Debug for TcpVlessStream {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            TcpVlessStream::Plain(_) => f.write_str("TcpVlessStream::Plain"),
+            TcpVlessStream::Vision(_) => f.write_str("TcpVlessStream::Vision"),
+        }
+    }
+}
+
+macro_rules! delegate_vless {
+    ($self:ident, $s:ident => $e:expr) => {
+        match $self.get_mut() {
+            TcpVlessStream::Plain($s) => {
+                let $s = std::pin::Pin::new($s);
+                $e
+            }
+            TcpVlessStream::Vision($s) => {
+                let $s = std::pin::Pin::new(&mut **$s);
+                $e
+            }
+        }
+    };
+}
+
+impl tokio::io::AsyncRead for TcpVlessStream {
+    fn poll_read(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &mut tokio::io::ReadBuf<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        delegate_vless!(self, s => s.poll_read(cx, buf))
+    }
+}
+
+impl tokio::io::AsyncWrite for TcpVlessStream {
+    fn poll_write(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &[u8],
+    ) -> std::task::Poll<std::io::Result<usize>> {
+        delegate_vless!(self, s => s.poll_write(cx, buf))
+    }
+
+    fn poll_flush(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        delegate_vless!(self, s => s.poll_flush(cx))
+    }
+
+    fn poll_shutdown(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        delegate_vless!(self, s => s.poll_shutdown(cx))
+    }
+}
+
+/// Полное открытие соединения поверх TCP-транспорта: TCP -> (TLS или
+/// REALITY, по `cfg.security`) -> заголовок запроса VLESS. Заголовок
+/// ответа сервера снимается лениво, при первом чтении (см.
+/// `vless_connect` — почему ждать его заранее нельзя).
+///
+/// С `flow=xtls-rprx-vision` (только TCP-команда, только поверх TLS 1.3
+/// или REALITY) возвращается [`VisionStream`]: заголовок уходит вместе с
+/// первыми данными приложения, первые пакеты дополняются padding'ом, а
+/// после рукопожатия внутреннего TLS обе стороны переходят на прямую
+/// передачу без внешнего шифрования (см. `vless::vision`).
 pub async fn connect_and_handshake(
     cfg: &VlessConfig,
     id: &Uuid,
     target: Address,
     target_port: u16,
-) -> Result<VlessStream<TlsBoxedStream>> {
+) -> Result<TcpVlessStream> {
+    connect_command(cfg, id, Command::Tcp, target, target_port).await
+}
+
+/// Как [`connect_and_handshake`], но с явной командой VLESS (TCP или UDP).
+/// UDP идёт без Vision: сервер Xray принимает UDP-запрос с пустым flow и
+/// от Vision-аккаунта (Vision UDP не поддерживает, `inbound.go`).
+pub async fn connect_command(
+    cfg: &VlessConfig,
+    id: &Uuid,
+    command: Command,
+    target: Address,
+    target_port: u16,
+) -> Result<TcpVlessStream> {
     cfg.ensure_flow_supported()?;
-    let stream = connect_tls_by_security(cfg, Vec::new()).await?;
-    vless_connect(stream, id, Command::Tcp, &target, target_port).await
+    let vision = cfg.flow.is_vision() && command == Command::Tcp;
+    if vision && cfg.security == Security::None {
+        return Err(Error::InvalidUri(
+            "flow=xtls-rprx-vision работает только поверх security=tls или reality".into(),
+        ));
+    }
+    let stream = connect_secure(cfg, default_alpn(cfg), vision).await?;
+    if vision {
+        let SecureStream::Tls(tls) = stream else {
+            unreachable!("Vision без TLS отсечён выше");
+        };
+        if tls.get_ref().1.protocol_version() != Some(rustls::ProtocolVersion::TLSv1_3) {
+            return Err(Error::Protocol(
+                "XTLS Vision требует внешний TLS 1.3, сервер согласовал более старую версию".into(),
+            ));
+        }
+        let header = encode_request_with_flow(id, command, &target, target_port, cfg.flow);
+        return Ok(TcpVlessStream::Vision(Box::new(VisionStream::new(
+            *tls, id, header,
+        ))));
+    }
+    let s = vless_connect(stream, id, command, &target, target_port).await?;
+    Ok(TcpVlessStream::Plain(s))
 }

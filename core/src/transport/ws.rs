@@ -20,23 +20,30 @@ use uuid::Uuid;
 use ws_stream_tungstenite::WsStream;
 
 use crate::error::{Error, Result};
-use crate::transport::tcp_tls::{connect_tls_by_security, TlsBoxedStream};
+use crate::transport::tcp_tls::{connect_tls_by_security, SecureStream};
 use crate::vless::protocol::{vless_connect, Address, Command, VlessStream};
 use crate::vless::VlessConfig;
 
-pub type WsVlessStream = WsStream<Compat<TlsBoxedStream>>;
+pub type WsVlessStream = WsStream<Compat<SecureStream>>;
 
-/// Поднять TCP+TLS (обычный или REALITY, по `cfg.security` — Этап 5) и
-/// выполнить поверх него обычный HTTP Upgrade до WebSocket, используя
-/// `path=` из ссылки (по умолчанию `/`) и `Host` = SNI-сервера. Маскировка
-/// TLS-отпечатка под браузер (Этап 3) по-прежнему не делается — это
-/// отдельный архитектурный вопрос, см. PLAN.md.
+/// Поднять TCP (+TLS или REALITY, по `cfg.security`) и выполнить поверх
+/// него HTTP Upgrade до WebSocket: `path=` из ссылки (по умолчанию `/`),
+/// `Host` — `host=` из ссылки или SNI.
 pub async fn connect_ws(cfg: &VlessConfig) -> Result<WsVlessStream> {
-    let tls = connect_tls_by_security(cfg, Vec::new()).await?;
-    let compat_tls = tls.compat();
+    // WebSocket — это HTTP/1.1 Upgrade, поэтому ALPN по умолчанию
+    // `http/1.1` (как делает Xray для ws); `alpn=` из ссылки главнее.
+    let alpn = cfg.alpn().unwrap_or_else(|| vec![b"http/1.1".to_vec()]);
+    let stream = connect_tls_by_security(cfg, alpn).await?;
+    let compat_tls = stream.compat();
 
-    let host = cfg.effective_sni();
-    let uri = format!("wss://{host}{}", cfg.path());
+    // Host — `host=` из ссылки (для CDN он часто отличается от SNI), иначе SNI.
+    let host = cfg.ws_host();
+    let scheme = if cfg.security == crate::vless::Security::None {
+        "ws"
+    } else {
+        "wss"
+    };
+    let uri = format!("{scheme}://{host}{}", cfg.path());
 
     let request = Request::builder()
         .method("GET")
@@ -65,7 +72,18 @@ pub async fn connect_and_handshake_ws(
     target: Address,
     target_port: u16,
 ) -> Result<VlessStream<WsVlessStream>> {
+    connect_command_ws(cfg, id, Command::Tcp, target, target_port).await
+}
+
+/// Как [`connect_and_handshake_ws`], но с явной командой VLESS (TCP/UDP).
+pub async fn connect_command_ws(
+    cfg: &VlessConfig,
+    id: &Uuid,
+    command: Command,
+    target: Address,
+    target_port: u16,
+) -> Result<VlessStream<WsVlessStream>> {
     cfg.ensure_flow_supported()?;
     let stream = connect_ws(cfg).await?;
-    vless_connect(stream, id, Command::Tcp, &target, target_port).await
+    vless_connect(stream, id, command, &target, target_port).await
 }

@@ -36,7 +36,9 @@ use rustls::client::RealityClientHook;
 use x25519_dalek::{PublicKey as X25519PublicKey, StaticSecret};
 use zeroize::Zeroizing;
 
-use super::auth::{build_plaintext, derive_auth_key, seal_session_id as aead_seal_session_id, SHORT_ID_LEN};
+use super::auth::{
+    build_plaintext, derive_auth_key, seal_session_id as aead_seal_session_id, SHORT_ID_LEN,
+};
 
 /// FIPS 203, ML-KEM-768: размер encapsulation key (публичный ключ,
 /// уходит в наш key_share) и ciphertext (приходит в key_share сервера).
@@ -101,6 +103,13 @@ pub struct RealityHook {
     /// вызов (rustls-патч всё равно кэширует у себя, но так проще
     /// рассуждать о том, где именно лежит единственная копия).
     hybrid_key_share: Vec<u8>,
+    /// Отправленный ClientHello целиком (Handshake-сообщение с
+    /// заголовком, уже с запечатанным SessionId) и полученный ServerHello
+    /// — нужны только для проверки подписи ML-DSA-65 (`pqv=`): сервер
+    /// подписывает HMAC(AuthKey; ключ сертификата || ClientHello ||
+    /// ServerHello), как `VerifyPeerCertificate` в Xray-core.
+    client_hello_raw: OnceLock<Vec<u8>>,
+    server_hello_raw: OnceLock<Vec<u8>>,
 }
 
 impl fmt::Debug for RealityHook {
@@ -155,6 +164,8 @@ impl RealityHook {
             auth_key: OnceLock::new(),
             mlkem_decap,
             hybrid_key_share,
+            client_hello_raw: OnceLock::new(),
+            server_hello_raw: OnceLock::new(),
         }
     }
 
@@ -169,7 +180,22 @@ impl RealityHook {
     pub fn auth_key(&self) -> Option<[u8; 32]> {
         self.auth_key.get().map(|k| **k)
     }
+
+    /// Отправленный ClientHello (см. поле `client_hello_raw`).
+    pub fn client_hello_raw(&self) -> Option<&[u8]> {
+        self.client_hello_raw.get().map(Vec::as_slice)
+    }
+
+    /// Полученный ServerHello (см. поле `server_hello_raw`).
+    pub fn server_hello_raw(&self) -> Option<&[u8]> {
+        self.server_hello_raw.get().map(Vec::as_slice)
+    }
 }
+
+/// Смещение SessionId в Handshake-сообщении ClientHello: тип(1) +
+/// длина(3) + версия(2) + random(32) + длина SessionId(1) — то самое
+/// `hello.Raw[39:]` из `reality.go`.
+const SESSION_ID_OFFSET: usize = 39;
 
 impl RealityClientHook for RealityHook {
     fn client_hybrid_key_share(&self) -> Vec<u8> {
@@ -195,8 +221,19 @@ impl RealityClientHook for RealityHook {
         // же для одного и того же хука.
         let _ = self.auth_key.set(Zeroizing::new(*auth_key));
         let plaintext = build_plaintext(&self.short_id);
-        aead_seal_session_id(&auth_key, client_hello_random, &plaintext, aad)
-            .expect("AES-256-GCM seal 16 байт корректным 32-байтным ключом не может провалиться")
+        let sealed = aead_seal_session_id(&auth_key, client_hello_random, &plaintext, aad)
+            .expect("AES-256-GCM seal 16 байт корректным 32-байтным ключом не может провалиться");
+        // Итоговый ClientHello = AAD с запечатанным SessionId на своём месте.
+        if aad.len() >= SESSION_ID_OFFSET + 32 {
+            let mut raw = aad.to_vec();
+            raw[SESSION_ID_OFFSET..SESSION_ID_OFFSET + 32].copy_from_slice(&sealed);
+            let _ = self.client_hello_raw.set(raw);
+        }
+        sealed
+    }
+
+    fn server_hello_received(&self, raw: &[u8]) {
+        let _ = self.server_hello_raw.set(raw.to_vec());
     }
 
     fn complete_real_ecdh(&self, peer_key_share: &[u8]) -> Result<Vec<u8>, rustls::Error> {
@@ -217,7 +254,9 @@ impl RealityClientHook for RealityHook {
             peer_key_share.split_at(MLKEM768_CIPHERTEXT_LEN);
 
         let mlkem_ct = ml_kem::ml_kem_768::Ciphertext::try_from(mlkem_ct_bytes).map_err(|_| {
-            rustls::Error::General("REALITY: некорректный формат ML-KEM768 ciphertext сервера".into())
+            rustls::Error::General(
+                "REALITY: некорректный формат ML-KEM768 ciphertext сервера".into(),
+            )
         })?;
         // `decapsulate()` возвращает `ml_kem::SharedKey` — обёртку
         // крейта `hybrid-array` вокруг `[u8; 32]`, не гарантированно

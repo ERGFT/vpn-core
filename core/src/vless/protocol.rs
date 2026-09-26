@@ -30,6 +30,7 @@ use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
 use uuid::Uuid;
 
 use crate::error::{Error, Result};
+use crate::vless::uri::Flow;
 
 pub const PROTOCOL_VERSION: u8 = 0x00;
 
@@ -82,12 +83,48 @@ impl std::fmt::Display for Address {
     }
 }
 
-/// Собрать заголовок запроса. Возвращает готовый к записи в сокет буфер.
+/// Собрать заголовок запроса без flow. Возвращает готовый к записи в
+/// сокет буфер.
 pub fn encode_request(id: &Uuid, command: Command, addr: &Address, port: u16) -> BytesMut {
-    let mut buf = BytesMut::with_capacity(24 + addr.encoded_len_hint());
+    encode_request_with_flow(id, command, addr, port, Flow::None)
+}
+
+/// Значение `flow`, которое уходит серверу в addons. Клиентский вариант
+/// `xtls-rprx-vision-udp443` серверу отправляется как `xtls-rprx-vision`
+/// (`outbound.go`: `requestAddons.Flow[:16]`).
+fn wire_flow(flow: Flow) -> Option<&'static str> {
+    match flow {
+        Flow::None => None,
+        Flow::XtlsRprxVision | Flow::XtlsRprxVisionUdp443 => Some("xtls-rprx-vision"),
+    }
+}
+
+/// Собрать заголовок запроса с блоком addons. Addons — protobuf
+/// `message Addons { string Flow = 1; bytes Seed = 2; }`
+/// (`proxy/vless/encoding/addons.proto`); клиент заполняет только Flow,
+/// как и Xray-core. Без flow — нулевая длина блока.
+pub fn encode_request_with_flow(
+    id: &Uuid,
+    command: Command,
+    addr: &Address,
+    port: u16,
+    flow: Flow,
+) -> BytesMut {
+    let mut buf = BytesMut::with_capacity(48 + addr.encoded_len_hint());
     buf.put_u8(PROTOCOL_VERSION);
     buf.put_slice(id.as_bytes());
-    buf.put_u8(0); // длина доп. инструкций M — на Этапе 1 не используем
+    match wire_flow(flow) {
+        Some(f) => {
+            // tag 1, wire type 2 (length-delimited) = 0x0A; длина строки
+            // короче 128 — один байт varint.
+            let addons_len = 2 + f.len();
+            buf.put_u8(addons_len as u8);
+            buf.put_u8(0x0A);
+            buf.put_u8(f.len() as u8);
+            buf.put_slice(f.as_bytes());
+        }
+        None => buf.put_u8(0),
+    }
     buf.put_u8(command as u8);
     buf.put_u16(port);
     addr.encode(&mut buf);
@@ -334,6 +371,24 @@ mod tests {
         assert_eq!(&buf[19..21], &443u16.to_be_bytes());
         assert_eq!(buf[21], 0x01); // addr type ipv4
         assert_eq!(&buf[22..26], &[1, 2, 3, 4]);
+    }
+
+    /// Addons с flow байт-в-байт как у Xray-core: protobuf-кодирование
+    /// `Addons{Flow: "xtls-rprx-vision"}` — `0a 10` + строка.
+    #[test]
+    fn encodes_vision_addons() {
+        let id = Uuid::nil();
+        let buf = encode_request_with_flow(
+            &id,
+            Command::Tcp,
+            &Address::Ipv4(Ipv4Addr::new(1, 2, 3, 4)),
+            443,
+            Flow::XtlsRprxVisionUdp443,
+        );
+        assert_eq!(buf[17], 18, "длина addons");
+        assert_eq!(&buf[18..20], &[0x0A, 0x10]);
+        assert_eq!(&buf[20..36], b"xtls-rprx-vision");
+        assert_eq!(buf[36], Command::Tcp as u8);
     }
 
     #[test]

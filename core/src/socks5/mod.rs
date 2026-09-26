@@ -1,9 +1,12 @@
 //! Минимальный SOCKS5-сервер (RFC 1928) на стороне клиента: локальное
 //! приложение подключается сюда, а мы проксируем его трафик в VLESS.
 //!
-//! Поддержано: no-auth (0x00), команда CONNECT (0x01). BIND и
-//! UDP ASSOCIATE не реализованы — они не нужны для типичного сценария
-//! "браузер/curl -> локальный SOCKS5 -> VLESS-сервер".
+//! Поддержано: без аутентификации (0x00) или логин/пароль (0x02,
+//! RFC 1929 — если задан `--auth`), команды CONNECT (0x01) и
+//! UDP ASSOCIATE (0x03, см. [`udp`]). BIND не реализован — его не
+//! использует ни браузер, ни типичные программы.
+
+pub mod udp;
 
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 
@@ -13,8 +16,11 @@ use crate::error::{Error, Result};
 
 const SOCKS_VERSION: u8 = 0x05;
 const METHOD_NO_AUTH: u8 = 0x00;
+const METHOD_USER_PASS: u8 = 0x02;
 const METHOD_NO_ACCEPTABLE: u8 = 0xFF;
+const USER_PASS_VERSION: u8 = 0x01;
 const CMD_CONNECT: u8 = 0x01;
+const CMD_UDP_ASSOCIATE: u8 = 0x03;
 
 const ATYP_IPV4: u8 = 0x01;
 const ATYP_DOMAIN: u8 = 0x03;
@@ -28,7 +34,7 @@ pub enum ReplyCode {
     AddressTypeNotSupported = 0x08,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum TargetAddr {
     Ip(IpAddr),
     Domain(String),
@@ -43,16 +49,77 @@ impl std::fmt::Display for TargetAddr {
     }
 }
 
+/// Команда SOCKS5-запроса.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Socks5Command {
+    Connect,
+    UdpAssociate,
+}
+
 #[derive(Debug, Clone)]
 pub struct Socks5Request {
+    pub command: Socks5Command,
     pub addr: TargetAddr,
     pub port: u16,
 }
 
-/// Выполнить приветствие SOCKS5 (без аутентификации) и разобрать запрос
-/// CONNECT. При ошибке протокола соединение стоит закрыть — ответ уже
-/// не отправляем, т.к. на этапе приветствия ещё нечего адресовать.
+/// Логин и пароль для SOCKS5 (RFC 1929).
+#[derive(Clone)]
+pub struct Credentials {
+    pub username: Vec<u8>,
+    pub password: Vec<u8>,
+}
+
+impl std::fmt::Debug for Credentials {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Credentials")
+            .field("username", &String::from_utf8_lossy(&self.username))
+            .finish_non_exhaustive()
+    }
+}
+
+impl Credentials {
+    /// Разобрать `логин:пароль`.
+    pub fn parse(s: &str) -> Option<Self> {
+        let (u, p) = s.split_once(':')?;
+        if u.is_empty() || u.len() > 255 || p.len() > 255 {
+            return None;
+        }
+        Some(Self {
+            username: u.as_bytes().to_vec(),
+            password: p.as_bytes().to_vec(),
+        })
+    }
+
+    /// Сравнение без раннего выхода: время ответа не выдаёт, сколько
+    /// символов совпало.
+    fn matches(&self, user: &[u8], pass: &[u8]) -> bool {
+        fn ct_eq(a: &[u8], b: &[u8]) -> bool {
+            let mut diff = (a.len() ^ b.len()) as u8;
+            for i in 0..a.len().max(b.len()) {
+                diff |= a.get(i).copied().unwrap_or(0) ^ b.get(i).copied().unwrap_or(0xff);
+            }
+            diff == 0
+        }
+        ct_eq(&self.username, user) & ct_eq(&self.password, pass)
+    }
+}
+
+/// Выполнить приветствие SOCKS5 без аутентификации и разобрать запрос.
 pub async fn handshake<S>(stream: &mut S) -> Result<Socks5Request>
+where
+    S: AsyncRead + AsyncWrite + Unpin,
+{
+    handshake_with_auth(stream, None).await
+}
+
+/// Выполнить приветствие SOCKS5 и разобрать запрос. Если `auth` задан,
+/// клиент обязан пройти проверку логина/пароля (RFC 1929); без неё
+/// соединение закрывается. При ошибке протокола соединение стоит закрыть.
+pub async fn handshake_with_auth<S>(
+    stream: &mut S,
+    auth: Option<&Credentials>,
+) -> Result<Socks5Request>
 where
     S: AsyncRead + AsyncWrite + Unpin,
 {
@@ -66,11 +133,48 @@ where
     let mut methods = vec![0u8; nmethods as usize];
     stream.read_exact(&mut methods).await?;
 
-    if !methods.contains(&METHOD_NO_AUTH) {
-        stream.write_all(&[SOCKS_VERSION, METHOD_NO_ACCEPTABLE]).await?;
-        return Err(Error::Socks5("клиент не предложил метод no-auth".into()));
+    match auth {
+        None => {
+            if !methods.contains(&METHOD_NO_AUTH) {
+                stream
+                    .write_all(&[SOCKS_VERSION, METHOD_NO_ACCEPTABLE])
+                    .await?;
+                return Err(Error::Socks5("клиент не предложил метод no-auth".into()));
+            }
+            stream.write_all(&[SOCKS_VERSION, METHOD_NO_AUTH]).await?;
+        }
+        Some(creds) => {
+            if !methods.contains(&METHOD_USER_PASS) {
+                stream
+                    .write_all(&[SOCKS_VERSION, METHOD_NO_ACCEPTABLE])
+                    .await?;
+                return Err(Error::Socks5(
+                    "требуется логин/пароль, а клиент их не предложил".into(),
+                ));
+            }
+            stream.write_all(&[SOCKS_VERSION, METHOD_USER_PASS]).await?;
+            // RFC 1929: VER(1)=1, ULEN(1), UNAME, PLEN(1), PASSWD.
+            let mut ver = [0u8; 2];
+            stream.read_exact(&mut ver).await?;
+            if ver[0] != USER_PASS_VERSION {
+                return Err(Error::Socks5(format!(
+                    "неизвестная версия проверки логина/пароля: {}",
+                    ver[0]
+                )));
+            }
+            let mut user = vec![0u8; ver[1] as usize];
+            stream.read_exact(&mut user).await?;
+            let mut plen = [0u8; 1];
+            stream.read_exact(&mut plen).await?;
+            let mut pass = vec![0u8; plen[0] as usize];
+            stream.read_exact(&mut pass).await?;
+            if !creds.matches(&user, &pass) {
+                stream.write_all(&[USER_PASS_VERSION, 0x01]).await?;
+                return Err(Error::Socks5("неверный логин или пароль".into()));
+            }
+            stream.write_all(&[USER_PASS_VERSION, 0x00]).await?;
+        }
     }
-    stream.write_all(&[SOCKS_VERSION, METHOD_NO_AUTH]).await?;
 
     // --- Запрос ---
     let mut req_hdr = [0u8; 4];
@@ -80,10 +184,14 @@ where
         reply(stream, ReplyCode::GeneralFailure as u8, default_bind()).await?;
         return Err(Error::UnsupportedSocksVersion(ver));
     }
-    if cmd != CMD_CONNECT {
-        reply(stream, ReplyCode::CommandNotSupported as u8, default_bind()).await?;
-        return Err(Error::UnsupportedSocksCommand(cmd));
-    }
+    let command = match cmd {
+        CMD_CONNECT => Socks5Command::Connect,
+        CMD_UDP_ASSOCIATE => Socks5Command::UdpAssociate,
+        _ => {
+            reply(stream, ReplyCode::CommandNotSupported as u8, default_bind()).await?;
+            return Err(Error::UnsupportedSocksCommand(cmd));
+        }
+    };
 
     let addr = match atyp {
         ATYP_IPV4 => {
@@ -96,8 +204,8 @@ where
             stream.read_exact(&mut len_buf).await?;
             let mut b = vec![0u8; len_buf[0] as usize];
             stream.read_exact(&mut b).await?;
-            let domain = String::from_utf8(b)
-                .map_err(|_| Error::Socks5("домен не в UTF-8".into()))?;
+            let domain =
+                String::from_utf8(b).map_err(|_| Error::Socks5("домен не в UTF-8".into()))?;
             TargetAddr::Domain(domain)
         }
         ATYP_IPV6 => {
@@ -106,7 +214,12 @@ where
             TargetAddr::Ip(IpAddr::V6(Ipv6Addr::from(b)))
         }
         other => {
-            reply(stream, ReplyCode::AddressTypeNotSupported as u8, default_bind()).await?;
+            reply(
+                stream,
+                ReplyCode::AddressTypeNotSupported as u8,
+                default_bind(),
+            )
+            .await?;
             return Err(Error::UnsupportedAddressType(other));
         }
     };
@@ -115,7 +228,11 @@ where
     stream.read_exact(&mut port_buf).await?;
     let port = u16::from_be_bytes(port_buf);
 
-    Ok(Socks5Request { addr, port })
+    Ok(Socks5Request {
+        command,
+        addr,
+        port,
+    })
 }
 
 fn default_bind() -> SocketAddr {
@@ -191,5 +308,58 @@ mod tests {
         reply_success(&mut server, default_bind()).await.unwrap();
 
         client_task.await.unwrap();
+    }
+
+    async fn greet_user_pass(user: &str, pass: &str) -> (Result<Socks5Request>, [u8; 2]) {
+        let (mut client, mut server) = duplex(512);
+        let creds = Credentials::parse("alice:s3cret").unwrap();
+        let (user, pass) = (user.to_string(), pass.to_string());
+        let client_task = tokio::spawn(async move {
+            client.write_all(&[0x05, 0x02, 0x00, 0x02]).await.unwrap();
+            let mut m = [0u8; 2];
+            client.read_exact(&mut m).await.unwrap();
+            assert_eq!(m, [0x05, 0x02], "сервер должен выбрать логин/пароль");
+            let mut auth = vec![0x01, user.len() as u8];
+            auth.extend_from_slice(user.as_bytes());
+            auth.push(pass.len() as u8);
+            auth.extend_from_slice(pass.as_bytes());
+            client.write_all(&auth).await.unwrap();
+            let mut status = [0u8; 2];
+            client.read_exact(&mut status).await.unwrap();
+            if status[1] == 0 {
+                client
+                    .write_all(&[0x05, 0x03, 0x00, 0x01, 0, 0, 0, 0, 0, 0])
+                    .await
+                    .unwrap();
+            }
+            status
+        });
+        let res = handshake_with_auth(&mut server, Some(&creds)).await;
+        (res, client_task.await.unwrap())
+    }
+
+    #[tokio::test]
+    async fn user_pass_auth_accepts_right_and_rejects_wrong() {
+        let (res, status) = greet_user_pass("alice", "s3cret").await;
+        assert_eq!(status, [0x01, 0x00]);
+        let req = res.unwrap();
+        assert_eq!(req.command, Socks5Command::UdpAssociate);
+
+        let (res, status) = greet_user_pass("alice", "wrong").await;
+        assert_eq!(status, [0x01, 0x01]);
+        assert!(res.is_err());
+    }
+
+    #[tokio::test]
+    async fn auth_required_but_client_offers_only_no_auth() {
+        let (mut client, mut server) = duplex(64);
+        let creds = Credentials::parse("a:b").unwrap();
+        client.write_all(&[0x05, 0x01, 0x00]).await.unwrap();
+        assert!(handshake_with_auth(&mut server, Some(&creds))
+            .await
+            .is_err());
+        let mut m = [0u8; 2];
+        client.read_exact(&mut m).await.unwrap();
+        assert_eq!(m, [0x05, 0xFF]);
     }
 }

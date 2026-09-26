@@ -49,11 +49,15 @@ impl AuthKeySource {
 pub struct RealityCertVerifier {
     auth_key: AuthKeySource,
     provider: Arc<CryptoProvider>,
+    /// `pqv=`: публичный ключ ML-DSA-65 сервера. Если задан, сертификат
+    /// принимается только с верной постквантовой подписью.
+    mldsa65: Option<Vec<u8>>,
 }
 
 impl fmt::Debug for RealityCertVerifier {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("RealityCertVerifier").finish_non_exhaustive()
+        f.debug_struct("RealityCertVerifier")
+            .finish_non_exhaustive()
     }
 }
 
@@ -86,7 +90,65 @@ impl RealityCertVerifier {
                 "rustls CryptoProvider не установлен — вызвать ensure_crypto_provider() до RealityCertVerifier::new".into(),
             )
         })?;
-        Ok(Self { auth_key, provider })
+        Ok(Self {
+            auth_key,
+            provider,
+            mldsa65: None,
+        })
+    }
+
+    /// Дополнительно требовать подпись ML-DSA-65 (`pqv=` в ссылке,
+    /// `Mldsa65Verify` у Xray-core). Работает только с источником
+    /// AuthKey `from_hook` — подпись покрывает ClientHello и ServerHello,
+    /// которые знает только хук.
+    pub fn with_mldsa65(mut self, public_key: Vec<u8>) -> Self {
+        self.mldsa65 = Some(public_key);
+        self
+    }
+
+    /// Проверка ML-DSA-65 так же, как в `reality.go` (`VerifyPeerCertificate`):
+    /// сообщение — HMAC-SHA512(AuthKey; ключ сертификата || ClientHello ||
+    /// ServerHello) (в Go это продолжение того же `hmac.Hash` после
+    /// `Sum`), подпись — значение первого расширения сертификата.
+    fn verify_mldsa65(
+        &self,
+        public_key: &[u8],
+        auth_key: &[u8; 32],
+        cert_pub: &[u8],
+        cert: &x509_parser::certificate::X509Certificate<'_>,
+    ) -> Result<(), TlsError> {
+        use hmac::{Hmac, Mac};
+        let AuthKeySource::Hook(hook) = &self.auth_key else {
+            return Err(TlsError::General(
+                "REALITY: проверка ML-DSA-65 требует RealityHook".into(),
+            ));
+        };
+        let (Some(ch), Some(sh)) = (hook.client_hello_raw(), hook.server_hello_raw()) else {
+            return Err(TlsError::General(
+                "REALITY: нет сырого ClientHello/ServerHello для проверки ML-DSA-65".into(),
+            ));
+        };
+        let Some(ext) = cert.extensions().first() else {
+            return Err(TlsError::General(
+                "REALITY: в ссылке задан pqv=, но сертификат сервера без подписи ML-DSA-65".into(),
+            ));
+        };
+        let mut mac = <Hmac<sha2::Sha512> as Mac>::new_from_slice(auth_key)
+            .expect("HMAC принимает ключ любой длины");
+        mac.update(cert_pub);
+        mac.update(ch);
+        mac.update(sh);
+        let msg = mac.finalize().into_bytes();
+        let pk = aws_lc_rs::signature::UnparsedPublicKey::new(
+            &aws_lc_rs::signature::ML_DSA_65,
+            public_key,
+        );
+        pk.verify(&msg, ext.value).map_err(|_| {
+            TlsError::General(
+                "REALITY: подпись ML-DSA-65 сервера не прошла проверку (неверный pqv= или не тот сервер)"
+                    .into(),
+            )
+        })
     }
 }
 
@@ -100,7 +162,9 @@ impl ServerCertVerifier for RealityCertVerifier {
         _now: UnixTime,
     ) -> Result<ServerCertVerified, TlsError> {
         let (_, cert) = x509_parser::parse_x509_certificate(end_entity.as_ref()).map_err(|e| {
-            TlsError::General(format!("REALITY: не удалось разобрать сертификат сервера: {e}"))
+            TlsError::General(format!(
+                "REALITY: не удалось разобрать сертификат сервера: {e}"
+            ))
         })?;
 
         // Ed25519 SPKI (RFC 8410) — «сырой» 32-байтный публичный ключ
@@ -122,6 +186,10 @@ impl ServerCertVerifier for RealityCertVerifier {
             ));
         }
 
+        if let Some(pk) = &self.mldsa65 {
+            self.verify_mldsa65(pk, &auth_key, spki, &cert)?;
+        }
+
         Ok(ServerCertVerified::assertion())
     }
 
@@ -131,7 +199,12 @@ impl ServerCertVerifier for RealityCertVerifier {
         cert: &CertificateDer<'_>,
         dss: &DigitallySignedStruct,
     ) -> Result<HandshakeSignatureValid, TlsError> {
-        verify_tls12_signature(message, cert, dss, &self.provider.signature_verification_algorithms)
+        verify_tls12_signature(
+            message,
+            cert,
+            dss,
+            &self.provider.signature_verification_algorithms,
+        )
     }
 
     fn verify_tls13_signature(
@@ -140,11 +213,18 @@ impl ServerCertVerifier for RealityCertVerifier {
         cert: &CertificateDer<'_>,
         dss: &DigitallySignedStruct,
     ) -> Result<HandshakeSignatureValid, TlsError> {
-        verify_tls13_signature(message, cert, dss, &self.provider.signature_verification_algorithms)
+        verify_tls13_signature(
+            message,
+            cert,
+            dss,
+            &self.provider.signature_verification_algorithms,
+        )
     }
 
     fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
-        self.provider.signature_verification_algorithms.supported_schemes()
+        self.provider
+            .signature_verification_algorithms
+            .supported_schemes()
     }
 }
 
@@ -193,7 +273,11 @@ mod tests {
         // rcgen подписывает Ed25519 (64-байтная подпись) — HMAC-SHA512
         // тоже даёт ровно 64 байта, длина поля в DER не меняется, можно
         // переписать байты на месте, не трогая остальную ASN.1-структуру.
-        assert_eq!(sig_len, hmac_sig.len(), "длина Ed25519-подписи должна совпасть с длиной HMAC-SHA512, иначе патч сломает DER");
+        assert_eq!(
+            sig_len,
+            hmac_sig.len(),
+            "длина Ed25519-подписи должна совпасть с длиной HMAC-SHA512, иначе патч сломает DER"
+        );
         patched[sig_offset..sig_offset + sig_len].copy_from_slice(&hmac_sig);
 
         (patched, pubkey_bytes)
@@ -213,7 +297,10 @@ mod tests {
         let cert = CertificateDer::from(der);
         let server_name = ServerName::try_from("reality.invalid").unwrap();
         let result = verifier.verify_server_cert(&cert, &[], &server_name, &[], UnixTime::now());
-        assert!(result.is_ok(), "сертификат с верным HMAC должен быть принят: {result:?}");
+        assert!(
+            result.is_ok(),
+            "сертификат с верным HMAC должен быть принят: {result:?}"
+        );
     }
 
     #[test]
@@ -227,7 +314,10 @@ mod tests {
         let cert = CertificateDer::from(der);
         let server_name = ServerName::try_from("reality.invalid").unwrap();
         let result = verifier.verify_server_cert(&cert, &[], &server_name, &[], UnixTime::now());
-        assert!(result.is_err(), "сертификат с HMAC под чужим ключом должен быть отвергнут");
+        assert!(
+            result.is_err(),
+            "сертификат с HMAC под чужим ключом должен быть отвергнут"
+        );
     }
 
     #[test]
@@ -246,7 +336,11 @@ mod tests {
         let verifier = RealityCertVerifier::new([9u8; 32]).unwrap();
         let cert_der = CertificateDer::from(der);
         let server_name = ServerName::try_from("reality.invalid").unwrap();
-        let result = verifier.verify_server_cert(&cert_der, &[], &server_name, &[], UnixTime::now());
-        assert!(result.is_err(), "настоящая Ed25519-подпись не должна случайно совпасть с HMAC");
+        let result =
+            verifier.verify_server_cert(&cert_der, &[], &server_name, &[], UnixTime::now());
+        assert!(
+            result.is_err(),
+            "настоящая Ed25519-подпись не должна случайно совпасть с HMAC"
+        );
     }
 }

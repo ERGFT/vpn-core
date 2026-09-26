@@ -33,7 +33,13 @@ fn parse_args() -> Args {
     let mut it = std::env::args().skip(1);
     while let Some(arg) = it.next() {
         match arg.as_str() {
-            "--pid" => pid = it.next().expect("--pid требует значение").parse().expect("pid: число"),
+            "--pid" => {
+                pid = it
+                    .next()
+                    .expect("--pid требует значение")
+                    .parse()
+                    .expect("pid: число")
+            }
             "--interval-ms" => {
                 interval_ms = it
                     .next()

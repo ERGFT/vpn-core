@@ -69,7 +69,8 @@ where
     let client_to_remote = pump(&mut a_read, &mut b_write, &mut client_to_remote_buf);
     let remote_to_client = pump(&mut b_read, &mut a_write, &mut remote_to_client_buf);
 
-    let (client_to_remote, remote_to_client) = tokio::try_join!(client_to_remote, remote_to_client)?;
+    let (client_to_remote, remote_to_client) =
+        tokio::try_join!(client_to_remote, remote_to_client)?;
 
     Ok(RelayStats {
         client_to_remote,
@@ -92,6 +93,11 @@ where
             break;
         }
         w.write_all(&buf[..n]).await?;
+        // Дописать всё, что осело в буферах записи (TLS держит шифротекст
+        // у себя, если сокет был занят; Vision — свою очередь). Без этого
+        // хвост мог застрять до следующей записи: задача ждёт новых данных
+        // от читателя, а про недописанное никто не вспоминает.
+        w.flush().await?;
         total += n as u64;
     }
     // Ошибку shutdown сознательно не пробрасываем: обе стороны релея уже
