@@ -146,3 +146,60 @@ async fn websocket_offers_http11_only_and_grpc_h2_only() {
     let custom = capture("security=tls&sni=example.com&alpn=http%2F1.1").await;
     assert_eq!(custom.info.alpn, ["http/1.1"]);
 }
+
+/// Сервер, получив `compress_certificate` с brotli, присылает сжатый
+/// сертификат (RFC 8879) — клиент обязан его распаковать. Цепочка
+/// длинная, чтобы сжатие было заметным.
+#[tokio::test]
+async fn brotli_compressed_certificate_is_accepted() {
+    use std::sync::Arc;
+    use tokio::io::AsyncWriteExt;
+
+    ensure_crypto_provider();
+    let ck = rcgen::generate_simple_self_signed(vec!["cc.test".to_string()]).unwrap();
+    let mut chain = vec![ck.cert.der().clone()];
+    for i in 0..8 {
+        let f = rcgen::generate_simple_self_signed(vec![format!("f{i}.cc.test")]).unwrap();
+        chain.push(f.cert.der().clone());
+    }
+    let key = rustls::pki_types::PrivateKeyDer::Pkcs8(rustls::pki_types::PrivatePkcs8KeyDer::from(
+        ck.key_pair.serialize_der(),
+    ));
+    let mut scfg = rustls::ServerConfig::builder()
+        .with_no_client_auth()
+        .with_single_cert(chain, key)
+        .unwrap();
+    scfg.cert_compressors = vec![rustls::compress::BROTLI_COMPRESSOR];
+    scfg.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
+    let acceptor = tokio_rustls::TlsAcceptor::from(Arc::new(scfg));
+
+    let l = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = l.local_addr().unwrap().port();
+    let server = tokio::spawn(async move {
+        let (s, _) = l.accept().await.unwrap();
+        let mut t = acceptor.accept(s).await.expect("серверное рукопожатие");
+        let mut buf = [0u8; 64];
+        let _ = t.read(&mut buf).await;
+        let _ = t.shutdown().await;
+    });
+
+    let mut cfg = VlessConfig::parse(&format!(
+        "vless://11111111-1111-1111-1111-111111111111@127.0.0.1:{port}?security=tls&sni=cc.test"
+    ))
+    .unwrap();
+    let mut roots = rustls::RootCertStore::empty();
+    roots.add(ck.cert.der().clone()).unwrap();
+    cfg.ca_roots = Some(Arc::new(roots));
+    let mut s = dial(
+        &cfg,
+        &cfg.id,
+        Command::Tcp,
+        Address::Domain("x.test".into()),
+        443,
+    )
+    .await
+    .expect("рукопожатие со сжатым сертификатом должно пройти");
+    s.write_all(b"ping").await.unwrap();
+    s.flush().await.unwrap();
+    server.await.unwrap();
+}

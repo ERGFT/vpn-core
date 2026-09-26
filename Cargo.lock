@@ -1658,6 +1658,7 @@ dependencies = [
  "async-tungstenite",
  "aws-lc-rs",
  "base64",
+ "brotli-decompressor",
  "bytes",
  "futures-util",
  "h2",

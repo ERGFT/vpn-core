@@ -40,8 +40,12 @@ rand.workspace = true
 zeroize.workspace = true
 ml-kem.workspace = true
 aws-lc-rs.workspace = true
+brotli-decompressor.workspace = true
 
 [dev-dependencies]
+# В тестах серверу нужно уметь СЖИМАТЬ сертификат (проверка нашего
+# распаковщика brotli); в сам клиент компрессор не попадает.
+rustls = { workspace = true, features = ["brotli"] }
 tokio = { workspace = true, features = ["test-util", "macros", "rt-multi-thread"] }
 rcgen = "0.13"
 tracing-subscriber.workspace = true

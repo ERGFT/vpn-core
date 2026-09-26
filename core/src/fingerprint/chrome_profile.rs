@@ -159,6 +159,35 @@ pub const CHROME_LEGACY_SUITES: &[u16] = &[
     0x0035, // TLS_RSA_WITH_AES_256_CBC_SHA
 ];
 
+/// Распаковщик сертификатов brotli (RFC 8879) на `brotli-decompressor`.
+/// Сервер, получивший от «Chrome» `compress_certificate`, вправе прислать
+/// сжатый сертификат — значит, распаковывать нужно по-настоящему.
+#[derive(Debug)]
+struct BrotliCertDecompressor;
+
+impl rustls::compress::CertDecompressor for BrotliCertDecompressor {
+    fn decompress(
+        &self,
+        input: &[u8],
+        output: &mut [u8],
+    ) -> Result<(), rustls::compress::DecompressionFailed> {
+        let mut src = std::io::Cursor::new(input);
+        let mut dst = std::io::Cursor::new(output);
+        // Если данных больше, чем объявлено, запись в срез упрётся в его
+        // конец и вернёт ошибку; меньше — проверяем ниже.
+        brotli_decompressor::BrotliDecompress(&mut src, &mut dst)
+            .map_err(|_| rustls::compress::DecompressionFailed)?;
+        if dst.position() as usize != dst.get_ref().len() {
+            return Err(rustls::compress::DecompressionFailed);
+        }
+        Ok(())
+    }
+
+    fn algorithm(&self) -> rustls::CertificateCompressionAlgorithm {
+        rustls::CertificateCompressionAlgorithm::Brotli
+    }
+}
+
 /// Тип расширения Signed Certificate Timestamp (RFC 6962).
 const EXT_SCT: u16 = 0x0012;
 /// Тип расширения ALPS в новой нумерации Chrome (`ApplicationSettingsExtensionNew`).
@@ -199,7 +228,7 @@ pub fn apply_chrome_extensions(config: &mut rustls::ClientConfig, reality: bool)
         renegotiation_info: true,
         raw_extensions: raw,
     });
-    config.cert_decompressors = vec![rustls::compress::BROTLI_DECOMPRESSOR];
+    config.cert_decompressors = vec![&BrotliCertDecompressor];
 
     // ECH GREASE: как у Chrome — HPKE X25519/HKDF-SHA256/AES-128-GCM со
     // случайным ключом-заглушкой; сервер без ECH просто игнорирует.
