@@ -13,9 +13,11 @@
 #   1. тянет u_common.go из refraction-networking/utls (только сеть —
 #      raw.githubusercontent.com, ничего не собирает и не запускает);
 #   2. находит, на какой профиль сейчас указывает HelloChrome_Auto;
-#   3. тянет u_parrots.go и вынимает список cipher suites этого профиля;
+#   3. тянет u_parrots.go и вынимает из профиля cipher suites, набор
+#      расширений и signature_algorithms;
 #   4. сверяет с эталоном, зашитым в этот скрипт (тем же, на который
-#      опирается chrome_profile.rs), и печатает расхождения.
+#      опираются chrome_profile.rs и core/tests/fingerprint_chrome_full.rs),
+#      и печатает расхождения.
 #
 # Ненулевой код возврата = эталон разошёлся, профиль пора обновлять.
 # Годится для ручного запуска и для scheduled-задачи.
@@ -66,9 +68,9 @@ fi
 
 # 3. Эталон: как chrome_profile.rs описывает список Chrome — GREASE,
 #    3x TLS1.3, 6x ECDHE-TLS1.2 (эти девять клиент реально предлагает),
-#    затем 6 legacy TLS1.2 (RSA/CBC), которые клиент СОЗНАТЕЛЬНО не
-#    реализует (небезопасны, см. докстринг chrome_profile.rs). Имена —
-#    как в utls.
+#    затем 6 legacy TLS1.2 (RSA/CBC): клиент их не реализует и заявляет
+#    только в REALITY (см. CHROME_LEGACY_SUITES в chrome_profile.rs).
+#    Имена — как в utls.
 read -r -d '' EXPECTED <<'EOF' || true
 GREASE_PLACEHOLDER
 TLS_AES_128_GCM_SHA256
@@ -95,6 +97,66 @@ if [[ -z "$diff_out" ]]; then
     echo "список cipher suites совпал с эталоном в скрипте."
 else
     echo "!! СПИСОК cipher suites РАЗОШЁЛСЯ (слева — эталон, справа — utls):"
+    printf '%s\n' "$diff_out"
+    DRIFT=1
+fi
+
+# 4. Набор расширений и signature_algorithms. Порядок расширений Chrome
+#    перемешивает на каждое соединение, поэтому сравнивается
+#    отсортированный набор имён типов из utls.
+block="$(awk -v prof="$auto" '
+    $0 ~ ("case "prof":") {inprofile=1; next}
+    inprofile && /^[[:space:]]*case Hello/ {exit}
+    inprofile {print}
+' "$TMP/u_parrots.go")"
+exts="$(grep -oE '&[A-Za-z0-9]+\{|BoringGREASEECH\(\)' <<<"$block" \
+        | sed -E 's/^&//; s/\{$//' | grep -E 'Extension|ECH' | sort)"
+EXPECTED_EXTS="ALPNExtension
+ApplicationSettingsExtensionNew
+BoringGREASEECH()
+ExtendedMasterSecretExtension
+KeyShareExtension
+PSKKeyExchangeModesExtension
+RenegotiationInfoExtension
+SCTExtension
+SNIExtension
+SessionTicketExtension
+SignatureAlgorithmsExtension
+StatusRequestExtension
+SupportedCurvesExtension
+SupportedPointsExtension
+SupportedVersionsExtension
+UtlsCompressCertExtension
+UtlsGREASEExtension
+UtlsGREASEExtension"
+echo
+echo "-- расширения профиля $auto --"
+diff_out="$(diff <(sort <<<"$EXPECTED_EXTS") <(printf '%s\n' "$exts") || true)"
+if [[ -z "$diff_out" ]]; then
+    echo "набор расширений совпал с эталоном."
+else
+    echo "!! НАБОР РАСШИРЕНИЙ РАЗОШЁЛСЯ (слева — эталон, справа — utls):"
+    printf '%s\n' "$diff_out"
+    DRIFT=1
+fi
+
+sigalgs="$(awk '/SignatureAlgorithmsExtension\{/{f=1; next} f && /\}\},/{exit} f' <<<"$block" \
+           | grep -oE '[A-Za-z0-9]+' | grep -vE '^(SupportedSignatureAlgorithms|SignatureScheme)$')"
+EXPECTED_SIG="ECDSAWithP256AndSHA256
+PSSWithSHA256
+PKCS1WithSHA256
+ECDSAWithP384AndSHA384
+PSSWithSHA384
+PKCS1WithSHA384
+PSSWithSHA512
+PKCS1WithSHA512"
+echo
+echo "-- signature_algorithms профиля $auto --"
+diff_out="$(diff <(printf '%s\n' "$EXPECTED_SIG") <(printf '%s\n' "$sigalgs") || true)"
+if [[ -z "$diff_out" ]]; then
+    echo "signature_algorithms совпали с эталоном."
+else
+    echo "!! signature_algorithms РАЗОШЛИСЬ (слева — эталон, справа — utls):"
     printf '%s\n' "$diff_out"
     DRIFT=1
 fi

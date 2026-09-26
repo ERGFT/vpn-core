@@ -13,7 +13,12 @@
 #   4. cargo build --release                     (обязательно, кроме --quick)
 #   5. интероп с Go REALITY-сервером             (если есть Go >= 1.27)
 #   6. сквозной smoke-тест бинарника             (если собран Go-стенд)
-#   7. сверка эталона Chrome-отпечатка с utls    (если есть сеть)
+#   7. интероп с настоящим Xray-core             (если есть Xray: $XRAY_BIN
+#      или target/xray/xray — scripts/fetch_xray.sh или
+#      scripts/build_xray_from_source.sh)
+#   8. сквозной smoke бинарника против Xray      (REALITY + Vision +
+#      SOCKS5 с паролем + UDP; если есть Xray)
+#   9. сверка эталона Chrome-отпечатка с utls    (если есть сеть)
 #
 # Код возврата ненулевой, если упал любой обязательный шаг или любой
 # необязательный, который был запущен.
@@ -55,9 +60,9 @@ if [[ $QUICK -eq 0 ]]; then
         if (( gmaj > 1 || (gmaj == 1 && gmin >= 27) )); then go_ok=1; fi
     fi
     if [[ $go_ok -eq 1 ]]; then
-        step "интероп с Go REALITY-сервером" scripts/interop_go_reality.sh
+        step "интероп с Go REALITY-сервером" bash scripts/interop_go_reality.sh
         if [[ -x "$ROOT/target/go-reality-server" ]]; then
-            step "сквозной smoke-тест бинарника" scripts/smoke_e2e.sh
+            step "сквозной smoke-тест бинарника" bash scripts/smoke_e2e.sh
         else
             skip "сквозной smoke-тест бинарника" "Go-стенд не собрался"
         fi
@@ -66,9 +71,19 @@ if [[ $QUICK -eq 0 ]]; then
         skip "сквозной smoke-тест бинарника" "нужен Go-стенд"
     fi
 
+    XRAY="${XRAY_BIN:-$ROOT/target/xray/xray}"
+    if [[ -x "$XRAY" ]]; then
+        export XRAY_BIN="$XRAY"
+        step "интероп с Xray-core" bash scripts/interop_xray.sh
+        step "сквозной smoke против Xray-core" bash scripts/smoke_xray.sh
+    else
+        skip "интероп с Xray-core" "нет бинарника Xray ($XRAY)"
+        skip "сквозной smoke против Xray-core" "нет бинарника Xray"
+    fi
+
     if curl -fsS --max-time 10 -o /dev/null \
         https://raw.githubusercontent.com/refraction-networking/utls/master/u_common.go 2>/dev/null; then
-        step "сверка эталона Chrome-отпечатка" scripts/check_chrome_fingerprint.sh
+        step "сверка эталона Chrome-отпечатка" bash scripts/check_chrome_fingerprint.sh
     else
         skip "сверка эталона Chrome-отпечатка" "нет доступа к raw.githubusercontent.com"
     fi
