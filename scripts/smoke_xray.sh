@@ -92,6 +92,19 @@ JSON
 PIDS+=($!)
 
 LINK="vless://$UUID@127.0.0.1:$SRV_PORT?encryption=none&security=reality&sni=decoy.test&fp=chrome&pbk=$PBK&sid=$SID&type=tcp&flow=xtls-rprx-vision#smoke"
+# Отказы при запуске: ссылка без шифрования и прокси в сеть с коротким паролем.
+NONE_LINK="vless://$UUID@127.0.0.1:$SRV_PORT?encryption=none&security=none&type=tcp"
+if $CLIENT_RUNNER "$CLIENT_BIN" --server "$NONE_LINK" --listen 127.0.0.1:0 > "$TMP/none.log" 2>&1; then
+    echo "ссылка security=none должна отвергаться без --allow-insecure"; exit 1
+fi
+grep -q 'allow-insecure' "$TMP/none.log" || { cat "$TMP/none.log"; exit 1; }
+echo "OK: ссылка без шифрования отвергнута без --allow-insecure"
+if $CLIENT_RUNNER "$CLIENT_BIN" --server "$LINK" --listen 0.0.0.0:0 --auth "u:short" > "$TMP/weak.log" 2>&1; then
+    echo "прокси в сеть с коротким паролем должен отвергаться"; exit 1
+fi
+grep -q 'короче' "$TMP/weak.log" || { cat "$TMP/weak.log"; exit 1; }
+echo "OK: прокси в сеть с коротким паролем не запускается"
+
 # Ссылка и пароль — из файлов, а не из командной строки (там их видят
 # все пользователи машины).
 printf '%s\n' "$LINK" > "$TMP/link.txt"
@@ -125,6 +138,32 @@ s, st = greet(b"smoke", b"wrong")
 assert st == b"\x01\x01", f"неверный пароль должен отвергаться: {st!r}"
 s.close()
 print("OK: неверный пароль SOCKS5 отвергнут")
+
+# Блокировка адреса после серии неверных паролей. Отдельный адрес
+# источника (127.0.0.2), чтобы не заблокировать остальные проверки.
+def greet_from(src, user, pw):
+    c = socket.socket()
+    c.settimeout(30)
+    c.bind((src, 0))
+    c.connect(("127.0.0.1", socks))
+    try:
+        c.sendall(b"\x05\x01\x02")
+        if c.recv(2) != b"\x05\x02":
+            return None
+        c.sendall(b"\x01" + bytes([len(user)]) + user + bytes([len(pw)]) + pw)
+        return c.recv(2)
+    except OSError:
+        return None
+    finally:
+        c.close()
+
+for i in range(5):
+    assert greet_from("127.0.0.2", b"smoke", b"guess%d" % i) == b"\x01\x01"
+assert greet_from("127.0.0.2", b"smoke", b"s3cret") is None, \
+    "после 5 неверных паролей адрес должен быть заблокирован даже для верного"
+st = greet_from("127.0.0.1", b"smoke", b"s3cret")
+assert st == b"\x01\x00", f"блокировка не должна задевать другие адреса: {st!r}"
+print("OK: после 5 неверных паролей адрес заблокирован, другие адреса работают")
 
 # CONNECT + внутренний TLS 1.3, 1 МиБ в обе стороны.
 s, st = greet(b"smoke", b"s3cret")

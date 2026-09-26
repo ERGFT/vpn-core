@@ -29,6 +29,8 @@ use std::sync::Arc;
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
+mod access;
+
 use anyhow::{Context, Result};
 use clap::Parser;
 use tokio::net::{TcpListener, TcpStream};
@@ -46,6 +48,8 @@ const DIAL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
 /// Потолок на приветствие и запрос SOCKS5: без него молчащий клиент
 /// держал сокет и задачу вечно — тысяча таких исчерпывала дескрипторы.
 const SOCKS_HANDSHAKE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+/// Минимальная длина пароля SOCKS5, если прокси открыт в сеть.
+const MIN_LAN_PASSWORD: usize = 12;
 
 #[derive(Parser, Debug)]
 #[command(
@@ -97,11 +101,36 @@ struct Args {
     /// Xray так UDP не примет
     #[arg(long)]
     no_xudp: bool,
+
+    /// Кому из сети разрешено пользоваться прокси: адреса или подсети через
+    /// запятую (`192.168.1.23,192.168.1.40`). Нужен при --listen в сеть:
+    /// SOCKS5 не шифруется, и лучше пускать только свои устройства
+    #[arg(long, value_name = "АДРЕСА", value_delimiter = ',')]
+    allow_ip: Vec<access::IpNet>,
+
+    /// Разрешить ссылки без шифрования (security=none). Всё, включая UUID,
+    /// идёт открытым текстом: любой в той же Wi-Fi сети или по пути видит и
+    /// может подменить трафик и украсть доступ к серверу
+    #[arg(long)]
+    allow_insecure: bool,
 }
 
 /// Прочитать секрет (ссылку или логин:пароль) из файла: первая непустая
 /// строка без пробелов по краям.
 fn read_secret_file(path: &std::path::Path) -> Result<String> {
+    // На Unix: файл с секретом не должен читаться другими пользователями.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if let Ok(meta) = std::fs::metadata(path) {
+            if meta.permissions().mode() & 0o077 != 0 {
+                warn!(
+                    file = %path.display(),
+                    "файл с секретом доступен другим пользователям; выполните chmod 600"
+                );
+            }
+        }
+    }
     let text = std::fs::read_to_string(path)
         .with_context(|| format!("не удалось прочитать {}", path.display()))?;
     text.lines()
@@ -161,6 +190,17 @@ async fn main() -> Result<()> {
     if cfg.security == reality_core::vless::Security::Reality {
         cfg.reality_params().context("параметры REALITY в ссылке")?;
     }
+    if cfg.security == reality_core::vless::Security::None {
+        if !args.allow_insecure {
+            anyhow::bail!(
+                "в ссылке security=none: соединение с сервером не шифруется. Любой в той же \
+                 Wi-Fi сети (или по пути до сервера) увидит ваш UUID и весь трафик и сможет \
+                 пользоваться вашим сервером. Если это осознанно (например, сервер в локальной \
+                 сети за доверенным прокси), добавьте --allow-insecure"
+            );
+        }
+        warn!("security=none: соединение с сервером НЕ шифруется (разрешено --allow-insecure)");
+    }
     if let Some(fp) = cfg.fingerprint.as_deref() {
         if !fp.is_empty() && fp != "chrome" {
             warn!(
@@ -183,11 +223,28 @@ async fn main() -> Result<()> {
         )),
         None => None,
     };
-    if auth.is_none() && !args.listen.ip().is_loopback() {
-        anyhow::bail!(
-            "--listen {} открывает прокси для всей сети без пароля; задайте --auth логин:пароль",
-            args.listen
+    let exposed = !args.listen.ip().to_canonical().is_loopback();
+    if exposed {
+        let Some(creds) = &auth else {
+            anyhow::bail!(
+                "--listen {} открывает прокси для всей сети без пароля; задайте --auth логин:пароль",
+                args.listen
+            );
+        };
+        if creds.password.len() < MIN_LAN_PASSWORD {
+            anyhow::bail!(
+                "пароль SOCKS5 короче {MIN_LAN_PASSWORD} символов, а прокси открыт в сеть — \
+                 его подберут; задайте пароль длиннее"
+            );
+        }
+        warn!(
+            "прокси открыт в сеть: SOCKS5 не шифрует ни пароль, ни адреса сайтов, ни данные \
+             между устройством и этим компьютером — в общей Wi-Fi их видят соседи. Пускайте \
+             только свои устройства (--allow-ip), в чужих сетях не открывайте"
         );
+        if args.allow_ip.is_empty() {
+            warn!("--allow-ip не задан: пароль могут пробовать с любого адреса в сети");
+        }
     }
     let cfg = Arc::new(cfg);
     info!(
@@ -214,6 +271,8 @@ async fn main() -> Result<()> {
     info!(addr = %listener.local_addr()?, auth = auth.is_some(), "SOCKS5 слушает");
 
     let slots = Arc::new(tokio::sync::Semaphore::new(args.max_conns.max(1)));
+    let guard = Arc::new(access::AuthGuard::default());
+    let allow_ip = args.allow_ip.clone();
     let mut last_full_warn: Option<std::time::Instant> = None;
     loop {
         let (socket, peer) = match listener.accept().await {
@@ -226,6 +285,16 @@ async fn main() -> Result<()> {
                 continue;
             }
         };
+        // Чужие адреса и адреса, заблокированные за подбор пароля, —
+        // закрываем сразу, до всякого разбора.
+        if !access::allowed(&allow_ip, peer.ip()) {
+            tracing::debug!(%peer, "адрес не входит в --allow-ip — соединение закрыто");
+            continue;
+        }
+        if guard.is_blocked(peer.ip(), std::time::Instant::now()) {
+            tracing::debug!(%peer, "адрес временно заблокирован за подбор пароля");
+            continue;
+        }
         let Ok(permit) = slots.clone().try_acquire_owned() else {
             // Лимит соединений исчерпан: закрываем сразу, чтобы не
             // кончились дескрипторы. Предупреждение — не чаще раза в 10 с.
@@ -244,9 +313,10 @@ async fn main() -> Result<()> {
         let cfg = cfg.clone();
         let auth = auth.clone();
         let xudp = !args.no_xudp;
+        let guard = guard.clone();
         tokio::spawn(async move {
             let _permit = permit;
-            if let Err(e) = handle_conn(socket, cfg, auth, xudp).await {
+            if let Err(e) = handle_conn(socket, peer, cfg, auth, guard, xudp).await {
                 warn!(%peer, error = %e, "соединение завершилось с ошибкой");
             }
         });
@@ -284,8 +354,10 @@ async fn dial(
 
 async fn handle_conn(
     mut socket: TcpStream,
+    peer: std::net::SocketAddr,
     cfg: Arc<VlessConfig>,
     auth: Option<Arc<Credentials>>,
+    guard: Arc<access::AuthGuard>,
     xudp: bool,
 ) -> anyhow::Result<()> {
     // Ошибки приветствия (неверный пароль, мусор вместо SOCKS5, молчащий
@@ -297,7 +369,23 @@ async fn handle_conn(
     )
     .await
     {
-        Ok(Ok(r)) => r,
+        Ok(Ok(r)) => {
+            if auth.is_some() {
+                guard.success(peer.ip());
+            }
+            r
+        }
+        Ok(Err(reality_core::Error::Socks5AuthFailed)) => {
+            if let access::Verdict::Blocked(d) = guard.failure(peer.ip(), std::time::Instant::now())
+            {
+                warn!(
+                    ip = %peer.ip(),
+                    secs = d.as_secs(),
+                    "SOCKS5: подряд несколько неверных паролей — адрес временно заблокирован"
+                );
+            }
+            return Ok(());
+        }
         Ok(Err(e)) => {
             tracing::debug!(error = %e, "SOCKS5: приветствие отклонено");
             return Ok(());

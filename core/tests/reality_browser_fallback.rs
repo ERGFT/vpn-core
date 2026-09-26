@@ -195,3 +195,39 @@ fn hex_literal(s: &str) -> [u8; 32] {
         .collect();
     v.try_into().unwrap()
 }
+
+/// security=tls: подменный сервер с сертификатом, которому клиент не
+/// доверяет (так выглядит перехват в чужой Wi-Fi), — рукопожатие
+/// обрывается, UUID не уходит.
+#[tokio::test]
+async fn tls_link_refuses_untrusted_certificate() {
+    ensure_crypto_provider();
+    let (_ca, chain, key) = ca_and_leaf();
+    let (port, site) = start_site(chain, key).await;
+    let cfg = VlessConfig::parse(&format!(
+        "vless://11111111-2222-3333-4444-555555555555@127.0.0.1:{port}?security=tls&sni=site.test"
+    ))
+    .unwrap();
+    let err = dial(
+        &cfg,
+        &cfg.id,
+        Command::Tcp,
+        Address::Domain("x.test".into()),
+        443,
+    )
+    .await
+    .err()
+    .expect("недоверенный сертификат должен отвергаться");
+    assert!(
+        err.to_string().to_lowercase().contains("certificate"),
+        "{err}"
+    );
+    let got = tokio::time::timeout(Duration::from_secs(20), site)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(
+        got.is_none(),
+        "рукопожатие должно быть оборвано, данных нет"
+    );
+}

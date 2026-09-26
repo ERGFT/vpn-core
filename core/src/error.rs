@@ -19,6 +19,11 @@ pub enum Error {
     #[error("SOCKS5 protocol error: {0}")]
     Socks5(String),
 
+    /// Клиент SOCKS5 прислал неверный логин или пароль (отдельно от
+    /// прочих ошибок — по нему считаются неудачные попытки входа).
+    #[error("SOCKS5: неверный логин или пароль")]
+    Socks5AuthFailed,
+
     #[error("VLESS protocol error: {0}")]
     Protocol(String),
 

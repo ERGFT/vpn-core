@@ -178,7 +178,7 @@ where
                 // `--listen` в сеть) и не мешает честному клиенту.
                 tokio::time::sleep(AUTH_FAILURE_DELAY).await;
                 stream.write_all(&[USER_PASS_VERSION, 0x01]).await?;
-                return Err(Error::Socks5("неверный логин или пароль".into()));
+                return Err(Error::Socks5AuthFailed);
             }
             stream.write_all(&[USER_PASS_VERSION, 0x00]).await?;
         }
