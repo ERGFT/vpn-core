@@ -1,19 +1,15 @@
 //! reality_core — ядро клиента VLESS(+REALITY).
 //!
-//! Статус по этапам плана (см. PLAN.md в корне репозитория):
-//!   Этап 0 (замер)              — крейт `bench`, готово
-//!   Этап 1 (минимальный VLESS)  — `vless`, `socks5`, `transport::tcp_tls`, готово
-//!   Этап 2 (буферы)             — `relay`, готово (miri — см. PLAN.md)
-//!   Этап 3 (TLS-фингерпринтинг) — `fingerprint`: измерение JA3/JA4 готово,
-//!                                 эмуляция браузера — нет, это отдельное
-//!                                 архитектурное решение (см. PLAN.md)
-//!   Этап 4 (транспорты)         — `transport::ws`, `transport::grpc`
-//!   Этап 5 (REALITY)            — `reality`: крипто-примитивы + кастомный
-//!                                 `ServerCertVerifier` готовы и протестированы,
-//!                                 вставка SessionId в реальный ClientHello —
-//!                                 нет, тот же архитектурный тупик rustls, что
-//!                                 и в Этапе 3 (см. PLAN.md, `reality/mod.rs`)
-//!   Этап 6..8                   — не начаты
+//! Что где (подробно — README.md и PLAN.md в корне репозитория):
+//!   `vless`       — разбор vless://-ссылки, протокол VLESS (TCP и UDP),
+//!                   XTLS Vision (`vless::vision`)
+//!   `transport`   — TCP (+TLS или REALITY), WebSocket, gRPC; `raw` —
+//!                   сокет с выдачей по одному TLS-рекорду для Vision
+//!   `reality`     — REALITY: SessionId, проверка сертификата (HMAC и
+//!                   ML-DSA-65), хук в ClientHello патченного rustls
+//!   `fingerprint` — ClientHello как у Chrome 133, разбор, JA3/JA4
+//!   `socks5`      — локальный SOCKS5: CONNECT, UDP ASSOCIATE, логин/пароль
+//!   `relay`       — двусторонний релей, один буфер на направление
 //!
 //! Ядро не резолвит DNS самостоятельно для доменных адресов — это
 //! осознанно передаётся серверу (как и в оригинальном VLESS), поэтому

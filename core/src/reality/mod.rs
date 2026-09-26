@@ -152,6 +152,22 @@
 //! `zeroize::Zeroizing` (стирается из памяти при `Drop`) — устраняет
 //! один конкретный класс риска, но не заменяет ревью в целом.
 
+//! ✅ **Сайты-приманки без ML-KEM (2026-09-26).** Клиент слал в key_share
+//! только гибрид `X25519MLKEM768`; сайт без постквантовой группы (обычный
+//! OpenSSL < 3.5) не мог его выбрать, и сервер REALITY отвечал "target sent
+//! incorrect server hello" — соединения не было вовсе. Теперь, как у
+//! Chrome, X25519-часть гибрида идёт ещё и отдельной долей (тот же ключ,
+//! поэтому AuthKey не меняется), а сервер, выбравший X25519, завершает
+//! обычный ECDH (`RealityClientHook::complete_x25519`). Проверено против
+//! настоящего Xray-core с таким сайтом (`core/tests/interop_xray.rs`).
+//!
+//! ✅ **ML-DSA-65 (`pqv=`).** Если в ссылке есть ключ сервера, кроме HMAC
+//! проверяется постквантовая подпись в сертификате: ML-DSA-65 над
+//! HMAC-SHA512(AuthKey; ключ сертификата || ClientHello || ServerHello),
+//! как `VerifyPeerCertificate` в Xray-core (`verifier.rs`). Сырые
+//! ClientHello/ServerHello хук получает от патча rustls. Проверено против
+//! Xray-core, включая отказ при чужом ключе.
+
 pub mod auth;
 pub mod hook;
 pub mod verifier;

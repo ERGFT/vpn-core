@@ -1,9 +1,10 @@
 # reality-core
 
-Собственное ядро клиента **VLESS (+REALITY)** на Rust: консольная программа
-`reality-client` принимает `vless://`-ссылку и поднимает локальный
-**SOCKS5-прокси**. Трафик программ, которым указан этот прокси, уходит на
-VLESS-сервер (Xray-core и совместимые).
+Собственное ядро клиента **VLESS (+REALITY, +XTLS Vision)** на Rust:
+консольная программа `reality-client` принимает `vless://`-ссылку и
+поднимает локальный **SOCKS5-прокси** (TCP и UDP). Трафик программ,
+которым указан этот прокси, уходит на VLESS-сервер (Xray-core и
+совместимые).
 
 Проект написан с нуля по этапам — история, решения и риски по каждому
 этапу в [`PLAN.md`](PLAN.md). Это учебно-исследовательский проект, а не
@@ -13,22 +14,21 @@ VLESS-сервер (Xray-core и совместимые).
 
 | Возможность | Статус |
 |---|---|
-| `security=none` / `tls` / `reality` | ✅ |
-| Транспорт `type=tcp` | ✅ проверен против настоящего REALITY-сервера (библиотека `XTLS/REALITY`) |
-| Транспорты `type=ws` (`path=`), `type=grpc` (`serviceName=`, режим «gun») | ✅ проверены против собственных тестовых серверов; против настоящего Xray-core — нет |
-| REALITY: X25519MLKEM768, ShortId, `minClientVer`/`maxClientVer`, проверка HMAC-сертификата | ✅ |
-| TLS-отпечаток: порядок cipher suites как у Chrome 133, GREASE | ✅ частично — набор расширений ещё не как у браузера |
-| `flow=xtls-rprx-vision` (XTLS Vision) | ❌ не поддерживается — клиент сразу завершается с понятной ошибкой |
-| `pqv=` (ML-DSA-65 у REALITY) | ❌ не поддерживается |
-| UDP (SOCKS5 UDP ASSOCIATE), Mux | ❌ |
-| Логин/пароль на SOCKS5 | ❌ — слушать только на `127.0.0.1` |
+| `security=none` / `tls` / `reality` | ✅ все три проверены против настоящего Xray-core |
+| Транспорт `type=tcp` (он же `raw`) | ✅ |
+| Транспорты `type=ws` (`path=`, `host=`), `type=grpc` (`serviceName=`, режим «gun») | ✅ проверены против настоящего Xray-core |
+| `flow=xtls-rprx-vision` (XTLS Vision) | ✅ padding, распознавание внутреннего TLS, прямая передача в обе стороны; проверено против Xray-core. Как и в Xray — только `type=tcp` с `tls`/`reality` |
+| REALITY: X25519MLKEM768 (и откат на X25519 для сайтов без ML-KEM), ShortId, `minClientVer`/`maxClientVer`, HMAC-сертификат | ✅ |
+| REALITY: ML-DSA-65 (`pqv=`) | ✅ |
+| TLS-отпечаток как у Chrome 133 | ✅ REALITY — совпадает полностью, включая JA4 `t13d1516h2_8daaf6152771_d8a2da3f94cd`; обычный TLS — без legacy cipher suite'ов и ALPS (см. ниже) |
+| UDP (SOCKS5 UDP ASSOCIATE → VLESS UDP) | ✅ в том числе с Vision-аккаунтом |
+| Логин/пароль на SOCKS5 (`--auth`) | ✅ |
+| Mux, XUDP, `xhttp`/`httpupgrade`/`kcp`/`quic` | ❌ не поддерживаются — неизвестный `type=` даёт понятную ошибку |
 | Linux | ✅ собирается и проверен |
 | Windows | 🟡 код переносимый, инструкция и скрипт есть ([`docs/WINDOWS.md`](docs/WINDOWS.md)), но реально под Windows не собирался |
 
-**Важно:** XTLS Vision — самая распространённая серверная настройка для
-REALITY. Если в ссылке `flow=xtls-rprx-vision`, этот клиент с таким
-сервером работать не будет. Стороннее крипто-ревью реализации REALITY не
-проводилось (подробности — `PLAN.md`, Этап 5).
+Стороннее крипто-ревью реализации REALITY не проводилось (подробности —
+`PLAN.md`, Этап 5).
 
 ## Сборка
 
@@ -36,7 +36,7 @@ REALITY. Если в ссылке `flow=xtls-rprx-vision`, этот клиент
 
 ```sh
 cargo build --release -p reality-client
-# -> target/release/reality-client  (~6 МБ)
+# -> target/release/reality-client  (~6,4 МБ)
 ```
 
 На Windows — [`docs/WINDOWS.md`](docs/WINDOWS.md) или
@@ -45,12 +45,16 @@ cargo build --release -p reality-client
 ## Запуск
 
 ```sh
-reality-client --server 'vless://UUID@host:443?encryption=none&security=reality&sni=site.example&pbk=KEY&sid=SHORTID&type=tcp' \
+reality-client --server 'vless://UUID@host:443?encryption=none&security=reality&sni=site.example&pbk=KEY&sid=SHORTID&type=tcp&flow=xtls-rprx-vision' \
                --listen 127.0.0.1:1080
 ```
 
 - `--server` — ссылка целиком, в кавычках (в ней есть `&`).
 - `--listen` — адрес локального SOCKS5, по умолчанию `127.0.0.1:1080`.
+- `--auth логин:пароль` — требовать логин и пароль на SOCKS5. Слушать не
+  только на `127.0.0.1` без пароля клиент отказывается.
+- `--ca файл.pem` — свои корневые сертификаты для `security=tls`
+  (сервер с самоподписанным сертификатом).
 - Журнал — в stderr, уровень `info` по умолчанию; подробнее —
   `RUST_LOG=debug`.
 
@@ -67,15 +71,18 @@ curl --socks5-hostname 127.0.0.1:1080 https://example.com
 
 | Параметр | Значение |
 |---|---|
-| `security` | `none`, `tls`, `reality` |
-| `type` | `tcp` (по умолчанию), `ws`, `grpc` |
+| `security` | `none`, `tls`, `reality`; другое — ошибка |
+| `type` | `tcp`/`raw` (по умолчанию), `ws`, `grpc`; другое — ошибка |
 | `sni` | имя сервера для TLS/REALITY (по умолчанию — host) |
 | `pbk`, `sid` | публичный ключ и ShortId REALITY |
-| `path` | путь WebSocket |
+| `pqv` | ключ ML-DSA-65 сервера REALITY (необязательно) |
+| `flow` | пусто или `xtls-rprx-vision` (`-udp443` тоже); прочее — ошибка |
+| `path`, `host` | путь и заголовок Host для WebSocket |
 | `serviceName` | имя gRPC-сервиса |
-| `flow` | пусто — да; `xtls-rprx-vision` — явная ошибка «не поддерживается»; прочее — ошибка разбора |
+| `alpn` | список ALPN через запятую; по умолчанию `h2,http/1.1` (как Chrome), для ws — `http/1.1`, для gRPC — всегда `h2` |
 | `encryption` | только `none` |
-| `fp` | читается, но отпечаток всегда один (Chrome-подобный) |
+| `headerType` | только `none` |
+| `fp` | читается; отпечаток всегда Chrome-подобный, другое значение — предупреждение в журнале |
 
 ## Проверка проекта
 
@@ -83,7 +90,7 @@ curl --socks5-hostname 127.0.0.1:1080 https://example.com
 
 ```sh
 scripts/ci.sh          # fmt, clippy (без предупреждений), тесты, release-сборка,
-                       # + интероп, smoke и сверка отпечатка, если есть Go/сеть
+                       # + интероп и smoke с Go-стендом и с Xray-core, сверка отпечатка
 scripts/ci.sh --quick  # только fmt, clippy, тесты
 ```
 
@@ -91,38 +98,43 @@ scripts/ci.sh --quick  # только fmt, clippy, тесты
 
 | Скрипт | Что проверяет |
 |---|---|
-| `cargo test --workspace` | 61 тест (44 unit + 17 интеграционных), всё на loopback |
-| `scripts/interop_go_reality.sh` | 4 теста против настоящего REALITY-сервера на Go-библиотеке `XTLS/REALITY`: рукопожатие + данные, чужой ключ, чужой ShortId, `minClientVer`/`maxClientVer`. Нужен Go ≥ 1.27 |
-| `scripts/smoke_e2e.sh` | собранный бинарник как у пользователя: SOCKS5 → REALITY → VLESS до Go-сервера и обратно, 64 КиБ без искажений; ссылка с Vision отклоняется при старте |
-| `scripts/check_chrome_fingerprint.sh` | не устарел ли эталон отпечатка Chrome относительно utls (стоит запускать раз в месяц-два) |
+| `cargo test --workspace` | 80 тестов (59 unit + 21 интеграционный), всё на loopback |
+| `scripts/interop_xray.sh` | 11 тестов против **настоящего Xray-core**: REALITY (в т.ч. с сайтом без ML-KEM), Vision (padding и переход на прямую передачу), ML-DSA-65 (и отказ при чужом ключе), WebSocket без TLS и с TLS + `--ca`, gRPC поверх REALITY, UDP, отказ Vision-аккаунта клиенту без flow |
+| `scripts/smoke_xray.sh` | собранный бинарник как у пользователя против Xray-core: SOCKS5 с паролем → REALITY → Vision → VLESS, 1 МиБ внутреннего TLS туда-обратно с переходом на прямую передачу, 20 UDP-датаграмм |
+| `scripts/interop_go_reality.sh` | 4 теста против REALITY-сервера на Go-библиотеке `XTLS/REALITY` (нужен Go ≥ 1.27) |
+| `scripts/smoke_e2e.sh` | бинарник против Go-стенда; несовместимая ссылка отклоняется при старте |
+| `scripts/check_chrome_fingerprint.sh` | не устарел ли эталон Chrome в utls: cipher suites, набор расширений, `signature_algorithms` (стоит запускать раз в месяц-два) |
 | `cargo run -p fpcheck -- --server 'vless://...'` | JA3/JA4 реального ClientHello этого клиента |
 
-В среде без доступа к `proxy.golang.org` Go-стенд готовит
-`scripts/interop_sandbox_bootstrap.sh` (собирает Go 1.27 из исходников и
-тянет зависимости через git).
+Xray-core для тестов: `scripts/fetch_xray.sh` (скачать релиз) или
+`scripts/build_xray_from_source.sh` (собрать из исходников по git — для
+сред без доступа к релизам и `proxy.golang.org`). В такой же среде
+Go-стенд готовит `scripts/interop_sandbox_bootstrap.sh`.
 
 ## Устройство
 
 ```
 bin/client/            reality-client: CLI, SOCKS5 -> VLESS
 core/src/
-  vless/               разбор vless:// (uri.rs), протокол VLESS (protocol.rs)
-  transport/           tcp_tls.rs (TLS и REALITY), ws.rs, grpc.rs
+  vless/               разбор vless:// (uri.rs), протокол VLESS (protocol.rs),
+                       XTLS Vision (vision.rs), UDP-пакеты (udp.rs)
+  transport/           tcp_tls.rs (TCP, TLS, REALITY), raw.rs (сокет с выдачей
+                       по одному TLS-рекорду для Vision), ws.rs, grpc.rs
   reality/             REALITY: ключи и SessionId (auth.rs), хук в ClientHello
-                       (hook.rs), проверка сертификата сервера (verifier.rs)
-  fingerprint/         разбор ClientHello, JA3/JA4, профиль Chrome
-  socks5/              локальный SOCKS5 (CONNECT, без аутентификации)
-  relay.rs             двусторонний релей, один буфер на соединение
-core/tests/            интеграционные тесты (loopback) + interop_go_reality.rs
+                       (hook.rs), проверка сертификата: HMAC и ML-DSA-65 (verifier.rs)
+  fingerprint/         ClientHello как у Chrome (chrome_profile.rs), разбор, JA3/JA4
+  socks5/              локальный SOCKS5: CONNECT, UDP ASSOCIATE (udp.rs), логин/пароль
+  relay.rs             двусторонний релей, один буфер на направление
+core/tests/            интеграционные тесты (loopback) + interop_xray.rs, interop_go_reality.rs
 vendor/rustls-reality-patch/
-                       rustls 0.23.45 с патчем для REALITY и GREASE
-                       (подключён через [patch.crates-io])
+                       rustls 0.23.45 с патчем: REALITY, GREASE, профиль ClientHello
+                       Chrome (подключён через [patch.crates-io])
 interop/go-reality-server/
                        тестовый REALITY-сервер на библиотеке XTLS/REALITY
 bin/fpcheck/           снятие JA3/JA4
 bench/                 бенчмарки (criterion) и замер памяти (memwatch, Linux)
-scripts/               ci, интероп, smoke, сверка отпечатка, сборка под Windows,
-                       инструкции для Этапов 2 и 8
+scripts/               ci, интероп, smoke, сборка Xray, сверка отпечатка,
+                       сборка под Windows, инструкции для Этапов 2 и 8
 docs/                  WINDOWS.md, чек-лист крипто-ревью (Этап 5)
 PLAN.md                план по этапам, история решений, открытые риски
 ```
@@ -132,14 +144,14 @@ PLAN.md                план по этапам, история решений
 `scripts/stage8_compare_with_xray.sh` — автоматическое сравнение с
 настоящим Xray-core на одинаковой нагрузке (оба клиента ходят на один
 тестовый REALITY-сервер, нагрузку даёт один и тот же код). Три прогона,
-8 соединений x 16 МиБ, loopback:
+8 соединений x 16 МиБ, loopback, 2 ядра, Xray-core 26.9.9:
 
-| показатель | reality-core | Xray-core 26.3.27 |
+| показатель | reality-core | Xray-core 26.9.9 |
 |---|---|---|
-| память на холостом ходу | **5,9 МиБ** | 29,5 МиБ |
-| пик памяти под нагрузкой | **8,7 МиБ** | 34,3 МиБ |
-| до первого байта данных | 17,1 мс | 22,6 мс (ничья) |
-| пропускная способность | 985 МиБ/с | 966 МиБ/с (ничья) |
+| память на холостом ходу | **6,3 МиБ** | 30,4 МиБ |
+| пик памяти под нагрузкой | **8,9 МиБ** | 35,3 МиБ |
+| до первого байта данных | 25,4 мс | 35,8 мс (ничья — разброс сопоставим) |
+| пропускная способность | 625 МиБ/с | 572 МиБ/с (ничья — разброс сопоставим) |
 
 Выигрыш по памяти — во многом цена универсальности: Xray-core несёт
 десятки протоколов и роутинг, этот клиент умеет одно.
@@ -152,7 +164,8 @@ Xray отвечает на CONNECT авансом, не дожидаясь со�
 ## Производительность и память
 
 Бенчмарки и выбор аллокатора — `PLAN.md`, Этапы 0 и 7. Кратко: один буфер
-на направление соединения, без глобального пула; системный аллокатор по
+(17 КиБ — чтобы вмещался целый TLS-рекорд, это важно для Vision) на
+направление соединения, без глобального пула; системный аллокатор по
 умолчанию (`--features mimalloc` — опционально, в замерах давал больший
 idle RSS).
 
@@ -163,11 +176,13 @@ cargo run -p bench --bin memwatch -- --pid <PID> --duration-secs 30 --csv rss.cs
 
 ## Что осталось открытым
 
-- XTLS Vision и ML-DSA-65 — не реализованы (см. таблицу выше).
-- Набор расширений ClientHello пока отличается от Chrome.
-- Интероп WS/gRPC с настоящим Xray-core не проверялся.
-- `cargo miri`/ASan (Этап 2), стороннее крипто-ревью (Этап 5), сравнение
-  с Xray-core и публикация (Этап 8) — требуют ресурсов вне среды
-  разработки; готовые инструкции: `scripts/stage2_miri_asan.sh`,
-  `docs/stage5-crypto-review-and-interop.md`,
-  `scripts/stage8_compare_with_xray.sh`.
+- Mux/XUDP и транспорты `xhttp`, `httpupgrade`, `kcp`, `quic` — не
+  реализованы.
+- Обычный TLS (`security=tls`) отличается от Chrome двумя вещами — осознанно:
+  не заявляются 6 legacy cipher suite'ов (сервер с откатом на TLS 1.2 мог бы
+  выбрать такой) и ALPS (если CDN на BoringSSL его согласует, клиент обязан
+  ответить, а rustls этого не умеет). В REALITY совпадение полное.
+- Под Windows не собиралось (нет доступа к Windows-цели Rust из среды
+  разработки).
+- Стороннее крипто-ревью (Этап 5) и решение о публикации (Этап 8) —
+  за людьми: `docs/stage5-crypto-review-and-interop.md`.
