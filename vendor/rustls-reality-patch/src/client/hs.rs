@@ -143,6 +143,53 @@ impl ActiveKeyExchange for RealityKeyExchange {
     }
 }
 
+/// reality-core (Фаза 7): основная доля ключа и ещё одна, независимая
+/// (у Firefox — P-256). Сервер выбирает одну из них; какую — решает
+/// `KeyExchangeChoice` (`tls13.rs`).
+struct WithExtraShare {
+    main: Box<dyn ActiveKeyExchange>,
+    extra: Box<dyn ActiveKeyExchange>,
+}
+
+impl core::fmt::Debug for WithExtraShare {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("WithExtraShare").finish_non_exhaustive()
+    }
+}
+
+impl ActiveKeyExchange for WithExtraShare {
+    fn complete(self: Box<Self>, peer_pub_key: &[u8]) -> Result<SharedSecret, Error> {
+        self.main.complete(peer_pub_key)
+    }
+
+    fn pub_key(&self) -> &[u8] {
+        self.main.pub_key()
+    }
+
+    fn group(&self) -> NamedGroup {
+        self.main.group()
+    }
+
+    fn hybrid_component(&self) -> Option<(NamedGroup, &[u8])> {
+        self.main.hybrid_component()
+    }
+
+    fn complete_hybrid_component(
+        self: Box<Self>,
+        peer_pub_key: &[u8],
+    ) -> Result<SharedSecret, Error> {
+        self.main.complete_hybrid_component(peer_pub_key)
+    }
+
+    fn extra_share(&self) -> Option<(NamedGroup, &[u8])> {
+        Some((self.extra.group(), self.extra.pub_key()))
+    }
+
+    fn complete_extra(self: Box<Self>, peer_pub_key: &[u8]) -> Result<SharedSecret, Error> {
+        self.extra.complete(peer_pub_key)
+    }
+}
+
 pub(super) struct ClientHelloInput {
     pub(super) config: Arc<ClientConfig>,
     pub(super) resuming: Option<persist::Retrieved<ClientSessionValue>>,
@@ -297,6 +344,28 @@ fn emit_client_hello_for_retry(
         _ => key_share,
     };
 
+    // reality-core (Фаза 7): профиль браузера из `ChromeHello`.
+    let profile = config.chrome_hello.as_ref();
+    let no_grease = profile.is_some_and(|p| p.no_grease);
+    // Ещё одна настоящая доля ключа — P-256 (Firefox), только в первом
+    // ClientHello.
+    let key_share: Option<Box<dyn ActiveKeyExchange>> = match key_share {
+        Some(ks)
+            if retryreq.is_none()
+                && profile.is_some_and(|p| p.extra_p256_share)
+                && ks.group() != NamedGroup::secp256r1 =>
+        {
+            match config
+                .find_kx_group(NamedGroup::secp256r1, ProtocolVersion::TLSv1_3)
+                .map(|g| g.start())
+            {
+                Some(Ok(extra)) => Some(Box::new(WithExtraShare { main: ks, extra })),
+                _ => Some(ks),
+            }
+        }
+        ks => ks,
+    };
+
     // Defense in depth: the ECH state should be None if ECH is disabled based on config
     // builder semantics.
     let forbids_tls12 = cx.common.is_quic() || ech_state.is_some();
@@ -358,14 +427,27 @@ fn emit_client_hello_for_retry(
         // X25519-часть отдельной записью (`hybrid_component` выше). Сервер
         // выбирает группу из тех, для которых есть доля, так что HRR не
         // возникает ни с PQ-сайтом, ни с обычным.
-        named_groups: Some(if matches!((&config.reality, retryreq), (Some(_), None)) {
-            vec![
+        named_groups: Some(if let Some(list) = profile
+            .map(|p| &p.named_groups)
+            .filter(|l| !l.is_empty())
+        {
+            let mut groups: Vec<NamedGroup> = list.iter().map(|g| NamedGroup::from(*g)).collect();
+            if !no_grease {
+                groups.insert(0, group_grease);
+            }
+            groups
+        } else if matches!((&config.reality, retryreq), (Some(_), None)) {
+            let mut g = vec![
                 group_grease,
                 NamedGroup::X25519MLKEM768,
                 NamedGroup::X25519,
                 NamedGroup::secp256r1,
                 NamedGroup::secp384r1,
-            ]
+            ];
+            if no_grease {
+                g.remove(0);
+            }
+            g
         } else {
             let mut groups: Vec<NamedGroup> = config
                 .provider
@@ -377,14 +459,16 @@ fn emit_client_hello_for_retry(
             // GREASE первым, как у настоящего Chrome (см. `group_grease`
             // выше и `u_parrots.go`, HelloChrome_133:
             // `SupportedCurvesExtension{[]CurveID{GREASE_PLACEHOLDER, ...}}`).
-            groups.insert(0, group_grease);
+            if !no_grease {
+                groups.insert(0, group_grease);
+            }
             groups
         }),
         // GREASE-версия первой (как у Chrome: `[GREASE, 1.3, 1.2]`) —
         // только в копии, уходящей в расширение; сама `supported_versions`
         // ниже по функции используется для логики и GREASE не содержит.
         supported_versions: Some(SupportedProtocolVersions {
-            grease: Some(grease.version),
+            grease: (!no_grease).then_some(grease.version),
             ..supported_versions
         }),
         signature_schemes: Some(config.verifier.supported_verify_schemes()),
@@ -466,6 +550,10 @@ fn emit_client_hello_for_retry(
             {
                 shares.push(KeyShareEntry::new(component_group, component_share));
             }
+            // reality-core (Фаза 7): доля P-256 (Firefox).
+            if let Some((g, pk)) = key_share.extra_share() {
+                shares.push(KeyShareEntry::new(g, pk));
+            }
         }
 
         // GREASE key_share, тем же кодпоинтом, что и в named_groups выше
@@ -489,9 +577,10 @@ fn emit_client_hello_for_retry(
         // (`core/tests/fingerprint_grease_groups.rs`): первая версия этого
         // патча слала `[GREASE, secp256r1]` во втором hello, и сервер
         // rustls это молча терпел.
-        if !retryreq
-            .map(|rr| rr.key_share.is_some())
-            .unwrap_or_default()
+        if !no_grease
+            && !retryreq
+                .map(|rr| rr.key_share.is_some())
+                .unwrap_or_default()
         {
             shares.insert(0, KeyShareEntry::new(group_grease, vec![0u8]));
         }
@@ -503,7 +592,7 @@ fn emit_client_hello_for_retry(
         exts.cookie = Some(cookie.clone());
     }
 
-    if supported_versions.tls13 {
+    if supported_versions.tls13 && !profile.is_some_and(|p| p.no_psk_modes) {
         // We could support PSK_KE here too. Such connections don't
         // have forward secrecy, and are similar to TLS1.2 resumption.
         exts.preshared_key_modes = Some(PskKeyExchangeModes {
@@ -575,12 +664,17 @@ fn emit_client_hello_for_retry(
     // непонятных кодпоинтов, не workaround. Значение — из
     // `input.hello.grease` (одно на соединение, см. выше), раньше
     // генерировалось заново на каждый hello.
-    cipher_suites.insert(0, CipherSuite::Unknown(grease.cipher));
+    if !no_grease {
+        cipher_suites.insert(0, CipherSuite::Unknown(grease.cipher));
+    }
 
     // И два GREASE-расширения — первым и последним (перед PSK) в списке
     // расширений, с телом `[]` и `[0]` соответственно, как у
     // BoringSSL/Chrome (см. `ClientExtensions::grease_extensions`).
-    exts.grease_extensions = Some((grease.extension1, grease.extension2));
+    exts.grease_extensions = (!no_grease).then_some((grease.extension1, grease.extension2));
+    if let Some(p) = profile {
+        exts.fixed_order = p.extension_order.clone();
+    }
 
     match &config.chrome_hello {
         // reality-core: как Chrome — пустое расширение renegotiation_info
@@ -1140,7 +1234,11 @@ impl ExpectServerHelloOrHelloRetryRequest {
                 })
                 .map(|skxg| skxg.name());
 
-            if req_group == offered_key_share.group() || Some(req_group) == offered_hybrid {
+            let offered_extra = offered_key_share.extra_share().map(|(g, _)| g);
+            if req_group == offered_key_share.group()
+                || Some(req_group) == offered_hybrid
+                || Some(req_group) == offered_extra
+            {
                 return Err({
                     cx.common.send_fatal_alert(
                         AlertDescription::IllegalParameter,

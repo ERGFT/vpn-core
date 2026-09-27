@@ -161,9 +161,25 @@ else
     DRIFT=1
 fi
 
+# Фаза 7: Firefox и Safari — профили в core/src/fingerprint/profiles.rs
+# привязаны к HelloFirefox_148 и HelloSafari_26_3; ловим, когда utls
+# сдвигает *_Auto на новую версию.
+for pair in "HelloFirefox_Auto HelloFirefox_148" "HelloSafari_Auto HelloSafari_26_3"; do
+    set -- $pair
+    cur="$(grep -oE "$1[[:space:]]*=[[:space:]]*Hello[0-9A-Za-z_]+" "$TMP/u_common.go" \
+           | head -n1 | sed -E 's/.*=[[:space:]]*//')"
+    echo
+    if [[ "$cur" == "$2" ]]; then
+        echo "$1 -> $cur: совпадает с профилем в profiles.rs."
+    else
+        echo "!! $1 -> ${cur:-?}, а profiles.rs опирается на $2 — обновить профиль."
+        DRIFT=1
+    fi
+done
+
 echo
 if [[ "$DRIFT" -ne 0 ]]; then
-    echo "ИТОГ: эталон устарел — обновить chrome_profile.rs и этот скрипт."
+    echo "ИТОГ: эталон устарел — обновить chrome_profile.rs/profiles.rs и этот скрипт."
     exit 1
 fi
 echo "ИТОГ: расхождений нет."

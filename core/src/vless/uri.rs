@@ -120,6 +120,9 @@ pub struct VlessConfig {
     /// Дробление начала соединения с сервером (задаётся настройками
     /// выхода, не ссылкой), см. [`crate::transport::fragment`].
     pub fragment: Option<std::sync::Arc<crate::transport::fragment::Fragment>>,
+    /// Чей ClientHello и HTTP-заголовки изображать (по `fp=`), см.
+    /// [`crate::fingerprint::profiles`].
+    pub browser: crate::fingerprint::Browser,
 }
 
 /// Разобранные параметры REALITY (`pbk=`/`sid=` в ссылке) — Этап 5.
@@ -156,7 +159,7 @@ impl VlessConfig {
             self.sni,
             params,
             self.ca_roots.as_ref().map(std::sync::Arc::as_ptr),
-        ) + &format!("|{:?}", self.fragment)
+        ) + &format!("|{:?}|{:?}", self.fragment, self.browser)
     }
 
     pub fn parse(uri: &str) -> Result<Self> {
@@ -220,6 +223,7 @@ impl VlessConfig {
 
         let sni = raw_params.get("sni").cloned();
         let fingerprint = raw_params.get("fp").cloned();
+        let browser = crate::fingerprint::Browser::from_fp(fingerprint.as_deref()).0;
         let flow = Flow::parse(raw_params.get("flow").map(String::as_str))?;
         let remark = url.fragment().map(percent_decode);
 
@@ -237,6 +241,7 @@ impl VlessConfig {
             raw_params,
             ca_roots: None,
             fragment: None,
+            browser,
         })
     }
 

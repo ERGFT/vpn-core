@@ -1597,3 +1597,80 @@ async fn fragmented_client_hello_against_xray() {
         }
     }
 }
+
+/// Отпечатки браузеров (fp=): REALITY-сервер Xray принимает ClientHello
+/// Firefox (без GREASE, с долей P-256) и Safari — и с Vision, и через
+/// xhttp/gRPC (ALPN h2).
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "нужен Xray-core: scripts/interop_xray.sh"]
+async fn browser_fingerprints_against_xray() {
+    ensure_crypto_provider();
+    init_log();
+    let decoy = start_decoy().await;
+    let echo = start_echo().await;
+    let keys = reality_keys();
+    let uuid = uuid::Uuid::new_v4();
+    let (p_raw, p_vis, p_xh, p_grpc) = (free_port(), free_port(), free_port(), free_port());
+    let _x = Xray::start(
+        vec![
+            vless_inbound(
+                p_raw,
+                &uuid,
+                "",
+                reality_stream("raw", decoy, &keys, vec![], None),
+            ),
+            vless_inbound(
+                p_vis,
+                &uuid,
+                "xtls-rprx-vision",
+                reality_stream("raw", decoy, &keys, vec![], None),
+            ),
+            vless_inbound(
+                p_xh,
+                &uuid,
+                "",
+                reality_stream(
+                    "xhttp",
+                    decoy,
+                    &keys,
+                    vec![("xhttpSettings", obj(vec![("path", s("/fp"))]))],
+                    None,
+                ),
+            ),
+            vless_inbound(
+                p_grpc,
+                &uuid,
+                "",
+                reality_stream(
+                    "grpc",
+                    decoy,
+                    &keys,
+                    vec![("grpcSettings", obj(vec![("serviceName", s("fp"))]))],
+                    None,
+                ),
+            ),
+        ],
+        &[p_raw, p_vis, p_xh, p_grpc],
+        tempdir::Dir::new(),
+    )
+    .await;
+    let (a, p) = target(echo);
+    for fp in ["firefox", "safari", "ios", "edge", "random", "randomized"] {
+        for (port, rest) in [
+            (p_raw, "&type=tcp"),
+            (p_vis, "&type=tcp&flow=xtls-rprx-vision"),
+            (p_xh, "&type=xhttp&path=%2Ffp"),
+            (p_grpc, "&type=grpc&serviceName=fp"),
+        ] {
+            let cfg = VlessConfig::parse(&format!(
+                "vless://{uuid}@127.0.0.1:{port}?encryption=none&security=reality&sni=decoy.test&fp={fp}&pbk={}&sid={SHORT_ID}{rest}",
+                b64(&keys.public)
+            ))
+            .unwrap();
+            let mut st = dial(&cfg, &cfg.id, VlessCommand::Tcp, a.clone(), p)
+                .await
+                .unwrap_or_else(|e| panic!("fp={fp} {rest}: {e}"));
+            echo_roundtrip(&mut st, 200_000).await;
+        }
+    }
+}

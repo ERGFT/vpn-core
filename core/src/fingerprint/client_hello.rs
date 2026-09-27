@@ -84,6 +84,8 @@ pub struct ClientHelloInfo {
     /// последнее (перед PSK, если оно есть) с телом `[0]` — нужно, чтобы
     /// проверить на проводе и тип, и тело, а не только факт наличия.
     pub grease_extensions: Vec<(u16, Vec<u8>)>,
+    /// Алгоритмы из `compress_certificate` (0x001b), в исходном порядке.
+    pub compress_certificate: Vec<u16>,
 }
 
 struct Cursor<'a> {
@@ -293,6 +295,15 @@ fn parse_client_hello_fields(bytes: &[u8]) -> Result<ClientHelloInfo> {
                         k.copy_from_slice(ke);
                         info.key_share_x25519 = Some(k);
                     }
+                }
+            }
+            0x001b => {
+                let mut dc = Cursor::new(data);
+                let list_len = dc.u8()? as usize;
+                let list = dc.take(list_len)?;
+                let mut lc = Cursor::new(list);
+                while lc.remaining() > 0 {
+                    info.compress_certificate.push(lc.u16()?);
                 }
             }
             _ => {}

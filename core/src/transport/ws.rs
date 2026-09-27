@@ -56,7 +56,8 @@ pub async fn connect_ws(cfg: &VlessConfig) -> Result<WsVlessStream> {
         .method("GET")
         .uri(uri)
         .header("Host", host);
-    for (k, v) in crate::transport::browser_headers::chrome_headers(
+    for (k, v) in crate::transport::browser_headers::headers(
+        cfg.browser,
         crate::transport::browser_headers::Variant::Ws,
     ) {
         builder = builder.header(k, v);

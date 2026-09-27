@@ -219,13 +219,11 @@ fn vless_from_link(
             tracing::warn!(outbound = %tag, "security=none: соединение с сервером НЕ шифруется");
         }
     }
-    if let Some(fp) = cfg.fingerprint.as_deref() {
-        if !quiet && !fp.is_empty() && fp != "chrome" {
-            tracing::warn!(
-                fp,
-                "отпечаток TLS всегда Chrome-подобный; fp={fp} из ссылки игнорируется"
-            );
-        }
+    if let (Some(w), false) = (
+        crate::fingerprint::Browser::from_fp(cfg.fingerprint.as_deref()).1,
+        quiet,
+    ) {
+        tracing::warn!(outbound = %tag, "{w}");
     }
     cfg.ca_roots = ca_roots;
     cfg.fragment = fragment;
@@ -240,6 +238,7 @@ fn vless_from_link(
             security = ?cfg.security,
             network = ?cfg.network,
             flow = ?cfg.flow,
+            fp = cfg.browser.name(),
             "сервер загружен"
         );
     }

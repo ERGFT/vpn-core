@@ -59,7 +59,8 @@ use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 use crate::error::{Error, Result};
-use crate::transport::browser_headers::{chrome_headers, Variant};
+use crate::fingerprint::Browser;
+use crate::transport::browser_headers::{headers as browser_headers, Variant};
 use crate::transport::h2pool;
 use crate::transport::tcp_tls::{connect_tls_by_security, SecureStream};
 use crate::vless::protocol::{vless_connect, Address, Command, VlessStream};
@@ -442,20 +443,22 @@ impl XhttpSettings {
             .iter()
             .find(|(k, _)| k.eq_ignore_ascii_case("user-agent"))
             .map(|(_, v)| v.clone());
-        let headers = if ua.is_none() || ua.as_deref() == Some("chrome") {
+        // User-Agent не задан — заголовки браузера из fp=; «chrome»,
+        // «firefox», «safari» — заголовки этого браузера.
+        let browser = match ua.as_deref() {
+            None => Some(cfg.browser),
+            Some("chrome") => Some(Browser::Chrome),
+            Some("firefox") => Some(Browser::Firefox),
+            Some("safari") => Some(Browser::Safari),
+            Some(_) => None,
+        };
+        let headers = if let Some(b) = browser {
+            let defaults = browser_headers(b, Variant::Fetch);
             let mut h: Vec<(String, String)> = user_headers
                 .into_iter()
-                .filter(|(k, _)| {
-                    !chrome_headers(Variant::Fetch)
-                        .iter()
-                        .any(|(c, _)| c.eq_ignore_ascii_case(k))
-                })
+                .filter(|(k, _)| !defaults.iter().any(|(c, _)| c.eq_ignore_ascii_case(k)))
                 .collect();
-            h.extend(
-                chrome_headers(Variant::Fetch)
-                    .into_iter()
-                    .map(|(k, v)| (k.to_string(), v)),
-            );
+            h.extend(defaults.into_iter().map(|(k, v)| (k.to_string(), v)));
             h
         } else {
             user_headers
@@ -1230,6 +1233,27 @@ mod tests {
         assert!(XhttpSettings::from_config(&cfg("security=none&mode=stream-one")).is_err());
         assert!(XhttpSettings::from_config(&cfg("security=tls&alpn=h3")).is_err());
         assert!(XhttpSettings::from_config(&cfg("mode=weird")).is_err());
+    }
+
+    #[test]
+    fn headers_follow_fingerprint() {
+        let ua = |s: &XhttpSettings| {
+            s.headers
+                .iter()
+                .find(|(k, _)| k == "User-Agent")
+                .map(|(_, v)| v.clone())
+                .unwrap()
+        };
+        let s = XhttpSettings::from_config(&cfg("security=tls&fp=firefox")).unwrap();
+        assert!(ua(&s).contains("Firefox/"));
+        let s = XhttpSettings::from_config(&cfg("security=tls&fp=safari")).unwrap();
+        assert!(ua(&s).contains("Safari/605"));
+        let s = XhttpSettings::from_config(&cfg("security=tls")).unwrap();
+        assert!(ua(&s).contains("Chrome/"));
+        // Явный User-Agent-ключ главнее fp.
+        let extra = "%7B%22headers%22%3A%7B%22User-Agent%22%3A%22firefox%22%7D%7D";
+        let s = XhttpSettings::from_config(&cfg(&format!("security=tls&extra={extra}"))).unwrap();
+        assert!(ua(&s).contains("Firefox/"));
     }
 
     #[test]

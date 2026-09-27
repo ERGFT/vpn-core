@@ -550,6 +550,18 @@ pub trait ActiveKeyExchange: Send + Sync {
         None
     }
 
+    /// reality-core (Фаза 7): ещё одна независимая доля ключа (группа и
+    /// открытый ключ), которую клиент кладёт в ClientHello после основной
+    /// (у Firefox — P-256). `None` — нет.
+    fn extra_share(&self) -> Option<(NamedGroup, &[u8])> {
+        None
+    }
+
+    /// Завершить обмен по доле из [`Self::extra_share`] (сервер выбрал её).
+    fn complete_extra(self: Box<Self>, _peer_pub_key: &[u8]) -> Result<SharedSecret, Error> {
+        Err(Error::General("нет дополнительной доли ключа".into()))
+    }
+
     /// Completes the classical component of the key exchange, given the peer's public key.
     ///
     /// This is only called if `hybrid_component` returns `Some(_)`.

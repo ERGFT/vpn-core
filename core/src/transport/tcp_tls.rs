@@ -285,15 +285,19 @@ async fn connect_tcp(cfg: &VlessConfig) -> Result<RawConn> {
     Ok(RawConn::new(connect_tcp_stream(cfg).await?).with_fragment(cfg.fragment.clone()))
 }
 
-fn build_client_config(roots: RootCertStore, alpn: Vec<Vec<u8>>) -> ClientConfig {
-    // Этап 3: cipher suites — в порядке реального Chrome, не в дефолтном
-    // порядке aws-lc-rs (см. `fingerprint::chrome_profile` за источником
-    // и обоснованием). Провайдер — тот же самый aws-lc-rs, только с
+fn build_client_config(
+    roots: RootCertStore,
+    alpn: Vec<Vec<u8>>,
+    browser: crate::fingerprint::Browser,
+) -> ClientConfig {
+    // ClientHello как у браузера `browser` (по умолчанию Chrome): порядок
+    // cipher suites задаёт провайдер, остальное — профиль (см.
+    // `fingerprint::profiles`). Провайдер — тот же aws-lc-rs, только с
     // переставленным `cipher_suites`, поэтому
-    // `with_safe_default_protocol_versions()` здесь не может провалиться
-    // по-настоящему — `expect` фиксирует это как инвариант.
-    let provider = crate::fingerprint::apply_chrome133_cipher_order(
+    // `with_safe_default_protocol_versions()` не может провалиться.
+    let provider = crate::fingerprint::profiles::order_cipher_suites(
         rustls::crypto::aws_lc_rs::default_provider(),
+        browser,
     );
     let mut config = ClientConfig::builder_with_provider(Arc::new(provider))
         .with_safe_default_protocol_versions()
@@ -301,7 +305,7 @@ fn build_client_config(roots: RootCertStore, alpn: Vec<Vec<u8>>) -> ClientConfig
         .with_root_certificates(roots)
         .with_no_client_auth();
     config.alpn_protocols = alpn;
-    crate::fingerprint::apply_chrome_extensions(&mut config, false);
+    crate::fingerprint::profiles::apply(&mut config, browser, false);
     config
 }
 
@@ -318,7 +322,11 @@ where
     S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
 {
     ensure_crypto_provider();
-    let config = build_client_config(roots.unwrap_or_else(default_root_store), alpn);
+    let config = build_client_config(
+        roots.unwrap_or_else(default_root_store),
+        alpn,
+        crate::fingerprint::Browser::Chrome,
+    );
     let connector = TlsConnector::from(Arc::new(config));
     let name = ServerName::try_from(server_name.to_string()).map_err(Error::InvalidDnsName)?;
     with_handshake_timeout("TLS", connector.connect(name, stream)).await
@@ -343,7 +351,7 @@ async fn connect_tls_inner(
 
     let mut tcp = connect_tcp(cfg).await?;
     tcp.set_record_aligned(record_aligned);
-    let config = build_client_config(roots, alpn);
+    let config = build_client_config(roots, alpn, cfg.browser);
     let connector = TlsConnector::from(Arc::new(config));
     let server_name =
         ServerName::try_from(cfg.effective_sni().to_string()).map_err(Error::InvalidDnsName)?;
@@ -402,7 +410,7 @@ pub async fn connect_tls_capturing_client_hello(
     let tcp = connect_tcp_stream(cfg).await?;
     let captured_tcp = CaptureFirstBytes::new(tcp, CLIENT_HELLO_CAPTURE_CAP);
 
-    let config = build_client_config(roots_for(cfg), default_alpn(cfg));
+    let config = build_client_config(roots_for(cfg), default_alpn(cfg), cfg.browser);
     let connector = TlsConnector::from(Arc::new(config));
     let server_name =
         ServerName::try_from(cfg.effective_sni().to_string()).map_err(Error::InvalidDnsName)?;
@@ -421,7 +429,7 @@ pub fn reality_client_config(
     reality: &crate::vless::uri::RealityParams,
     alpn: Vec<Vec<u8>>,
 ) -> Result<ClientConfig> {
-    Ok(reality_client_config_inner(reality, alpn, None)?.0)
+    Ok(reality_client_config_inner(reality, alpn, None, crate::fingerprint::Browser::Chrome)?.0)
 }
 
 /// Сборка конфига REALITY. `browser_fallback` — корни для обычной
@@ -434,6 +442,7 @@ fn reality_client_config_inner(
     reality: &crate::vless::uri::RealityParams,
     alpn: Vec<Vec<u8>>,
     browser_fallback: Option<RootCertStore>,
+    browser: crate::fingerprint::Browser,
 ) -> Result<(ClientConfig, Arc<RealityHook>)> {
     let mut rng = rand::rngs::OsRng;
     let hook = Arc::new(RealityHook::new(
@@ -453,8 +462,9 @@ fn reality_client_config_inner(
         verifier = verifier.with_browser_fallback(roots)?;
     }
 
-    let provider = crate::fingerprint::apply_chrome133_cipher_order(
+    let provider = crate::fingerprint::profiles::order_cipher_suites(
         rustls::crypto::aws_lc_rs::default_provider(),
+        browser,
     );
     let mut config = ClientConfig::builder_with_provider(Arc::new(provider))
         .with_protocol_versions(&[&rustls::version::TLS13])
@@ -469,7 +479,7 @@ fn reality_client_config_inner(
     // REALITY была бы пропущена. Конфиг и так одноразовый, это страховка.
     // На ClientHello не влияет (psk_key_exchange_modes уходит всегда).
     config.resumption = rustls::client::Resumption::disabled();
-    crate::fingerprint::apply_chrome_extensions(&mut config, true);
+    crate::fingerprint::profiles::apply(&mut config, browser, true);
     Ok((config, hook))
 }
 
@@ -483,7 +493,8 @@ async fn connect_tls_reality_inner(
 
     let mut tcp = connect_tcp(cfg).await?;
     tcp.set_record_aligned(record_aligned);
-    let (config, hook) = reality_client_config_inner(reality, alpn, Some(roots_for(cfg)))?;
+    let (config, hook) =
+        reality_client_config_inner(reality, alpn, Some(roots_for(cfg)), cfg.browser)?;
     let connector = TlsConnector::from(Arc::new(config));
     let server_name =
         ServerName::try_from(cfg.effective_sni().to_string()).map_err(Error::InvalidDnsName)?;
@@ -492,7 +503,11 @@ async fn connect_tls_reality_inner(
     // Единственная точка, через которую REALITY-соединение попадает к
     // VLESS: не прошедшее проверку соединение отсюда не выходит никогда.
     if !hook.is_verified() {
-        crate::transport::browser_mimic::visit_in_background(tls, cfg.effective_sni().to_string());
+        crate::transport::browser_mimic::visit_in_background(
+            tls,
+            cfg.effective_sni().to_string(),
+            cfg.browser,
+        );
         return Err(Error::Protocol(
             "REALITY: вместо сервера ответил настоящий сайт (подмена соединения или \
              неверный pbk=/sni=); данные VLESS не отправлялись"

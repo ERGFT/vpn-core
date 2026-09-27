@@ -19,7 +19,8 @@ use bytes::Bytes;
 use http::Request;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-use crate::transport::browser_headers::{chrome_headers, Variant};
+use crate::fingerprint::Browser;
+use crate::transport::browser_headers::{headers as browser_headers, Variant};
 use crate::transport::tcp_tls::TlsBoxedStream;
 
 /// Сколько тела ответа дочитать, прежде чем закрыть.
@@ -28,23 +29,23 @@ const MAX_BODY: usize = 1024 * 1024;
 const VISIT_TIMEOUT: Duration = Duration::from_secs(15);
 
 /// Запустить «визит» в фоне и сразу вернуться.
-pub fn visit_in_background(tls: TlsBoxedStream, host: String) {
+pub fn visit_in_background(tls: TlsBoxedStream, host: String, browser: Browser) {
     tokio::spawn(async move {
-        let _ = tokio::time::timeout(VISIT_TIMEOUT, visit(tls, &host)).await;
+        let _ = tokio::time::timeout(VISIT_TIMEOUT, visit(tls, &host, browser)).await;
         tracing::debug!("REALITY: браузерный визит на настоящий сайт завершён");
     });
 }
 
-async fn visit(tls: TlsBoxedStream, host: &str) {
+async fn visit(tls: TlsBoxedStream, host: &str, browser: Browser) {
     let h2 = tls.get_ref().1.alpn_protocol() == Some(b"h2");
     if h2 {
-        let _ = visit_h2(tls, host).await;
+        let _ = visit_h2(tls, host, browser).await;
     } else {
-        let _ = visit_h1(tls, host).await;
+        let _ = visit_h1(tls, host, browser).await;
     }
 }
 
-async fn visit_h2(tls: TlsBoxedStream, host: &str) -> Result<(), h2::Error> {
+async fn visit_h2(tls: TlsBoxedStream, host: &str, browser: Browser) -> Result<(), h2::Error> {
     let mut b = h2::client::Builder::new();
     b.header_table_size(65536)
         .enable_push(false)
@@ -57,7 +58,7 @@ async fn visit_h2(tls: TlsBoxedStream, host: &str) -> Result<(), h2::Error> {
     });
     let mut send = send.ready().await?;
     let mut req = Request::builder().uri(format!("https://{host}/"));
-    for (k, v) in chrome_headers(Variant::Nav) {
+    for (k, v) in browser_headers(browser, Variant::Nav) {
         req = req.header(k, v);
     }
     let Ok(req) = req.body(()) else {
@@ -81,8 +82,8 @@ async fn visit_h2(tls: TlsBoxedStream, host: &str) -> Result<(), h2::Error> {
     Ok(())
 }
 
-async fn visit_h1(mut tls: TlsBoxedStream, host: &str) -> std::io::Result<()> {
-    let mut headers = chrome_headers(Variant::Nav);
+async fn visit_h1(mut tls: TlsBoxedStream, host: &str, browser: Browser) -> std::io::Result<()> {
+    let mut headers = browser_headers(browser, Variant::Nav);
     let ua = headers.remove(0);
     let mut req = format!("GET / HTTP/1.1\r\nHost: {host}\r\n{}: {}\r\n", ua.0, ua.1);
     for (k, v) in headers {

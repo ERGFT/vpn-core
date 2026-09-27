@@ -252,6 +252,8 @@ pub(super) fn handle_server_hello(
 enum KeyExchangeChoice {
     Whole(Box<dyn ActiveKeyExchange>),
     Component(Box<dyn ActiveKeyExchange>),
+    /// reality-core (Фаза 7): сервер выбрал дополнительную долю.
+    Extra(Box<dyn ActiveKeyExchange>),
 }
 
 impl KeyExchangeChoice {
@@ -265,6 +267,16 @@ impl KeyExchangeChoice {
     ) -> Result<Self, ()> {
         if our_key_share.group() == their_key_share.group {
             return Ok(Self::Whole(our_key_share));
+        }
+
+        if let Some((extra_group, _)) = our_key_share.extra_share() {
+            if extra_group == their_key_share.group {
+                let actual_skxg = config
+                    .find_kx_group(extra_group, ProtocolVersion::TLSv1_3)
+                    .ok_or(())?;
+                cx.common.kx_state = KxState::Start(actual_skxg);
+                return Ok(Self::Extra(our_key_share));
+            }
         }
 
         let (component_group, _) = our_key_share
@@ -289,6 +301,7 @@ impl KeyExchangeChoice {
         match self {
             Self::Whole(akx) => akx.complete(peer_pub_key),
             Self::Component(akx) => akx.complete_hybrid_component(peer_pub_key),
+            Self::Extra(akx) => akx.complete_extra(peer_pub_key),
         }
     }
 }

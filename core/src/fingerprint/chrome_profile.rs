@@ -156,6 +156,11 @@ impl rustls::compress::CertDecompressor for BrotliCertDecompressor {
     }
 }
 
+/// Распаковщик brotli (общий для профилей).
+pub(crate) fn brotli() -> &'static dyn rustls::compress::CertDecompressor {
+    &BrotliCertDecompressor
+}
+
 /// Тип расширения Signed Certificate Timestamp (RFC 6962).
 const EXT_SCT: u16 = 0x0012;
 /// Тип расширения ALPS в новой нумерации Chrome (`ApplicationSettingsExtensionNew`).
@@ -195,6 +200,7 @@ pub fn apply_chrome_extensions(config: &mut rustls::ClientConfig, reality: bool)
         session_ticket: reality,
         renegotiation_info: true,
         raw_extensions: raw,
+        ..Default::default()
     });
     config.cert_decompressors = vec![&BrotliCertDecompressor];
 

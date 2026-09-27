@@ -17,7 +17,7 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadBuf};
 use uuid::Uuid;
 
 use crate::error::{Error, Result};
-use crate::transport::browser_headers::{chrome_headers, Variant};
+use crate::transport::browser_headers::Variant;
 use crate::transport::tcp_tls::{connect_tls_by_security, SecureStream};
 use crate::vless::protocol::{vless_connect, Address, Command, VlessStream};
 use crate::vless::VlessConfig;
@@ -77,8 +77,8 @@ pub type HttpUpgradeVlessStream = HttpUpgradeStream<SecureStream>;
 
 /// Собрать запрос Upgrade. Порядок заголовков — как у Go `http.Request.Write`:
 /// `Host`, `User-Agent`, затем остальные по алфавиту.
-pub fn build_request(host: &str, path: &str) -> String {
-    let mut headers = chrome_headers(Variant::Ws);
+pub fn build_request(host: &str, path: &str, browser: crate::fingerprint::Browser) -> String {
+    let mut headers = crate::transport::browser_headers::headers(browser, Variant::Ws);
     let ua = headers.remove(
         headers
             .iter()
@@ -143,7 +143,7 @@ pub async fn connect_httpupgrade(cfg: &VlessConfig) -> Result<HttpUpgradeVlessSt
     // Как Xray: ALPN для httpupgrade — http/1.1 (`WithNextProto("http/1.1")`).
     let alpn = cfg.alpn().unwrap_or_else(|| vec![b"http/1.1".to_vec()]);
     let mut stream = connect_tls_by_security(cfg, alpn).await?;
-    let req = build_request(cfg.ws_host(), &cfg.http_path());
+    let req = build_request(cfg.ws_host(), &cfg.http_path(), cfg.browser);
     stream.write_all(req.as_bytes()).await?;
     stream.flush().await?;
 
@@ -192,7 +192,7 @@ mod tests {
 
     #[test]
     fn request_has_go_header_order_and_chrome_headers() {
-        let r = build_request("cdn.example", "/up");
+        let r = build_request("cdn.example", "/up", crate::fingerprint::Browser::Chrome);
         let lines: Vec<&str> = r.split("\r\n").collect();
         assert_eq!(lines[0], "GET /up HTTP/1.1");
         assert_eq!(lines[1], "Host: cdn.example");

@@ -230,6 +230,39 @@
   (как у Xray), паузы дают `fragment.interval`; случайные задержки на
   каждом пакете только замедлили бы соединение, не пряча протокол.
 
+### Фаза 7 — отпечатки браузеров ✅
+
+- `fingerprint/profiles.rs`: Firefox 148 и Safari 26.3 по `u_parrots.go`
+  utls (как у Xray: `HelloFirefox_Auto`, `HelloSafari_Auto`). `ios` —
+  Safari 26 (у Xray — iOS 14 без ML-KEM, 2020 г.), `edge` и `android` —
+  Chrome (у Xray — Edge 85 и OkHttp под Android 11: последний только
+  TLS 1.2 и с REALITY не работает), `random` — один на запуск,
+  `randomized` — на каждый выход (у utls — случайные параметры, которые
+  не похожи ни на один браузер).
+- Патч rustls (`ChromeHello`): `no_grease`, `named_groups` (в том числе
+  только заявленные P-521, ffdhe — сервер выбирает группу из долей
+  ключа), `extension_order` (фиксированный порядок вместо случайного;
+  GREASE, ECH и PSK — на своих местах), `no_psk_modes`,
+  `extra_p256_share` — настоящая вторая доля ключа P-256: новый
+  `ActiveKeyExchange::extra_share`/`complete_extra`, вариант
+  `KeyExchangeChoice::Extra`, HRR на уже предложенную группу —
+  ошибка, как положено. `ClientConfig::clear_ech` (у Safari нет ECH).
+- Сжатие сертификата: zlib (`miniz_oxide`) и zstd (`ruzstd`) — чистый
+  Rust, распаковка настоящая (тест: сервер сжимает zlib и zstd).
+- HTTP-заголовки ws/httpupgrade/xhttp и «визит» на сайт при подмене
+  REALITY — того же браузера: UA Firefox (версия от даты, как у Chrome),
+  без Client Hints; Safari — UA 26.3. В xhttp `User-Agent: firefox` /
+  `safari` / `chrome` в `extra.headers` выбирает браузер явно.
+- Проверено: `fingerprint_profiles.rs` — ClientHello на проводе
+  поэлементно против эталона (REALITY и TLS), Chrome/Edge/Android — JA4
+  Chrome; сервер только с P-256 — Firefox без HRR, Chrome и Safari через
+  HRR; интероп с REALITY-сервером Xray для всех `fp` на tcp, Vision,
+  xhttp, gRPC. `check_chrome_fingerprint.sh` следит и за
+  `HelloFirefox_Auto`/`HelloSafari_Auto`.
+- Не сделано: длина ECH-GREASE Firefox побайтово; `record_size_limit`
+  заявляется, но предел записей сервера не соблюдается (Go, BoringSSL и
+  OpenSSL его не присылают); профили 360/QQ.
+
 ## Доработка (2026-09-26): всё, что было открыто
 
 Запрос: «проанализируй проект, пойми, какие моменты не доделаны, и доделай

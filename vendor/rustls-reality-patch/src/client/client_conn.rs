@@ -225,6 +225,20 @@ pub struct ChromeHello {
     /// Дополнительные расширения как есть: (тип, тело). Участвуют в
     /// перемешивании порядка наравне с остальными.
     pub raw_extensions: Vec<(u16, Vec<u8>)>,
+    /// reality-core (Фаза 7): без GREASE нигде (Firefox).
+    pub no_grease: bool,
+    /// supported_groups кодпоинтами, без GREASE (его патч ставит сам);
+    /// пусто — по провайдеру. Группы, которых провайдер не умеет, только
+    /// заявляются: сервер выбирает группу из присланных долей ключа.
+    pub named_groups: Vec<u16>,
+    /// Порядок расширений (типы); пусто — случайный на каждое соединение,
+    /// как у Chrome. Неперечисленные идут следом в случайном порядке;
+    /// ECH и PSK — всегда последними.
+    pub extension_order: Vec<u16>,
+    /// Не слать `psk_key_exchange_modes` (Firefox без возобновления).
+    pub no_psk_modes: bool,
+    /// Ещё одна доля ключа — P-256, настоящая (Firefox).
+    pub extra_p256_share: bool,
 }
 
 /// Common configuration for (typically) all connections made by a program.
@@ -413,6 +427,11 @@ impl ClientConfig {
     /// шлётся Chrome'ом при любом наборе версий.
     pub fn set_ech_grease(&mut self, grease: crate::client::EchGreaseConfig) {
         self.ech_mode = Some(EchMode::Grease(grease));
+    }
+
+    /// reality-core: без ECH (и без ECH GREASE).
+    pub fn clear_ech(&mut self) {
+        self.ech_mode = None;
     }
 
     /// Create a builder for a client configuration with

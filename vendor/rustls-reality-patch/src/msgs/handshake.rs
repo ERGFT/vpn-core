@@ -1027,6 +1027,11 @@ extension_struct! {
         /// — те, для которых у rustls нет типизированного слота (SCT,
         /// ALPS). Перемешиваются вместе с остальными. Только для отправки.
         pub(crate) raw_extensions: Vec<(u16, Vec<u8>)>,
+
+        /// reality-core (Фаза 7): порядок расширений (типы) вместо
+        /// случайного — у Firefox и Safari он фиксированный. Пусто —
+        /// случайный. Только для отправки.
+        pub(crate) fixed_order: Vec<u16>,
     }
 }
 
@@ -1061,6 +1066,7 @@ impl ClientExtensions<'_> {
             contiguous_extensions,
             grease_extensions,
             raw_extensions,
+            fixed_order,
         } = self;
         ClientExtensions {
             server_name: server_name.map(|x| x.into_owned()),
@@ -1091,6 +1097,7 @@ impl ClientExtensions<'_> {
             contiguous_extensions,
             grease_extensions,
             raw_extensions,
+            fixed_order,
         }
     }
 
@@ -1146,7 +1153,14 @@ impl ClientExtensions<'_> {
 
         order.sort_by_cached_key(|new_ext| {
             let seed = ((self.order_seed as u32) << 16) | (u16::from(*new_ext) as u32);
-            low_quality_integer_hash(seed)
+            // reality-core: заданный порядок — первым ключом; не
+            // перечисленные — после, в случайном порядке.
+            let pos = self
+                .fixed_order
+                .iter()
+                .position(|t| *t == u16::from(*new_ext))
+                .unwrap_or(usize::MAX);
+            (pos, low_quality_integer_hash(seed))
         });
 
         order
