@@ -29,8 +29,8 @@ md-5.workspace = true
 hex.workspace = true
 # Распаковка сертификатов, сжатых zlib и zstd (Firefox, Safari заявляют
 # эти алгоритмы) — чистый Rust, без C-библиотек.
-miniz_oxide = "0.8"
-ruzstd = "0.8"
+miniz_oxide = "0.9"
+ruzstd = "0.9"
 pin-project-lite.workspace = true
 async-tungstenite.workspace = true
 ws_stream_tungstenite.workspace = true
@@ -70,5 +70,5 @@ windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Network
 # распаковщика brotli); в сам клиент компрессор не попадает.
 rustls = { workspace = true, features = ["brotli"] }
 tokio = { workspace = true, features = ["test-util", "macros", "rt-multi-thread"] }
-rcgen = "0.13"
+rcgen = "0.14"
 tracing-subscriber.workspace = true
