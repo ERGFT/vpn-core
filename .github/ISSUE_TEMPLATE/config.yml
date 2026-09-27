@@ -1,5 +1,5 @@
 blank_issues_enabled: true
 contact_links:
-  - name: Уязвимость
+  - name: Уязвимость / Vulnerability
     url: https://github.com/ERGFT/vpn-core/security/advisories/new
-    about: Сообщите закрыто, не публичным issue
+    about: Сообщите закрыто, не публичным issue / Report privately, not as a public issue

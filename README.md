@@ -1,5 +1,7 @@
 # reality-core
 
+**Русский** | [English](README.en.md)
+
 [![CI](https://github.com/ERGFT/vpn-core/actions/workflows/ci.yml/badge.svg)](https://github.com/ERGFT/vpn-core/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/ERGFT/vpn-core?include_prereleases&sort=semver)](https://github.com/ERGFT/vpn-core/releases)
 [![License: GPL v3+](https://img.shields.io/badge/license-GPL--3.0--or--later-blue.svg)](LICENSE)
@@ -498,9 +500,9 @@ server = "local"
 Одной командой — всё, что доступно на этой машине:
 
 ```sh
-scripts/ci.sh          # fmt, clippy (без предупреждений), тесты, release-сборка,
+scripts/ci.sh          # fmt, SPDX-метки, clippy (без предупреждений), тесты, release-сборка,
                        # + интероп и smoke с Go-стендом и с Xray-core, сверка отпечатка
-scripts/ci.sh --quick  # только fmt, clippy, тесты
+scripts/ci.sh --quick  # только fmt, SPDX-метки, clippy, тесты
 ```
 
 Отдельно:
@@ -516,16 +518,20 @@ scripts/ci.sh --quick  # только fmt, clippy, тесты
 | `scripts/interop_go_reality.sh` | 4 теста против REALITY-сервера на Go-библиотеке `XTLS/REALITY` (нужен Go ≥ 1.27) |
 | `scripts/smoke_e2e.sh` | бинарник против Go-стенда; несовместимая ссылка отклоняется при старте |
 | `scripts/check_chrome_fingerprint.sh` | не устарел ли эталон Chrome в utls: cipher suites, набор расширений, `signature_algorithms` (стоит запускать раз в месяц-два) |
+| `scripts/check_license_headers.sh` | у каждого своего исходника есть метка `SPDX-License-Identifier` |
+| `scripts/third_party_licenses.sh` | `THIRD-PARTY-LICENSES.html` из `Cargo.lock` (cargo-about); ошибка, если у зависимости лицензия не из `about.toml` |
 | `cargo run -p fpcheck -- --server 'vless://...'` | JA3/JA4 реального ClientHello этого клиента |
 
 На GitHub то же самое делает сама платформа (`.github/workflows/ci.yml`) на
 каждый push в `main` и каждый pull request: на Linux — весь `scripts/ci.sh`
-(включая интероп с Go-сервером REALITY и Xray-core) и TUN в netns; на
+(включая интероп с Go-сервером REALITY и Xray-core), TUN в netns и список
+лицензий зависимостей; на
 **настоящей Windows** — тесты, сборка `.exe` (его можно скачать со
 страницы запуска, «Artifacts») и `scripts/windows_live_test.ps1`: служба,
 права её папки и TUN с настоящим трафиком. Выпуск —
 `git tag v0.2.0 && git push origin v0.2.0`: `.github/workflows/release.yml`
-собирает бинарники для Windows и Linux с SHA-256 в черновик релиза.
+собирает бинарники для Windows и Linux с SHA-256, `LICENSE` и
+`THIRD-PARTY-LICENSES.html` в черновик релиза.
 
 Xray-core для тестов: `scripts/fetch_xray.sh` (скачать релиз) или
 `scripts/build_xray_from_source.sh` (собрать из исходников по git — для
