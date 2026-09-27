@@ -12,13 +12,14 @@
 (`scripts/cross_windows.sh`: цель `x86_64-pc-windows-gnu`, компоновщик
 mingw-w64) и проверяется под **Wine 9**:
 
-- все 107 тестов workspace'а, собранные под Windows, проходят под Wine;
+- все 210 тестов workspace'а, собранные под Windows, проходят под Wine;
 - smoke против настоящего Xray-core тем самым `.exe`: SOCKS5 с паролем →
   REALITY → XTLS Vision (переход на прямую передачу в обе стороны), 1 МиБ
-  внутреннего TLS, UDP через XUDP.
+  внутреннего TLS, UDP через XUDP; файл настроек, подписка, DNS-вход;
+- `--system-proxy`, установка и удаление службы, автозапуск при входе.
 
-Готовый файл — `dist\windows\reality-client.exe` (~6 МБ, зависит только
-от системных DLL: kernel32, ws2_32, bcrypt, advapi32, msvcrt).
+Готовый файл — `dist\windows\reality-client.exe` (~11 МБ, зависит только
+от системных DLL Windows).
 
 > Честно: Wine — не настоящая Windows. Сетевой стек и консоль там
 > эмулируются; на реальной Windows этот `.exe` не запускался. Сборка
