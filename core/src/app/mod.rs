@@ -180,7 +180,8 @@ fn build_vless(o: &config::OutboundConfig) -> Result<VlessOutbound> {
         Some(ca) => Some(Arc::new(config::load_ca(ca)?)),
         None => None,
     };
-    let v = vless_from_link(&o.tag, &link, o.xudp, o.allow_insecure, roots, false)?;
+    let frag = build_fragment(o)?;
+    let v = vless_from_link(&o.tag, &link, o.xudp, o.allow_insecure, roots, false, frag)?;
     match o.mux {
         Some(n) => v.with_mux(n),
         None => Ok(v),
@@ -196,6 +197,7 @@ fn vless_from_link(
     allow_insecure: bool,
     ca_roots: Option<Arc<rustls::RootCertStore>>,
     quiet: bool,
+    fragment: Option<Arc<crate::transport::fragment::Fragment>>,
 ) -> Result<VlessOutbound> {
     let mut cfg = VlessConfig::parse(link)?;
     // Сразу при старте, а не на каждом соединении: неподходящая ссылка
@@ -226,6 +228,7 @@ fn vless_from_link(
         }
     }
     cfg.ca_roots = ca_roots;
+    cfg.fragment = fragment;
     if quiet {
         tracing::debug!(outbound = %tag, host = %cfg.host, port = cfg.port, "сервер подписки");
     } else {
@@ -241,6 +244,34 @@ fn vless_from_link(
         );
     }
     Ok(VlessOutbound::new(tag.to_string(), cfg, xudp))
+}
+
+fn build_fragment(
+    o: &config::OutboundConfig,
+) -> Result<Option<Arc<crate::transport::fragment::Fragment>>> {
+    o.fragment
+        .as_ref()
+        .map(|f| {
+            f.build()
+                .map(Arc::new)
+                .map_err(|e| Error::Config(format!("выход {}: {e}", o.tag)))
+        })
+        .transpose()
+}
+
+fn build_direct(o: &config::OutboundConfig, dns: Option<DnsSlot>) -> Result<DirectOutbound> {
+    let mut d = match dns {
+        Some(slot) => DirectOutbound::with_dns(o.tag.clone(), slot),
+        None => DirectOutbound::new(o.tag.clone()),
+    };
+    d = d.with_fragment(build_fragment(o)?);
+    let noises = o
+        .noises
+        .iter()
+        .map(|n| n.build())
+        .collect::<Result<Vec<_>>>()
+        .map_err(|e| Error::Config(format!("выход {}: {e}", o.tag)))?;
+    Ok(d.with_noises(noises))
 }
 
 /// Адрес проверки групп по умолчанию.
@@ -498,10 +529,10 @@ impl App {
         for o in &cfg.outbounds {
             let built: Arc<dyn Outbound> = match o.kind {
                 OutboundKind::Vless => Arc::new(build_vless(o)?),
-                OutboundKind::Direct if cfg.dns.is_some() => {
-                    Arc::new(DirectOutbound::with_dns(o.tag.clone(), dns_slot.clone()))
-                }
-                OutboundKind::Direct => Arc::new(DirectOutbound::new(o.tag.clone())),
+                OutboundKind::Direct => Arc::new(build_direct(
+                    o,
+                    cfg.dns.is_some().then(|| dns_slot.clone()),
+                )?),
                 OutboundKind::Block => Arc::new(BlockOutbound::new(o.tag.clone())),
                 OutboundKind::Dns => {
                     if cfg.dns.is_none() {
@@ -587,7 +618,15 @@ impl App {
             };
             let factory: Arc<subscription::ServerFactory> =
                 Arc::new(|tag: &str, link: &str, o: subscription::ServerOpts| {
-                    let mut v = vless_from_link(tag, link, o.xudp, o.allow_insecure, None, true)?;
+                    let mut v = vless_from_link(
+                        tag,
+                        link,
+                        o.xudp,
+                        o.allow_insecure,
+                        None,
+                        true,
+                        o.fragment.clone(),
+                    )?;
                     if let Some(n) = o.mux {
                         // С Vision mux не бывает — такие серверы без него.
                         if !v.config().flow.is_vision() {

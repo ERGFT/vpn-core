@@ -18,6 +18,8 @@ use tokio::sync::Mutex;
 use super::dns::{self, Dns, DnsSlot, DNS_INTERNAL};
 use super::Metadata;
 use crate::error::{Error, Result};
+use crate::transport::fragment::{Fragment, FragmentStream};
+use crate::transport::noise::Noise;
 use crate::transport::AsyncStream;
 use crate::vless::Address;
 
@@ -86,6 +88,10 @@ pub struct DirectOutbound {
     /// Если в настройках есть `[dns]` — имена разрешаются им (с его
     /// правилами), иначе системным резолвером.
     dns: Option<DnsSlot>,
+    /// Дробление начала TCP-соединений (ClientHello сайта).
+    fragment: Option<Arc<Fragment>>,
+    /// Шум перед первой UDP-датаграммой к адресу.
+    noises: Arc<Vec<Noise>>,
 }
 
 impl DirectOutbound {
@@ -93,14 +99,26 @@ impl DirectOutbound {
         DirectOutbound {
             tag: tag.into(),
             dns: None,
+            fragment: None,
+            noises: Arc::new(Vec::new()),
         }
     }
 
     pub fn with_dns(tag: impl Into<String>, dns: DnsSlot) -> Self {
         DirectOutbound {
-            tag: tag.into(),
             dns: Some(dns),
+            ..Self::new(tag)
         }
+    }
+
+    pub fn with_fragment(mut self, f: Option<Arc<Fragment>>) -> Self {
+        self.fragment = f;
+        self
+    }
+
+    pub fn with_noises(mut self, n: Vec<Noise>) -> Self {
+        self.noises = Arc::new(n);
+        self
     }
 }
 
@@ -161,6 +179,11 @@ impl Outbound for DirectOutbound {
             })
             .await
             .map_err(|_| Error::Protocol("direct: соединение не установилось вовремя".into()))??;
+            if self.fragment.is_some() {
+                return Ok(
+                    Box::new(FragmentStream::new(s, self.fragment.clone())) as Box<dyn AsyncStream>
+                );
+            }
             Ok(Box::new(s) as Box<dyn AsyncStream>)
         })
     }
@@ -178,6 +201,8 @@ impl Outbound for DirectOutbound {
                 last: std::sync::Mutex::new(tokio::time::Instant::now()),
                 resolved: Mutex::new(std::collections::HashMap::new()),
                 dns: dns_for(&self.dns, meta).cloned(),
+                noises: self.noises.clone(),
+                noised: Mutex::new(std::collections::HashSet::new()),
             }) as Arc<dyn UdpSession>)
         })
     }
@@ -192,6 +217,9 @@ struct DirectUdp {
     /// датаграмму был бы слишком дорог).
     resolved: Mutex<std::collections::HashMap<String, IpAddr>>,
     dns: Option<Arc<Dns>>,
+    noises: Arc<Vec<Noise>>,
+    /// Адреса, к которым шум уже отправлен.
+    noised: Mutex<std::collections::HashSet<SocketAddr>>,
 }
 
 impl DirectUdp {
@@ -263,7 +291,23 @@ impl UdpSession for DirectUdp {
                 IpAddr::V6(_) => self.v6.as_ref(),
             };
             if let Some(sock) = sock {
-                let _ = sock.send_to(&data, SocketAddr::new(ip, port)).await;
+                let to = SocketAddr::new(ip, port);
+                if !self.noises.is_empty() {
+                    let first = {
+                        let mut n = self.noised.lock().await;
+                        n.len() < 4096 && n.insert(to)
+                    };
+                    if first {
+                        for noise in self.noises.iter().filter(|n| n.applies(ip, port)) {
+                            let _ = sock.send_to(&noise.packet(), to).await;
+                            let d = noise.delay();
+                            if !d.is_zero() {
+                                tokio::time::sleep(d).await;
+                            }
+                        }
+                    }
+                }
+                let _ = sock.send_to(&data, to).await;
             }
             Ok(())
         })

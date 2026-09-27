@@ -36,7 +36,10 @@ use crate::transport::xhttp::Range;
 pub enum Packets {
     TlsHello,
     /// Записи с `from` по `to` (с 1).
-    Writes { from: u32, to: u32 },
+    Writes {
+        from: u32,
+        to: u32,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -450,9 +453,14 @@ mod tests {
         let wire: Vec<u8> = w[..n - 2].concat();
         let (lens, body) = records(&wire);
         assert_eq!(body, h[5..]);
-        assert!(lens[..lens.len() - 1].iter().all(|l| (100..=200).contains(l)));
+        assert!(lens[..lens.len() - 1]
+            .iter()
+            .all(|l| (100..=200).contains(l)));
         assert!(t0.elapsed() >= Duration::from_millis(10 * (n as u64 - 2)));
-        assert!(s.frag.is_none(), "после ClientHello — без накладных расходов");
+        assert!(
+            s.frag.is_none(),
+            "после ClientHello — без накладных расходов"
+        );
     }
 
     #[tokio::test(start_paused = true)]
@@ -501,7 +509,7 @@ mod tests {
         let w: Vec<&[u8]> = s.inner.writes.iter().map(|v| v.as_slice()).collect();
         assert_eq!(
             w,
-            [&b"one"[..], b"sec", b"ond", b"thi", b"rd!", b"!!", b"fourth"]
+            [&b"one"[..], b"sec", b"ond", b"thi", b"rd!", b"!", b"fourth"]
         );
         // Каждый кусок сброшен отдельно.
         assert!(s.inner.flushed.len() >= 5);
@@ -539,9 +547,11 @@ mod tests {
         assert_eq!(f.packets, Packets::TlsHello);
         assert_eq!(f.length, Range { from: 100, to: 200 });
         assert_eq!(f.interval, Range { from: 10, to: 10 });
-        let c: FragmentConfig =
-            toml::from_str("packets='1-3'\nlength=5\ninterval='0'").unwrap();
-        assert_eq!(c.build().unwrap().packets, Packets::Writes { from: 1, to: 3 });
+        let c: FragmentConfig = toml::from_str("packets='1-3'\nlength=5\ninterval='0'").unwrap();
+        assert_eq!(
+            c.build().unwrap().packets,
+            Packets::Writes { from: 1, to: 3 }
+        );
         for bad in [
             "packets='0-3'\nlength=5\ninterval=0",
             "packets='x'\nlength=5\ninterval=0",

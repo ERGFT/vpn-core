@@ -117,6 +117,9 @@ pub struct VlessConfig {
     /// (задаётся не ссылкой, а ключом `--ca` клиента — для серверов с
     /// самоподписанным сертификатом). `None` — встроенный публичный набор.
     pub ca_roots: Option<std::sync::Arc<rustls::RootCertStore>>,
+    /// Дробление начала соединения с сервером (задаётся настройками
+    /// выхода, не ссылкой), см. [`crate::transport::fragment`].
+    pub fragment: Option<std::sync::Arc<crate::transport::fragment::Fragment>>,
 }
 
 /// Разобранные параметры REALITY (`pbk=`/`sid=` в ссылке) — Этап 5.
@@ -152,8 +155,8 @@ impl VlessConfig {
             self.network,
             self.sni,
             params,
-            self.ca_roots.as_ref().map(std::sync::Arc::as_ptr)
-        )
+            self.ca_roots.as_ref().map(std::sync::Arc::as_ptr),
+        ) + &format!("|{:?}", self.fragment)
     }
 
     pub fn parse(uri: &str) -> Result<Self> {
@@ -233,6 +236,7 @@ impl VlessConfig {
             remark,
             raw_params,
             ca_roots: None,
+            fragment: None,
         })
     }
 

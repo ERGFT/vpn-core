@@ -57,10 +57,17 @@ link_file = "server.txt"       # vless://… в первой строке (ил�
 # allow_insecure = false       # разрешить security=none (без шифрования)
 # mux = 8                      # Mux.Cool: до 8 TCP-соединений в одном потоке к серверу
 #                              # (меньше рукопожатий; не вместе с flow=xtls-rprx-vision)
+# fragment = { packets = "tlshello", length = "100-200", interval = "10-20" }
+#                              # дробить ClientHello к серверу (против DPI, ищущего
+#                              # SNI в первом пакете); по умолчанию выключено
 
 [[outbounds]]
 tag = "direct"                 # напрямую, без сервера
 type = "direct"
+# fragment = { packets = "tlshello", length = "100-200", interval = "10-20" }
+#                              # дробить ClientHello сайтов (обход блокировок по SNI)
+# noises = [{ type = "rand", packet = "10-20", delay = "10-16" }]
+#                              # мусор перед первой UDP-датаграммой к адресу (QUIC и т.п.)
 
 [[outbounds]]
 tag = "block"                  # сразу отказать

@@ -1,8 +1,10 @@
 pub mod browser_headers;
 pub mod browser_mimic;
+pub mod fragment;
 pub mod grpc;
 pub mod h2pool;
 pub mod httpupgrade;
+pub mod noise;
 pub mod raw;
 pub mod tcp_tls;
 pub mod ws;

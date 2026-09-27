@@ -26,6 +26,8 @@ use std::task::{ready, Context, Poll};
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::net::TcpStream;
 
+use crate::transport::fragment::{Fragment, Fragmenter};
+
 /// Заголовок TLS-рекорда: тип (1), версия (2), длина (2).
 const RECORD_HEADER_LEN: usize = 5;
 /// Максимум тела рекорда по RFC 8446 (2^14 + 256 для шифротекста).
@@ -44,6 +46,8 @@ pub struct RawConn {
     /// (0 — стоим на границе рекорда).
     record_left: usize,
     record_aligned: bool,
+    /// Дробление начала соединения (ClientHello), пока не закончено.
+    frag: Option<Box<Fragmenter>>,
 }
 
 impl RawConn {
@@ -55,7 +59,14 @@ impl RawConn {
             end: 0,
             record_left: 0,
             record_aligned: false,
+            frag: None,
         }
+    }
+
+    /// Дробить начало соединения (см. [`crate::transport::fragment`]).
+    pub fn with_fragment(mut self, f: Option<std::sync::Arc<Fragment>>) -> Self {
+        self.frag = f.map(|f| Box::new(Fragmenter::new(*f)));
+        self
     }
 
     /// Включить выдачу по одному TLS-рекорду (нужно только для Vision;
@@ -162,7 +173,15 @@ impl AsyncWrite for RawConn {
         cx: &mut Context<'_>,
         buf: &[u8],
     ) -> Poll<io::Result<usize>> {
-        Pin::new(&mut self.get_mut().tcp).poll_write(cx, buf)
+        let this = self.get_mut();
+        if let Some(f) = &mut this.frag {
+            let r = f.poll_write(&mut this.tcp, cx, buf);
+            if f.is_done() {
+                this.frag = None;
+            }
+            return r;
+        }
+        Pin::new(&mut this.tcp).poll_write(cx, buf)
     }
 
     fn poll_write_vectored(
@@ -170,19 +189,37 @@ impl AsyncWrite for RawConn {
         cx: &mut Context<'_>,
         bufs: &[io::IoSlice<'_>],
     ) -> Poll<io::Result<usize>> {
-        Pin::new(&mut self.get_mut().tcp).poll_write_vectored(cx, bufs)
+        let this = self.get_mut();
+        if this.frag.is_some() {
+            // Пока идёт дробление — по одному буферу: запись должна
+            // целиком попасть к `Fragmenter`.
+            let buf = bufs
+                .iter()
+                .find(|b| !b.is_empty())
+                .map_or(&[][..], |b| &**b);
+            return Pin::new(this).poll_write(cx, buf);
+        }
+        Pin::new(&mut this.tcp).poll_write_vectored(cx, bufs)
     }
 
     fn is_write_vectored(&self) -> bool {
-        self.tcp.is_write_vectored()
+        self.frag.is_none() && self.tcp.is_write_vectored()
     }
 
     fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
-        Pin::new(&mut self.get_mut().tcp).poll_flush(cx)
+        let this = self.get_mut();
+        if let Some(f) = &mut this.frag {
+            return f.poll_flush(&mut this.tcp, cx);
+        }
+        Pin::new(&mut this.tcp).poll_flush(cx)
     }
 
     fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
-        Pin::new(&mut self.get_mut().tcp).poll_shutdown(cx)
+        let this = self.get_mut();
+        if let Some(f) = &mut this.frag {
+            ready!(f.poll_flush(&mut this.tcp, cx))?;
+        }
+        Pin::new(&mut this.tcp).poll_shutdown(cx)
     }
 }
 

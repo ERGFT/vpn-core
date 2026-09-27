@@ -197,6 +197,11 @@ pub struct OutboundConfig {
     /// vless: Mux.Cool — до стольких TCP-соединений в одном потоке
     /// (как `mux.concurrency` у Xray; не вместе с Vision).
     pub mux: Option<u16>,
+    /// vless, direct: дробить начало соединения (ClientHello) против DPI.
+    pub fragment: Option<crate::transport::fragment::FragmentConfig>,
+    /// direct: пакеты-пустышки перед первой UDP-датаграммой к адресу.
+    #[serde(default)]
+    pub noises: Vec<crate::transport::noise::NoiseConfig>,
 
     // ── только для групп (selector, urltest, fallback) ──
     /// Участники — tag других выходов (в том числе групп).
@@ -227,6 +232,18 @@ impl OutboundConfig {
             || self.interval.is_some()
             || self.tolerance.is_some()
             || self.default.is_some();
+        if self.fragment.is_some()
+            && !matches!(self.kind, OutboundKind::Vless | OutboundKind::Direct)
+        {
+            return Err(Error::Config(format!(
+                "выход {tag}: fragment — только у vless и direct"
+            )));
+        }
+        if !self.noises.is_empty() && self.kind != OutboundKind::Direct {
+            return Err(Error::Config(format!(
+                "выход {tag}: noises — только у direct"
+            )));
+        }
         if !group && group_fields {
             return Err(Error::Config(format!(
                 "выход {tag}: outbounds, subscriptions, url, interval, tolerance, default — только у групп (selector, urltest, fallback)"

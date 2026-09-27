@@ -65,6 +65,8 @@ pub struct SubscriptionConfig {
     pub ca_file: Option<PathBuf>,
     /// Mux.Cool для серверов подписки (кроме серверов с Vision).
     pub mux: Option<u16>,
+    /// Дробление ClientHello к серверам подписки.
+    pub fragment: Option<crate::transport::fragment::FragmentConfig>,
 }
 
 fn yes() -> bool {
@@ -377,11 +379,12 @@ pub fn parse(body: &[u8]) -> Result<Parsed> {
 pub type BuiltServer = Arc<dyn Outbound>;
 
 /// Настройки, общие для всех серверов подписки.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct ServerOpts {
     pub xudp: bool,
     pub allow_insecure: bool,
     pub mux: Option<u16>,
+    pub fragment: Option<Arc<crate::transport::fragment::Fragment>>,
 }
 
 /// Собирает выходы из ссылок подписки (tag, ссылка; проверки — как у
@@ -399,6 +402,7 @@ pub struct Subscription {
     direct: Arc<dyn Outbound>,
     factory: Arc<ServerFactory>,
     roots: Option<rustls::RootCertStore>,
+    fragment: Option<Arc<crate::transport::fragment::Fragment>>,
 }
 
 impl Subscription {
@@ -433,7 +437,14 @@ impl Subscription {
             .as_deref()
             .map(super::config::load_ca)
             .transpose()?;
+        let fragment = cfg
+            .fragment
+            .as_ref()
+            .map(|f| f.build().map(Arc::new))
+            .transpose()
+            .map_err(|e| Error::Config(format!("подписка {}: {e}", cfg.tag)))?;
         Ok(Subscription {
+            fragment,
             roots,
             cfg,
             url,
@@ -469,6 +480,7 @@ impl Subscription {
                 xudp: self.cfg.xudp,
                 allow_insecure: self.cfg.allow_insecure,
                 mux: self.cfg.mux,
+                fragment: self.fragment.clone(),
             };
             match (self.factory)(&tag, link, opts) {
                 Ok(o) => built.push(o),

@@ -182,6 +182,8 @@ fn config_from_args(args: &Args) -> Result<Config> {
             xudp: !args.no_xudp,
             allow_insecure: args.allow_insecure,
             mux: None,
+            fragment: None,
+            noises: Vec::new(),
             outbounds: Vec::new(),
             subscriptions: Vec::new(),
             url: None,

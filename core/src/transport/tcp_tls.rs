@@ -282,7 +282,7 @@ pub async fn connect_addrs(addrs: &[SocketAddr], what: &str) -> Result<TcpStream
 }
 
 async fn connect_tcp(cfg: &VlessConfig) -> Result<RawConn> {
-    Ok(RawConn::new(connect_tcp_stream(cfg).await?))
+    Ok(RawConn::new(connect_tcp_stream(cfg).await?).with_fragment(cfg.fragment.clone()))
 }
 
 fn build_client_config(roots: RootCertStore, alpn: Vec<Vec<u8>>) -> ClientConfig {

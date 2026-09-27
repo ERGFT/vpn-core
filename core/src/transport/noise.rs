@@ -162,12 +162,18 @@ mod tests {
             assert!((5..=10).contains(&(r.delay().as_millis() as u64)));
         }
         assert_eq!(n("type='str'\npacket='hello'").unwrap().packet(), b"hello");
-        assert_eq!(n("type='base64'\npacket='AAEC'").unwrap().packet(), [0, 1, 2]);
+        assert_eq!(
+            n("type='base64'\npacket='AAEC'").unwrap().packet(),
+            [0, 1, 2]
+        );
         assert_eq!(n("type='hex'\npacket='ff00'").unwrap().packet(), [255, 0]);
         let v6 = n("type='str'\npacket='x'\napply_to='ipv6'").unwrap();
         assert!(!v6.applies("1.2.3.4".parse().unwrap(), 443));
         assert!(v6.applies("::1".parse().unwrap(), 443));
-        assert!(!r.applies("1.2.3.4".parse().unwrap(), 53), "к DNS — без шума");
+        assert!(
+            !r.applies("1.2.3.4".parse().unwrap(), 53),
+            "к DNS — без шума"
+        );
         for bad in [
             "type='rand'\npacket='0-5'",
             "type='rand'\npacket='10-5000'",

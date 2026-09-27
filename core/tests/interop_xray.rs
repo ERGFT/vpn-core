@@ -1481,3 +1481,119 @@ async fn xhttp_xmux_against_xray() {
         );
     }
 }
+
+/// Дробление ClientHello (`fragment`): REALITY-сервер Xray собирает его и
+/// из нескольких TLS-рекордов, и из отдельных TCP-сегментов с паузами —
+/// в том числе с Vision.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "нужен Xray-core: scripts/interop_xray.sh"]
+async fn fragmented_client_hello_against_xray() {
+    use reality_core::transport::fragment::{Fragment, Packets};
+    use reality_core::transport::xhttp::Range;
+    ensure_crypto_provider();
+    init_log();
+    let decoy = start_decoy().await;
+    let echo = start_echo().await;
+    let keys = reality_keys();
+    let uuid = uuid::Uuid::new_v4();
+    let (port, vport) = (free_port(), free_port());
+    let _x = Xray::start(
+        vec![
+            vless_inbound(
+                port,
+                &uuid,
+                "",
+                reality_stream("raw", decoy, &keys, vec![], None),
+            ),
+            vless_inbound(
+                vport,
+                &uuid,
+                "xtls-rprx-vision",
+                reality_stream("raw", decoy, &keys, vec![], None),
+            ),
+        ],
+        &[port, vport],
+        tempdir::Dir::new(),
+    )
+    .await;
+    let r = |a, b| Range { from: a, to: b };
+    let cases = [
+        (Packets::TlsHello, r(100, 200), r(0, 0)),
+        (Packets::TlsHello, r(50, 300), r(5, 15)),
+        (Packets::TlsHello, r(1, 3), r(0, 0)),
+        (Packets::Writes { from: 1, to: 1 }, r(30, 80), r(2, 6)),
+    ];
+    let (a, p) = target(echo);
+    // Сначала — что именно уходит в сеть: посредник запоминает начало.
+    let seen = Arc::new(std::sync::Mutex::new(Vec::<u8>::new()));
+    let l = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let fwd = l.local_addr().unwrap().port();
+    let seen2 = seen.clone();
+    tokio::spawn(async move {
+        let (mut c, _) = l.accept().await.unwrap();
+        let mut s = TcpStream::connect(("127.0.0.1", port)).await.unwrap();
+        let mut head = vec![0u8; 4096];
+        let mut got = 0;
+        // Рекорды ClientHello (тело 1300+ байт) — первые байты клиента.
+        while got < 1200 {
+            let n = c.read(&mut head[got..]).await.unwrap();
+            if n == 0 {
+                break;
+            }
+            s.write_all(&head[got..got + n]).await.unwrap();
+            got += n;
+        }
+        seen2.lock().unwrap().extend_from_slice(&head[..got]);
+        let _ = tokio::io::copy_bidirectional(&mut c, &mut s).await;
+    });
+    let mut cfg = reality_link(fwd, &uuid, &keys, "&type=tcp");
+    cfg.fragment = Some(Arc::new(Fragment {
+        packets: Packets::TlsHello,
+        length: r(100, 200),
+        interval: r(0, 0),
+    }));
+    let mut st = dial(&cfg, &cfg.id, VlessCommand::Tcp, a.clone(), p)
+        .await
+        .unwrap();
+    echo_roundtrip(&mut st, 1000).await;
+    let wire = seen.lock().unwrap().clone();
+    let mut i = 0;
+    let mut lens = Vec::new();
+    while i + 5 <= wire.len() && wire[i] == 0x16 {
+        let l = u16::from_be_bytes([wire[i + 3], wire[i + 4]]) as usize;
+        lens.push(l);
+        i += 5 + l;
+    }
+    assert!(
+        lens.len() >= 5,
+        "ClientHello раздроблен на рекорды: {lens:?}"
+    );
+    assert!(
+        lens[..lens.len() - 1]
+            .iter()
+            .all(|l| (100..=200).contains(l)),
+        "{lens:?}"
+    );
+
+    for (packets, length, interval) in cases {
+        for (srv, rest) in [
+            (port, "&type=tcp"),
+            (vport, "&type=tcp&flow=xtls-rprx-vision"),
+        ] {
+            let mut cfg = reality_link(srv, &uuid, &keys, rest);
+            cfg.fragment = Some(Arc::new(Fragment {
+                packets,
+                length,
+                interval,
+            }));
+            let mut st = tokio::time::timeout(
+                Duration::from_secs(30),
+                dial(&cfg, &cfg.id, VlessCommand::Tcp, a.clone(), p),
+            )
+            .await
+            .expect("рукопожатие не зависает")
+            .unwrap_or_else(|e| panic!("{packets:?} {length:?} {rest}: {e}"));
+            echo_roundtrip(&mut st, 100_000).await;
+        }
+    }
+}
