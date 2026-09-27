@@ -66,8 +66,8 @@
 ## Соблюдение
 
 О случаях оскорбительного, притесняющего или иного недопустимого
-поведения можно сообщить ведущему проекта — [@ERGFT](https://github.com/ERGFT)
-(адрес электронной почты — в профиле GitHub). Все жалобы будут
+поведения можно сообщить ведущему проекта — [@ERGFT](https://github.com/ERGFT),
+по адресу <ergft18@gmail.com>. Все жалобы будут
 рассмотрены быстро и справедливо.
 
 Все ведущие сообщества обязаны уважать частную жизнь и безопасность
@@ -192,8 +192,8 @@ representative at an online or offline event.
 ## Enforcement
 
 Instances of abusive, harassing, or otherwise unacceptable behavior may be
-reported to the project maintainer, [@ERGFT](https://github.com/ERGFT) (the
-e-mail address is on the GitHub profile). All complaints will be reviewed and
+reported to the project maintainer, [@ERGFT](https://github.com/ERGFT), at
+<ergft18@gmail.com>. All complaints will be reviewed and
 investigated promptly and fairly.
 
 All community leaders are obligated to respect the privacy and security of the
