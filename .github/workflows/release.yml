@@ -23,7 +23,7 @@ jobs:
             asset: reality-client-linux-x86_64
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: ilammy/setup-nasm@v1
         if: runner.os == 'Windows'
@@ -41,7 +41,7 @@ jobs:
       - name: LICENSE и лицензии зависимостей
         if: runner.os == 'Linux'
         run: bash scripts/third_party_licenses.sh THIRD-PARTY-LICENSES.html
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@v3
         with:
           draft: true
           files: |
