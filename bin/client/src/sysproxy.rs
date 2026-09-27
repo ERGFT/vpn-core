@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 //! Системный прокси Windows (`--system-proxy`): браузеры и большинство
 //! программ сами начинают ходить через HTTP-вход клиента.
 //!
@@ -156,8 +157,10 @@ mod win {
         Ok(match query(k, name)? {
             Some((_, b)) => {
                 let w: Vec<u16> = b
-                    .chunks_exact(2)
-                    .map(|c| u16::from_le_bytes([c[0], c[1]]))
+                    .as_chunks::<2>()
+                    .0
+                    .iter()
+                    .map(|&c| u16::from_le_bytes(c))
                     .take_while(|&c| c != 0)
                     .collect();
                 Some(String::from_utf16_lossy(&w))
