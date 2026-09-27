@@ -36,6 +36,7 @@
 | Mux.Cool для TCP (`mux = 8` у выхода или подписки; не вместе с Vision) | ✅ проверен против Xray-core |
 | Общие HTTP/2-соединения: gRPC — все потоки в одном соединении (как у Xray), xhttp — `xmux` (умолчания Xray: 16–32 сессии на соединение) | ✅ проверено против Xray-core (счёт соединений) |
 | Против DPI: дробление ClientHello (`fragment`: TLS-рекорды и/или TCP-сегменты с паузами) у `vless` и `direct`, шум перед UDP (`noises`) у `direct` | ✅ дробление проверено против REALITY-сервера Xray (в т.ч. рекорды по 1–3 байта и Vision); по умолчанию выключено |
+| Локальное API (127.0.0.1 + токен): трафик, открытые соединения и их закрытие, группы и выбор сервера, обновление подписки; перечитывание настроек без разрыва соединений (API, SIGHUP); пресеты правил | ✅ |
 | Транспорт `kcp`, xhttp через HTTP/3 | ❌ не поддерживаются (почему — ниже); `quic`/`h2` удалены из самого Xray-core — ошибка подсказывает `xhttp` |
 | Linux | ✅ собирается и проверен |
 | Windows | 🟡 `.exe` собирается кросс-компиляцией и проходит все тесты и smoke против Xray-core под Wine ([`docs/WINDOWS.md`](docs/WINDOWS.md)); на настоящей Windows не запускался |
@@ -221,6 +222,44 @@ TLS-рекорд с ClientHello на рекорды по `length` байт; с `
 UDP-датаграммой к адресу; к порту 53 не шлются. Оба выключены по
 умолчанию; параметры — как у `freedom` в Xray.
 
+### API и перечитывание настроек
+
+```toml
+[api]
+listen = "127.0.0.1:9090"
+token_file = "api-token.txt"     # не короче 16 символов
+
+[route]
+presets = ["block-ads", "private-direct", "ru-direct"]
+```
+
+```sh
+T="Authorization: Bearer $(cat api-token.txt)"
+curl -H "$T" http://127.0.0.1:9090/stats
+curl -H "$T" http://127.0.0.1:9090/connections
+curl -H "$T" -X DELETE http://127.0.0.1:9090/connections/42
+curl -H "$T" http://127.0.0.1:9090/groups
+curl -H "$T" -X PUT -d '{"member":"my-panel/Finland"}' http://127.0.0.1:9090/groups/proxy
+curl -H "$T" -X POST http://127.0.0.1:9090/subscriptions/my-panel/update
+curl -H "$T" -X POST http://127.0.0.1:9090/reload
+```
+
+- Токен обязателен всегда; `Host` должен быть адресом API (защита от DNS
+  rebinding), запросы с `Origin` (из браузера) отвергаются; слушать не
+  на 127.0.0.1 — только с `allow_ip`. Адреса сайтов в `/connections` —
+  история посещений, поэтому они есть только в API, не в журнале.
+- Перечитывание (`POST /reload`, на Linux ещё `kill -HUP`): ошибка в файле —
+  работают прежние настройки. Новые выходы, правила, DNS, группы и
+  подписки — сразу для новых соединений, открытые живут со старыми.
+  Входы перезапускаются, только если их настройки изменились; вход TUN и
+  раздел `[api]` — после перезапуска программы. Таблица fake-IP
+  сохраняется.
+- Пресеты (после своих правил, так что своими можно переопределить):
+  `block-ads` (geosite `category-ads-all` → первый `block`),
+  `private-direct` (частные адреса, `.local`, `.lan` → первый `direct`),
+  `ru-direct`, `cn-direct`, `ir-direct` (домены страны, geosite, geoip →
+  `direct`).
+
 ### TUN — весь трафик компьютера
 
 Вход `type = "tun"` создаёт виртуальный сетевой интерфейс, и через клиент
@@ -388,7 +427,7 @@ scripts/ci.sh --quick  # только fmt, clippy, тесты
 
 | Скрипт | Что проверяет |
 |---|---|
-| `cargo test --workspace` | 187 тестов (131 unit + 56 интеграционных), всё на loopback; с `GEO_DIR=…` и `--ignored` — ещё проверка на настоящих базах geosite/geoip |
+| `cargo test --workspace` | 192 теста (131 unit + 61 интеграционный), всё на loopback; с `GEO_DIR=…` и `--ignored` — ещё проверка на настоящих базах geosite/geoip |
 | `scripts/interop_xray.sh` | 20 тестов против **настоящего Xray-core**: REALITY (в т.ч. с сайтом без ML-KEM), Vision (padding и переход на прямую передачу), ML-DSA-65 (и отказ при чужом ключе), WebSocket и httpupgrade без TLS и с TLS + `--ca`, gRPC поверх REALITY, xhttp во всех режимах (HTTP/1.1, h2, поверх REALITY; отказы 404/400 с понятной ошибкой), UDP и XUDP (Full Cone), отказ Vision-аккаунта клиенту без flow, Mux.Cool (20 соединений — 3 потока), общие HTTP/2-соединения gRPC и xhttp (`xmux`), раздробленный ClientHello (`fragment`), отпечатки `fp=firefox/safari/…` |
 | `scripts/smoke_xray.sh` | собранный бинарник как у пользователя против Xray-core: SOCKS5 с паролем → REALITY → Vision → VLESS, 1 МиБ внутреннего TLS туда-обратно с переходом на прямую передачу, 20 UDP-датаграмм через XUDP; файл настроек: `--check`, опечатки, вход `mixed` (SOCKS5 и HTTP CONNECT), правило `block`, DNS-вход с запросом через Xray |
 | `scripts/tun_netns.sh` | TUN с `auto_route` в изолированном сетевом пространстве (root) против Xray-core: TCP (32 МиБ туда-обратно), `direct` без петли, `route_exclude`, UDP/XUDP, перехват DNS к 8.8.8.8, fake-IP, возврат маршрутов по Ctrl+C, сеть после `kill -9`, kill switch `strict_route` и `--tun-cleanup` |

@@ -16,6 +16,7 @@ use tokio::net::{TcpListener, TcpStream, UdpSocket};
 
 use super::access::{self, IpNet};
 use super::dns::{answer_bytes, Dns};
+use super::router::RouterHandle;
 use crate::error::Result;
 
 /// Сколько запросов обрабатывать одновременно (UDP и TCP вместе).
@@ -28,8 +29,17 @@ const UDP_PLAIN_MAX: usize = 512;
 pub struct DnsInbound {
     pub tag: Arc<str>,
     pub allow_ip: Vec<IpNet>,
-    pub dns: Arc<Dns>,
+    /// DNS-модуль берётся у текущего маршрутизатора (после перечитывания
+    /// настроек — уже новый).
+    pub routers: Arc<RouterHandle>,
     pub max_conns: usize,
+}
+
+impl DnsInbound {
+    async fn answer(&self, q: &[u8]) -> Option<Vec<u8>> {
+        let dns: Arc<Dns> = self.routers.get().dns()?.clone();
+        answer_bytes(&dns, q, true).await
+    }
 }
 
 /// Ответ, урезанный до размера, который клиент примет по UDP: иначе —
@@ -77,7 +87,7 @@ impl DnsInbound {
             let (this, socket) = (self.clone(), socket.clone());
             tokio::spawn(async move {
                 let _permit = permit;
-                if let Some(a) = answer_bytes(&this.dns, &q, true).await {
+                if let Some(a) = this.answer(&q).await {
                     let _ = socket.send_to(&fit_udp(&q, a), from).await;
                 }
             });
@@ -123,7 +133,7 @@ impl DnsInbound {
             {
                 return;
             }
-            let Some(a) = answer_bytes(&self.dns, &q, true).await else {
+            let Some(a) = self.answer(&q).await else {
                 tracing::debug!(%peer, "DNS/TCP: не запрос — соединение закрыто");
                 return;
             };

@@ -8,15 +8,17 @@
 //! (например, `geoip = ["ru"]` для сайта, которого нет в geosite).
 
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 
 use super::config::{DomainStrategy, RouteConfig};
 use super::dns::fakeip::Reverse;
 use super::dns::Dns;
 use super::outbound::Outbound;
 use super::rules::{self, GeoFiles, Rule};
+use super::stats::{ConnInfo, Counted, Tracker};
 use super::Metadata;
 use crate::error::{Error, Result};
+use crate::transport::AsyncStream;
 use crate::vless::Address;
 
 pub struct Router {
@@ -25,6 +27,27 @@ pub struct Router {
     final_: Arc<dyn Outbound>,
     dns: Option<Arc<Dns>>,
     domain_strategy: DomainStrategy,
+    /// Учёт соединений (переживает перечитывание настроек).
+    tracker: Arc<Tracker>,
+}
+
+/// Текущий маршрутизатор. Перечитывание настроек подменяет его целиком;
+/// открытые соединения живут со старыми выходами, новые идут по новым
+/// правилам.
+pub struct RouterHandle(RwLock<Arc<Router>>);
+
+impl RouterHandle {
+    pub fn new(r: Router) -> Arc<Self> {
+        Arc::new(RouterHandle(RwLock::new(Arc::new(r))))
+    }
+
+    pub fn get(&self) -> Arc<Router> {
+        self.0.read().unwrap().clone()
+    }
+
+    pub fn set(&self, r: Arc<Router>) {
+        *self.0.write().unwrap() = r;
+    }
 }
 
 impl Router {
@@ -82,7 +105,46 @@ impl Router {
             final_,
             dns: None,
             domain_strategy: route.domain_strategy,
+            tracker: Tracker::new(),
         })
+    }
+
+    pub fn set_tracker(&mut self, t: Arc<Tracker>) {
+        self.tracker = t;
+    }
+
+    pub fn tracker(&self) -> &Arc<Tracker> {
+        &self.tracker
+    }
+
+    pub fn dns(&self) -> Option<&Arc<Dns>> {
+        self.dns.as_ref()
+    }
+
+    /// Группы серверов (выходы selector/urltest/fallback).
+    pub fn groups(&self) -> Vec<Arc<dyn Outbound>> {
+        let mut v: Vec<Arc<dyn Outbound>> = self
+            .outbounds
+            .values()
+            .filter(|o| o.as_group().is_some())
+            .cloned()
+            .collect();
+        v.sort_by(|a, b| a.tag().cmp(b.tag()));
+        v
+    }
+
+    /// Открыть TCP-соединение через выход и начать его учёт (трафик,
+    /// список соединений, закрытие через API).
+    pub async fn dial(
+        &self,
+        outbound: &Arc<dyn Outbound>,
+        meta: &Metadata,
+    ) -> Result<(Box<dyn AsyncStream>, Arc<ConnInfo>)> {
+        let s = outbound.connect(meta).await?;
+        let member = outbound.as_group().and_then(|g| g.current());
+        let guard = self.tracker.open(meta, outbound.tag(), member);
+        let info = guard.info.clone();
+        Ok((Box::new(Counted::new(s, guard)), info))
     }
 
     /// Подключить DNS-модуль (fake-IP и `ip_if_non_match`).

@@ -132,7 +132,10 @@ pub struct Dns {
     rules: Vec<(DomainSet, usize)>,
     final_: usize,
     cache: Option<Cache>,
-    fakeip: Option<FakeIp>,
+    fakeip: Option<Arc<FakeIp>>,
+    /// Настройки fake-IP — чтобы при перечитывании настроек сохранить ту
+    /// же таблицу (выданные адреса остаются действительными).
+    fakeip_key: String,
     strategy: Strategy,
 }
 
@@ -152,6 +155,7 @@ impl Dns {
         outbound: &dyn Fn(&str) -> Option<Arc<dyn Outbound>>,
         default_detour: &str,
         geo: &GeoFiles,
+        prev: Option<&Dns>,
     ) -> Result<Self> {
         if cfg.servers.is_empty() {
             return Err(Error::Config(
@@ -230,21 +234,26 @@ impl Dns {
             }
             rules.push((set, index(&r.server, &format!("dns-правило {}", i + 1))?));
         }
+        let mut fakeip_key = String::new();
         let fakeip = if servers.iter().any(|s| s.is_fake()) {
             let fc = cfg.fakeip.clone().unwrap_or(FakeIpConfig {
                 inet4_range: None,
                 inet6_range: None,
                 cache_file: None,
             });
-            Some(FakeIp::new(
-                fc.inet4_range
-                    .unwrap_or_else(|| "198.18.0.0/15".parse().unwrap()),
-                Some(
-                    fc.inet6_range
-                        .unwrap_or_else(|| "fc00::/18".parse().unwrap()),
-                ),
-                fc.cache_file,
-            )?)
+            fakeip_key = format!("{fc:?}");
+            match prev.and_then(|p| p.fakeip.clone().filter(|_| p.fakeip_key == fakeip_key)) {
+                Some(f) => Some(f),
+                None => Some(Arc::new(FakeIp::new(
+                    fc.inet4_range
+                        .unwrap_or_else(|| "198.18.0.0/15".parse().unwrap()),
+                    Some(
+                        fc.inet6_range
+                            .unwrap_or_else(|| "fc00::/18".parse().unwrap()),
+                    ),
+                    fc.cache_file,
+                )?)),
+            }
         } else {
             if cfg.fakeip.is_some() {
                 return Err(Error::Config(
@@ -260,6 +269,7 @@ impl Dns {
             final_,
             cache: (cache_size > 0).then(|| Cache::new(cache_size)),
             fakeip,
+            fakeip_key,
             strategy: cfg.strategy,
         })
     }
@@ -294,7 +304,7 @@ impl Dns {
     }
 
     pub fn fakeip(&self) -> Option<&FakeIp> {
-        self.fakeip.as_ref()
+        self.fakeip.as_deref()
     }
 
     /// Имя по адресу fake-IP.

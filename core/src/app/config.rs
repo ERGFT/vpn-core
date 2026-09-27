@@ -48,6 +48,8 @@ pub struct Config {
     /// Подписки: списки серверов с панели (см. `super::subscription`).
     #[serde(default)]
     pub subscriptions: Vec<super::subscription::SubscriptionConfig>,
+    /// Локальное API (см. `super::api`).
+    pub api: Option<super::api::ApiConfig>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
@@ -309,6 +311,10 @@ pub struct RouteConfig {
     /// разрешить его (DNS-модулем) и проверить правила по адресу.
     #[serde(default)]
     pub domain_strategy: DomainStrategy,
+    /// Готовые наборы правил: `block-ads`, `private-direct`, `ru-direct`,
+    /// `cn-direct`, `ir-direct` — после своих правил.
+    #[serde(default)]
+    pub presets: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
@@ -363,6 +369,9 @@ impl Config {
             sub.cache_file
                 .get_or_insert_with(|| format!("{tag}.subscription").into());
             fix(&mut sub.cache_file);
+        }
+        if let Some(a) = &mut cfg.api {
+            fix(&mut a.token_file);
         }
         let r = &mut cfg.route;
         r.geosite_file.get_or_insert_with(|| "geosite.dat".into());

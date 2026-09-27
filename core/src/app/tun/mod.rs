@@ -30,7 +30,7 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadBuf};
 use super::access::IpNet;
 use super::dns::{answer_bytes, Dns};
 use super::outbound::UDP_IDLE;
-use super::router::Router;
+use super::router::{Router, RouterHandle};
 use super::sniff;
 use super::{Metadata, Network};
 use crate::error::{Error, Result};
@@ -60,7 +60,6 @@ pub struct TunSettings {
 pub struct TunInbound {
     pub tag: Arc<str>,
     pub settings: TunSettings,
-    pub dns: Option<Arc<Dns>>,
 }
 
 /// Пакетный ввод-вывод устройства как поток для `ipstack`: одно чтение —
@@ -207,7 +206,11 @@ impl TunInbound {
     }
 
     /// Принимать соединения из интерфейса.
-    pub async fn serve(self: Arc<Self>, device: TunDevice, router: Arc<Router>) -> Result<()> {
+    pub async fn serve(
+        self: Arc<Self>,
+        device: TunDevice,
+        routers: Arc<RouterHandle>,
+    ) -> Result<()> {
         let mut cfg = IpStackConfig::default();
         cfg.mtu(self.settings.mtu)
             .map_err(|e| Error::Config(format!("tun: mtu: {e}")))?;
@@ -235,7 +238,7 @@ impl TunInbound {
                 tracing::debug!("tun: предел соединений — новое отброшено");
                 continue;
             };
-            let (this, router) = (self.clone(), router.clone());
+            let (this, router) = (self.clone(), routers.get());
             match stream {
                 IpStackStream::Tcp(t) => {
                     tokio::spawn(async move {
@@ -269,7 +272,7 @@ impl TunInbound {
             return Ok(());
         }
         if self.settings.dns_hijack && dst.port() == 53 {
-            if let Some(dns) = &self.dns {
+            if let Some(dns) = router.dns() {
                 return dns_over_tcp(dns, &mut t).await;
             }
         }
@@ -294,7 +297,7 @@ impl TunInbound {
                 meta.target = Address::Domain(d.clone());
             }
         }
-        let mut remote = match outbound.connect(&meta).await {
+        let (mut remote, conn) = match router.dial(&outbound, &meta).await {
             Ok(r) => r,
             Err(Error::Blocked) => return Ok(()),
             Err(e) => return Err(e),
@@ -303,7 +306,10 @@ impl TunInbound {
             remote.write_all(&initial).await?;
         }
         tracing::debug!(target = %meta.target, port = meta.port, outbound = outbound.tag(), "tun: проксирую");
-        relay::copy_bidirectional(t, remote).await?;
+        tokio::select! {
+            r = relay::copy_bidirectional(t, remote) => { r?; }
+            _ = conn.cancelled() => {}
+        }
         Ok(())
     }
 
@@ -314,7 +320,7 @@ impl TunInbound {
         }
         let mut buf = vec![0u8; 65535];
         if self.settings.dns_hijack && dst.port() == 53 {
-            if let Some(dns) = self.dns.clone() {
+            if let Some(dns) = router.dns().cloned() {
                 loop {
                     let n = u.read(&mut buf).await?;
                     if n == 0 {
@@ -339,6 +345,8 @@ impl TunInbound {
         };
         let outbound = router.route(&mut meta).await?;
         let session = outbound.udp(&meta).await?;
+        let member = outbound.as_group().and_then(|g| g.current());
+        let conn = router.tracker().open(&meta, outbound.tag(), member);
         loop {
             tokio::select! {
                 r = u.read(&mut buf) => {
@@ -346,16 +354,21 @@ impl TunInbound {
                     if n == 0 {
                         return Ok(());
                     }
+                    conn.add_up(n as u64);
                     session.send(meta.target.clone(), meta.port, buf[..n].to_vec()).await?;
                 }
                 r = session.recv() => {
                     match r? {
                         // Ответ пишется «от» адреса, куда отправляло
                         // приложение (так устроен поток ipstack).
-                        Some((_, _, data)) => u.write_all(&data).await?,
+                        Some((_, _, data)) => {
+                            conn.add_down(data.len() as u64);
+                            u.write_all(&data).await?
+                        }
                         None => return Ok(()),
                     }
                 }
+                _ = conn.info.cancelled() => return Ok(()),
             }
         }
     }

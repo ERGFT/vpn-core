@@ -197,6 +197,7 @@ fn config_from_args(args: &Args) -> Result<Config> {
         },
         dns: None,
         subscriptions: Vec::new(),
+        api: None,
     })
 }
 
@@ -238,6 +239,10 @@ async fn main() -> Result<()> {
         return Ok(());
     }
     let running = app.start().await?;
+    if let Some(path) = &args.config {
+        running.set_config_path(path.clone());
+        spawn_reload_on_sighup(running.controller());
+    }
     let _system_proxy = if args.system_proxy {
         let addr = running
             .inbounds
@@ -255,6 +260,29 @@ async fn main() -> Result<()> {
     }
     // Здесь `_system_proxy` уничтожается и возвращает прежние настройки.
     Ok(())
+}
+
+/// SIGHUP (Unix) — перечитать файл настроек без разрыва соединений.
+fn spawn_reload_on_sighup(ctl: std::sync::Arc<reality_core::app::Controller>) {
+    #[cfg(unix)]
+    tokio::spawn(async move {
+        let Ok(mut hup) = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::hangup())
+        else {
+            return;
+        };
+        while hup.recv().await.is_some() {
+            match ctl.reload_from_file().await {
+                Ok(notes) => {
+                    for n in notes {
+                        tracing::warn!("{n}");
+                    }
+                }
+                Err(e) => tracing::error!(error = %e, "настройки не перечитаны — работают прежние"),
+            }
+        }
+    });
+    #[cfg(not(unix))]
+    let _ = ctl;
 }
 
 /// Ctrl+C, а на Windows — ещё и закрытие окна консоли и выход из системы;

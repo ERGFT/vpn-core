@@ -139,7 +139,8 @@ outbound = "direct"
 # port (443 или "1000-2000"), network ("tcp"/"udp"), inbound (tag входов).
 
 [route]
-final = "proxy"                # всё остальное — через сервер
+final = "proxy"
+# presets = ["block-ads", "private-direct"]   # готовые наборы правил — после своих                # всё остальное — через сервер
 # domain_strategy = "ip_if_non_match"   # нет правила для имени — разрешить его
 #                                        # через [dns] и проверить правила по IP
 # geosite_file = "geosite.dat"
@@ -177,3 +178,12 @@ server = "local"
 # address = "fakeip"
 # [dns.fakeip]
 # cache_file = "fakeip.txt"
+
+# ── Локальное API (статистика, соединения, выбор сервера, перечитать
+# настройки) ─────────────────────────────────────────────────────────
+# Токен обязателен (не короче 16 символов), запросы — с заголовком
+# Authorization: Bearer <токен>. Подробности — README, раздел «API».
+# [api]
+# listen = "127.0.0.1:9090"
+# token_file = "api-token.txt"
+

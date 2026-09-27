@@ -23,8 +23,9 @@ use super::access::{self, AuthGuard, IpNet};
 use super::config::InboundKind;
 use super::http_in;
 use super::outbound::UdpSession;
-use super::router::Router;
+use super::router::RouterHandle;
 use super::sniff;
+use super::stats::ConnGuard;
 use super::{Metadata, Network};
 use crate::error::{Error, Result};
 use crate::relay;
@@ -139,7 +140,11 @@ async fn send_reply(
 
 impl ProxyInbound {
     /// Принимать соединения, пока не упадёт сам слушающий сокет.
-    pub async fn serve(self: Arc<Self>, listener: TcpListener, router: Arc<Router>) -> Result<()> {
+    pub async fn serve(
+        self: Arc<Self>,
+        listener: TcpListener,
+        routers: Arc<RouterHandle>,
+    ) -> Result<()> {
         let slots = Arc::new(tokio::sync::Semaphore::new(self.max_conns.max(1)));
         let guard = Arc::new(AuthGuard::default());
         let mut last_full_warn: Option<Instant> = None;
@@ -175,11 +180,11 @@ impl ProxyInbound {
             };
             socket.set_nodelay(true).ok();
             let this = self.clone();
-            let router = router.clone();
+            let routers = routers.clone();
             let guard = guard.clone();
             tokio::spawn(async move {
                 let _permit = permit;
-                if let Err(e) = this.handle(socket, peer, router, guard).await {
+                if let Err(e) = this.handle(socket, peer, routers, guard).await {
                     tracing::warn!(%peer, error = %e, "соединение завершилось с ошибкой");
                 }
             });
@@ -302,7 +307,7 @@ impl ProxyInbound {
         &self,
         mut socket: TcpStream,
         peer: SocketAddr,
-        router: Arc<Router>,
+        routers: Arc<RouterHandle>,
         guard: Arc<AuthGuard>,
     ) -> Result<()> {
         // Ошибки приветствия — только в debug: иначе перебор паролей или
@@ -324,7 +329,7 @@ impl ProxyInbound {
         let (target, port, reply, mut initial) = match accepted {
             Accepted::Done => return Ok(()),
             Accepted::UdpAssociate { port } => {
-                return udp_associate(socket, peer, port, self.tag.clone(), router).await;
+                return udp_associate(socket, peer, port, self.tag.clone(), routers).await;
             }
             Accepted::Connect {
                 target,
@@ -359,6 +364,7 @@ impl ProxyInbound {
             }
         }
 
+        let router = routers.get();
         let outbound = match router.route(&mut meta).await {
             Ok(o) => o,
             Err(e) => {
@@ -369,7 +375,7 @@ impl ProxyInbound {
                 return Ok(());
             }
         };
-        let mut remote = match outbound.connect(&meta).await {
+        let (mut remote, conn) = match router.dial(&outbound, &meta).await {
             Ok(s) => s,
             Err(e) => {
                 if !replied_early {
@@ -395,7 +401,14 @@ impl ProxyInbound {
             outbound = outbound.tag(),
             "проксирую"
         );
-        let stats = relay::copy_bidirectional(socket, remote).await?;
+        drop(router);
+        let stats = tokio::select! {
+            r = relay::copy_bidirectional(socket, remote) => r?,
+            _ = conn.cancelled() => {
+                tracing::debug!("соединение закрыто через API");
+                return Ok(());
+            }
+        };
         tracing::debug!(
             sent = stats.client_to_remote,
             received = stats.remote_to_client,
@@ -406,6 +419,9 @@ impl ProxyInbound {
     }
 }
 
+/// Сессия UDP-ассоциации: номер, сессия выхода, учёт.
+type UdpEntry = (u64, Arc<dyn UdpSession>, Arc<ConnGuard>);
+
 /// UDP-ассоциация: датаграммы приложения маршрутизируются по одной, на
 /// каждый выбранный выход — своя UDP-сессия (у VLESS — XUDP-поток, у
 /// direct — свои сокеты). Ответы всех сессий уходят владельцу ассоциации.
@@ -414,7 +430,7 @@ async fn udp_associate(
     peer: SocketAddr,
     requested_port: u16,
     inbound: Arc<str>,
-    router: Arc<Router>,
+    routers: Arc<RouterHandle>,
 ) -> Result<()> {
     let local_ip = control.local_addr()?.ip();
     let udp = Arc::new(UdpSocket::bind(SocketAddr::new(local_ip, 0)).await?);
@@ -426,7 +442,7 @@ async fn udp_associate(
     // у такой сессии ответы подписываются этим адресом (приложение ждёт
     // ответ оттуда, куда отправляло). Номер отличает пересозданную сессию
     // от старой, о закрытии которой пришло уведомление.
-    let mut sessions: HashMap<String, (u64, Arc<dyn UdpSession>)> = HashMap::new();
+    let mut sessions: HashMap<String, UdpEntry> = HashMap::new();
     let mut next_id = 0u64;
     let (closed_tx, mut closed_rx) = mpsc::unbounded_channel::<(String, u64)>();
     let mut readers = JoinSet::new();
@@ -441,7 +457,7 @@ async fn udp_associate(
                 }
             }
             Some((tag, id)) = closed_rx.recv() => {
-                if sessions.get(&tag).is_some_and(|(sid, _)| *sid == id) {
+                if sessions.get(&tag).is_some_and(|(sid, _, _)| *sid == id) {
                     sessions.remove(&tag);
                 }
             }
@@ -467,6 +483,7 @@ async fn udp_associate(
                     sniffed: None,
                 };
                 let original = meta.target.clone();
+                let router = routers.get();
                 let outbound = match router.route(&mut meta).await {
                     Ok(o) => o,
                     Err(e) => {
@@ -485,7 +502,10 @@ async fn udp_associate(
                     continue;
                 }
                 let session = match sessions.get(&tag) {
-                    Some((_, s)) => s.clone(),
+                    Some((_, s, c)) => {
+                        c.add_up((n - off) as u64);
+                        s.clone()
+                    }
                     None => {
                         let s = match outbound.udp(&meta).await {
                             Ok(s) => s,
@@ -496,11 +516,20 @@ async fn udp_associate(
                         };
                         next_id += 1;
                         let id = next_id;
-                        sessions.insert(tag.clone(), (id, s.clone()));
+                        let member = outbound.as_group().and_then(|g| g.current());
+                        let conn = Arc::new(router.tracker().open(&meta, outbound.tag(), member));
+                        conn.add_up((n - off) as u64);
+                        sessions.insert(tag.clone(), (id, s.clone(), conn.clone()));
                         let (reader_s, udp, closed_tx, tag) =
                             (s.clone(), udp.clone(), closed_tx.clone(), tag.clone());
                         readers.spawn(async move {
-                            while let Ok(Some((src, sport, data))) = reader_s.recv().await {
+                            loop {
+                                let got = tokio::select! {
+                                    r = reader_s.recv() => r,
+                                    _ = conn.info.cancelled() => break,
+                                };
+                                let Ok(Some((src, sport, data))) = got else { break };
+                                conn.add_down(data.len() as u64);
                                 let src = match &reply_as {
                                     Some(fake) => fake.clone(),
                                     None => src,
