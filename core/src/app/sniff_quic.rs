@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 //! Sniffing QUIC: домен из TLS ClientHello внутри Initial-пакетов
 //! QUIC v1 (RFC 9000/9001) и v2 (RFC 9369) — для HTTP/3, который браузеры
 //! шлют по UDP.

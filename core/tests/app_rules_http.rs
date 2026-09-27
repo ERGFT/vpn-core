@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 //! Фаза 1: правила маршрутизации, вход HTTP/mixed, sniffing — через
 //! настоящие сокеты, с выходами `direct` и `block`.
 

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 //! XUDP — UDP поверх VLESS так, как его по умолчанию шлёт клиент Xray-core
 //! (`common/xudp`, `common/mux/frame.go`): один VLESS-поток с командой Mux
 //! (`v1.mux.cool:666`, адрес в заголовке не пишется), внутри — кадры

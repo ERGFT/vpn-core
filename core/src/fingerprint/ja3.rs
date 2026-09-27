@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 //! JA3 (Salesforce, 2017): старейший и до сих пор самый распространённый
 //! TLS-клиентский фингерпринт. Формула проверена в тесте против
 //! опубликованного примера — см. `tests::matches_published_example`

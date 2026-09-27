@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 //! Фаза 7 — ClientHello Firefox 148 и Safari 26.3 (эталоны — `u_parrots.go`
 //! из refraction-networking/utls). Снимается то, что реально уходит в сеть
 //! по боевому пути, и сверяется поэлементно: cipher suites, расширения В

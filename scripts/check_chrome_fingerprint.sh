@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: GPL-3.0-or-later
 # Автосверка эталона Chrome-отпечатка (PLAN.md, "План дальнейших
 # действий", шаг 9).
 #

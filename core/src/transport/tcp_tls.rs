@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 //! TCP-транспорт: голый TCP (`security=none`), TLS с проверкой цепочки
 //! сертификатов (`security=tls`) или REALITY (`security=reality`), и
 //! открытие VLESS-сессии поверх — с XTLS Vision, если он в ссылке.

@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: GPL-3.0-or-later
 # Сквозной smoke-тест готового бинарника против НАСТОЯЩЕГО Xray-core в
 # самой распространённой боевой конфигурации: VLESS + REALITY + XTLS
 # Vision. Всё как у пользователя: `reality-client` получает vless://-ссылку

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 //! Фаза 6: дробление ClientHello у выхода `direct` и шум перед UDP.
 
 use std::net::SocketAddr;

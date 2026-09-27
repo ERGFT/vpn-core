@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 //! Выход `trojan`: сервер Trojan поверх TLS/REALITY и транспортов VLESS.
 //! TCP — поток на соединение; UDP — один поток (команда UDP) на
 //! UDP-сессию, в нём пакеты к любым адресам.

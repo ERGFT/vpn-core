@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 //! Фаза 3: проверки настроек входа `tun` (без создания интерфейса —
 //! для этого нужны права root; сам TUN проверяет scripts/tun_netns.sh).
 

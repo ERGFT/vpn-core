@@ -1,0 +1,28 @@
+# cargo-about: список лицензий зависимостей для релиза
+# (scripts/third_party_licenses.sh). Здесь — лицензии, которые разрешено
+# вносить в бинарник под GPL-3.0-or-later; новая зависимость с другой
+# лицензией остановит сборку списка, пока её не проверят и не добавят.
+accepted = [
+    "GPL-3.0",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "MIT",
+    "MIT-0",
+    "ISC",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "BSL-1.0",
+    "Zlib",
+    "0BSD",
+    "Unlicense",
+    "CC0-1.0",
+    "Unicode-3.0",
+    "CDLA-Permissive-2.0",
+    "OpenSSL",
+]
+# Только то, что попадает в бинарник: без dev-зависимостей, бенчмарков
+# и fpcheck.
+ignore-dev-dependencies = true
+ignore-build-dependencies = false
+# Свои крейты (publish = false) — не сторонние, их лицензия — LICENSE.
+private = { ignore = true }

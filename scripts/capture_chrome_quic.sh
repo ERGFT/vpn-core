@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: GPL-3.0-or-later
 # Снять первые QUIC-датаграммы настоящего Chromium (для теста sniffing
 # QUIC — core/src/app/testdata/chromium*_quic_initial.hex). Никуда в сеть
 # не ходит: имя www.example.test направляется на 127.0.0.1:443, где

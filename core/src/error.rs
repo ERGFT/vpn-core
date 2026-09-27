@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 use thiserror::Error;
 
 /// Единая ошибка для всего ядра. Каждый вариант соответствует месту,

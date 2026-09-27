@@ -1,0 +1,49 @@
+name: Ошибка / Bug report
+description: Что-то работает не так, как описано в README / Something does not work as the README says
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ⚠️ Не вставляйте настоящую ссылку на сервер, UUID, ключи и адрес подписки — замените их заглушками.
+        Уязвимость — не сюда, а закрыто: см. SECURITY.md.
+
+        ⚠️ Do not paste your real server link, UUID, keys or subscription URL — replace them with placeholders.
+        Vulnerabilities go through private reporting, not here: see SECURITY.md.
+  - type: input
+    id: version
+    attributes:
+      label: Версия / Version
+      description: Вывод `reality-client --version` или коммит / Output of `reality-client --version` or a commit
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: Система / OS
+      options: [Linux, Windows, другая / other]
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: Что произошло и что ожидалось / What happened and what you expected
+    validations:
+      required: true
+  - type: textarea
+    id: config
+    attributes:
+      label: Настройки / Configuration
+      description: Ключи запуска или client.toml (без секретов); security, type, flow ссылки / Command-line flags or client.toml (no secrets); the link's security, type, flow
+      render: toml
+  - type: textarea
+    id: log
+    attributes:
+      label: Журнал / Log
+      description: Лучше с `RUST_LOG=debug` (адреса сайтов можно вычеркнуть) / Preferably with `RUST_LOG=debug` (site addresses may be redacted)
+      render: text
+  - type: input
+    id: server
+    attributes:
+      label: Сервер / Server
+      description: Xray-core какой версии, sing-box, панель… / Xray-core version, sing-box, panel…

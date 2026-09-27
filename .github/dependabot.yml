@@ -1,0 +1,21 @@
+# Обновления зависимостей раз в месяц, одним PR на экосистему.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    groups:
+      actions:
+        patterns: ["*"]
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: monthly
+    groups:
+      cargo:
+        patterns: ["*"]
+    ignore:
+      # rustls подменён патчем (vendor/rustls-reality-patch) и закреплён на
+      # его версии; обновляется только вместе с патчем, вручную.
+      - dependency-name: rustls

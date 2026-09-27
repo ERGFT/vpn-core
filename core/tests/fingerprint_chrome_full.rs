@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 //! Этап 3 — итоговая сверка ClientHello с Chrome 133 (эталон —
 //! `HelloChrome_133` из refraction-networking/utls, `u_parrots.go`).
 //!

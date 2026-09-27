@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: GPL-3.0-or-later
 # Сборка reality-client.exe под Windows (x86_64-pc-windows-gnu) на Linux
 # и проверка его под Wine: все тесты workspace'а и smoke против настоящего
 # Xray-core (REALITY + Vision + XUDP) — тем самым .exe, что пойдёт

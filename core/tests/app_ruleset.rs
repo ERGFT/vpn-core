@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 //! Наборы правил sing-box (`[[route.rule_set]]`) в маршрутизации и DNS;
 //! сверка с настоящим sing-box — если задан `SING_BOX_BIN`.
 

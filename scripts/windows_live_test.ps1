@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 # Проверка на настоящей Windows (GitHub Actions windows-latest, от имени
 # администратора): служба + TUN с настоящим трафиком.
 #

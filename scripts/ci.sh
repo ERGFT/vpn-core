@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: GPL-3.0-or-later
 # Полная проверка проекта одной командой. Обязательные шаги — всё, что
 # работает без внешних зависимостей; необязательные включаются сами,
 # если для них есть инструменты, и честно пишут SKIP, если нет.
@@ -8,6 +9,7 @@
 #
 # Шаги:
 #   1. cargo fmt --check                         (обязательно)
+#      + SPDX-метки лицензии в исходниках         (обязательно)
 #   2. cargo clippy --workspace --all-targets    (обязательно, без предупреждений)
 #   3. cargo test --workspace                    (обязательно)
 #   4. cargo build --release                     (обязательно, кроме --quick)
@@ -49,6 +51,7 @@ step() {  # step <название> <команда...>
 skip() { RESULTS+=("SKIP  $1 — $2"); echo; echo "==> $1: SKIP ($2)"; }
 
 step "cargo fmt --check" cargo fmt --check
+step "SPDX-метки лицензии" bash scripts/check_license_headers.sh
 step "cargo clippy (без предупреждений)" \
     cargo clippy --workspace --all-targets -- -D warnings
 step "cargo test --workspace" cargo test --workspace

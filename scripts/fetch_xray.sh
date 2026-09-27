@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: GPL-3.0-or-later
 # Скачать официальный бинарник Xray-core для сравнения (Этап 8).
 # Кладёт его в target/xray/, откуда его сам находит
 # scripts/stage8_compare_with_xray.sh. В репозиторий ничего не

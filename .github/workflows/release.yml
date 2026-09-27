@@ -1,5 +1,6 @@
 # Выпуск: git tag v0.2.0 && git push origin v0.2.0 — собирает .exe для
-# Windows и бинарник для Linux и прикладывает их к релизу (черновику).
+# Windows и бинарник для Linux и прикладывает их к релизу (черновику)
+# вместе с LICENSE и лицензиями зависимостей (THIRD-PARTY-LICENSES.html).
 name: Release
 
 on:
@@ -32,9 +33,20 @@ jobs:
         run: |
           cp "${{ matrix.bin }}" "${{ matrix.asset }}"
           sha256sum "${{ matrix.asset }}" > "${{ matrix.asset }}.sha256"
+      # Лицензии — один раз, в Linux-сборке (у Windows тот же Cargo.lock).
+      - uses: taiki-e/install-action@v2
+        if: runner.os == 'Linux'
+        with:
+          tool: cargo-about@0.9.2
+      - name: LICENSE и лицензии зависимостей
+        if: runner.os == 'Linux'
+        run: bash scripts/third_party_licenses.sh THIRD-PARTY-LICENSES.html
       - uses: softprops/action-gh-release@v2
         with:
           draft: true
           files: |
             ${{ matrix.asset }}
             ${{ matrix.asset }}.sha256
+            ${{ runner.os == 'Linux' && 'LICENSE' || '' }}
+            ${{ runner.os == 'Linux' && 'THIRD-PARTY-LICENSES.html' || '' }}
+

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 //! Наборы правил sing-box (`rule_set`): бинарный `.srs` и исходный JSON.
 //!
 //! ```toml

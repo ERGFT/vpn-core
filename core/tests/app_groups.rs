@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 //! Фаза 4: группы серверов (selector, urltest, fallback) и подписки.
 //! Панель подписки — HTTPS-сервер на 127.0.0.1 со своим сертификатом.
 

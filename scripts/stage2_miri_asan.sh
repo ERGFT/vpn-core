@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: GPL-3.0-or-later
 # Этап 2 — runbook, который нельзя выполнить в песочнице (нет сети к
 # static.rust-lang.org, откуда качается nightly-канал) — см. PLAN.md,
 # Этап 2, и раздел "Дорожная карта до финала". Запускать у себя, из

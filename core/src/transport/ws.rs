@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 //! Транспорт Этапа 4: VLESS поверх WebSocket-соединения внутри TLS.
 //!
 //! Используем готовые библиотеки (`async-tungstenite` — само

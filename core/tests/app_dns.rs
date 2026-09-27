@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 //! Фаза 2: DNS-модуль целиком — вход DNS (UDP и TCP), серверы UDP, DoT,
 //! DoH, правила выбора сервера, кеш, fake-IP с обратным преобразованием в
 //! прокси, перехват DNS выходом `dns`, `domain_strategy = "ip_if_non_match"`.

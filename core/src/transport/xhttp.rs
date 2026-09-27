@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 //! Транспорт `type=xhttp` (он же SplitHTTP; Xray-core,
 //! `transport/internet/splithttp`): VLESS поверх обычных HTTP-запросов,
 //! которые проходят через CDN и обратные прокси, не умеющие WebSocket.

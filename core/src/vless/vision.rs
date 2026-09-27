@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 //! XTLS Vision (`flow=xtls-rprx-vision`) — клиентская сторона.
 //!
 //! Перенос логики Xray-core (`proxy/proxy.go`: `VisionWriter`,

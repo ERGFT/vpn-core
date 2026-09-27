@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: GPL-3.0-or-later
 # Скачать официальный sing-box и несколько настоящих наборов .srs — для
 # сверки нашего разбора наборов правил (tests/app_ruleset.rs). Кладёт всё
 # в target/sing-box/; в репозиторий ничего не попадает.

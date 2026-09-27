@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 //! Этап 5 — СПАЙК: проверяет ЭКСПЕРИМЕНТАЛЬНО (не только по чтению
 //! исходников), что минимальный патч `vendor/rustls-reality-patch` даёт
 //! реальный контроль над `legacy_session_id` исходящего ClientHello, а не

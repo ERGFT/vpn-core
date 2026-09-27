@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 //! `auto_route`: направить трафик компьютера в TUN и вернуть как было.
 //!
 //! Linux (как у sing-box): своя таблица маршрутов с маршрутом по

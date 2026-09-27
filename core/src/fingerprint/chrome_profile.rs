@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 //! Этап 3 — ClientHello как у Chrome 133: порядок cipher suites
 //! ([`apply_chrome133_cipher_order`]) и набор/значения расширений
 //! ([`apply_chrome_extensions`]).

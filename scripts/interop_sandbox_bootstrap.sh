@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: GPL-3.0-or-later
 # Подготовка интероп-стенда в окружении, где proxy.golang.org и
 # golang.org закрыты, но git по https://github.com работает (так было в
 # песочнице, где писался этот проект). Делает три вещи:

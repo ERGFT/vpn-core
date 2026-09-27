@@ -1,0 +1,15 @@
+name: Предложение / Feature request
+description: Новая возможность или улучшение / A new feature or an improvement
+labels: [enhancement]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: Что нужно / What is needed
+      description: Какую задачу это решает; как это сделано в Xray-core или sing-box, если сделано / What problem it solves; how Xray-core or sing-box does it, if they do
+    validations:
+      required: true
+  - type: textarea
+    id: why
+    attributes:
+      label: Почему это важно / Why it matters

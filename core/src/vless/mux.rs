@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 //! Mux.Cool для TCP — несколько соединений приложения в одном VLESS-потоке
 //! (как `mux.enabled` у клиента Xray-core, `common/mux`).
 //!

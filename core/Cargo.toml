@@ -3,6 +3,10 @@ name = "reality-core"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish = false
+description = "Ядро клиента VLESS/REALITY/XTLS Vision: входы, маршрутизация, выходы, транспорты"
 
 [lib]
 name = "reality_core"

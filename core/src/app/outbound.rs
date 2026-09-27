@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 //! Выходы: куда уходит соединение, выбранное маршрутизатором.
 //!
 //! - `vless` — VLESS-сервер (`super::vless_out`);
