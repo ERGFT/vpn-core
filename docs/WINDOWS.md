@@ -96,6 +96,22 @@ cargo build --release -p reality-client
 - **Chrome/Edge** — через параметр запуска:
   `--proxy-server="socks5://127.0.0.1:1080"`.
 
+### Автозапуск
+
+- **С системным прокси, при входе в Windows** (обычный пользователь):
+  `reality-client.exe --autostart-install --config C:\путь\client.toml --system-proxy`.
+  Клиент запускается без окна, журнал — `reality-client.log` рядом с
+  настройками. Убрать: `--autostart-uninstall`.
+- **Служба — для TUN** (запуск до входа в систему, от имени
+  администратора): `reality-client.exe --service-install --config C:\путь\client.toml`.
+  Настройки, файлы рядом с ними, `reality-client.exe` и `wintun.dll`
+  копируются в `C:\ProgramData\RealityClient` — эту папку могут менять
+  только администраторы (служба работает от SYSTEM, и подменить её файлы
+  обычной программе нельзя). Журнал — там же. Изменили настройки —
+  повторите `--service-install`; убрать службу — `--service-uninstall`.
+  Служба видна в «Службы» (services.msc) как «Reality Client», после сбоя
+  перезапускается сама.
+
 ## 5. Дополнительные ключи
 
 - `--config client.toml` — файл настроек: несколько входов и выходов,
@@ -143,7 +159,7 @@ Xray (Full Cone NAT); `--no-xudp` — старый способ, поток на
 - XTLS Vision работает только с `type=tcp` и `security=tls`/`reality` —
   как и в самом Xray-core; для ws/grpc/xhttp клиент сразу скажет, что так
   нельзя.
-- Нет Mux для TCP и транспорта `kcp`; `quic`/`h2` удалены из самого
-  Xray-core (их заменяет `xhttp`).
+- Нет транспорта `kcp`; `quic`/`h2` удалены из самого Xray-core (их
+  заменяет `xhttp`, в том числе через HTTP/3 — `alpn=h3`).
 
 Полный список — в `README.md`, раздел «Что умеет и чего нет».
