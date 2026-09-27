@@ -23,10 +23,13 @@ linker) and tested under **Wine 9**:
 The resulting file is `dist\windows\reality-client.exe` (~11 MB, depends only
 on Windows system DLLs).
 
-> To be honest: Wine is not real Windows. The network stack and the console
-> are emulated there; this `.exe` has not been run on real Windows. The
-> "native" build (MSVC, section 2) has not been run either — it is described
-> from the `aws-lc-sys` documentation.
+> Wine is not real Windows: the network stack and the console are emulated
+> there. So on **real Windows** (GitHub Actions, `windows-latest`) CI builds
+> the `.exe` natively on every push (MSVC, section 2), runs all tests and
+> `scripts/windows_live_test.ps1`: service installation, its folder
+> permissions, stop and start, TUN (Wintun, `auto_route`) with real HTTPS
+> traffic and service removal. The system proxy, autostart at logon and
+> Xray-core interop — only under Wine so far.
 
 ## 1. What to install
 
@@ -127,9 +130,10 @@ VPN: traffic goes through it only for programs that use this proxy.
   traffic from all programs goes through the client. Run as administrator
   and put `wintun.dll` next to `reality-client.exe` (from
   [wintun.net](https://www.wintun.net/), the `amd64` folder).
-  ⚠️ On Windows TUN has not yet been tested on a real machine — it only
-  builds. If something goes wrong, close the client: the routes disappear
-  together with the interface.
+  Without IPv6 on the computer, IPv6 is not routed into TUN (programs
+  fall back to IPv4 right away). There is no kill switch (`strict_route`)
+  on Windows yet. If something goes wrong, close the client: the routes
+  disappear together with the interface.
 - Own DNS (the `[dns]` section and the `type = "dns"` inbound in the config,
   see the README): if you set `127.0.0.1` in "Settings → Network & Internet →
   Adapter properties → DNS", all programs' name lookups go through the
