@@ -55,6 +55,8 @@ link_file = "server.txt"       # vless://… в первой строке (ил�
 # xudp = true                  # UDP через XUDP (как у Xray); false — поток на назначение
 # ca_file = "ca.pem"           # свои корневые сертификаты для security=tls
 # allow_insecure = false       # разрешить security=none (без шифрования)
+# mux = 8                      # Mux.Cool: до 8 TCP-соединений в одном потоке к серверу
+#                              # (меньше рукопожатий; не вместе с flow=xtls-rprx-vision)
 
 [[outbounds]]
 tag = "direct"                 # напрямую, без сервера
@@ -94,6 +96,7 @@ type = "block"
 # # exclude = "(?i)test"
 # # user_agent = "v2rayN/7.10.0"     # от него зависит формат ответа панели
 # # ca_file = "panel-ca.pem"         # самоподписанный сертификат панели
+# # mux = 8                          # Mux.Cool для серверов без Vision
 
 # ── Маршрутизация ───────────────────────────────────────────────────
 # Правила проверяются по порядку, срабатывает первое подошедшее.

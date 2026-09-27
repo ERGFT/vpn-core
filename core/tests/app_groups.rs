@@ -510,7 +510,21 @@ type = "direct"
             "detour",
         ),
     ];
-    for (extra, want) in cases {
+    let more: &[(&str, &str)] = &[
+        (
+            "[[outbounds]]\ntag='d2'\ntype='direct'\nmux=8\n",
+            "только у type = \"vless\"",
+        ),
+        (
+            "[[outbounds]]\ntag='v'\ntype='vless'\nmux=8\nlink='vless://11111111-1111-1111-1111-111111111111@h.example:443?security=tls&type=tcp&flow=xtls-rprx-vision'\n",
+            "несовместим",
+        ),
+        (
+            "[[outbounds]]\ntag='v'\ntype='vless'\nmux=0\nlink='vless://11111111-1111-1111-1111-111111111111@h.example:443?security=tls&type=tcp'\n",
+            "от 1 до 128",
+        ),
+    ];
+    for (extra, want) in cases.iter().chain(more) {
         let e = build_err(&format!("{base}{extra}"));
         assert!(e.contains(want), "{extra}\n→ {e}\nожидалось: {want}");
     }

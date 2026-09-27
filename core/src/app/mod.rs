@@ -180,7 +180,11 @@ fn build_vless(o: &config::OutboundConfig) -> Result<VlessOutbound> {
         Some(ca) => Some(Arc::new(config::load_ca(ca)?)),
         None => None,
     };
-    vless_from_link(&o.tag, &link, o.xudp, o.allow_insecure, roots, false)
+    let v = vless_from_link(&o.tag, &link, o.xudp, o.allow_insecure, roots, false)?;
+    match o.mux {
+        Some(n) => v.with_mux(n),
+        None => Ok(v),
+    }
 }
 
 /// Выход VLESS из ссылки (из настроек или из подписки). `quiet` — не
@@ -582,11 +586,15 @@ impl App {
                 None => None,
             };
             let factory: Arc<subscription::ServerFactory> =
-                Arc::new(|tag: &str, link: &str, xudp: bool, insecure: bool| {
-                    Ok(
-                        Arc::new(vless_from_link(tag, link, xudp, insecure, None, true)?)
-                            as Arc<dyn Outbound>,
-                    )
+                Arc::new(|tag: &str, link: &str, o: subscription::ServerOpts| {
+                    let mut v = vless_from_link(tag, link, o.xudp, o.allow_insecure, None, true)?;
+                    if let Some(n) = o.mux {
+                        // С Vision mux не бывает — такие серверы без него.
+                        if !v.config().flow.is_vision() {
+                            v = v.with_mux(n)?;
+                        }
+                    }
+                    Ok(Arc::new(v) as Arc<dyn Outbound>)
                 });
             let direct: Arc<dyn Outbound> =
                 Arc::new(DirectOutbound::new(http_client::INTERNAL.to_string()));

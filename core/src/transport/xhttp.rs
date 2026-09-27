@@ -31,8 +31,13 @@
 //! Настройки, меняющие формат запросов (`xPaddingObfsMode`, размещение
 //! session/seq/данных не в пути/теле, `downloadSettings`), не
 //! поддерживаются — ссылка с ними отвергается с понятной ошибкой, а не
-//! ломается молча. Переиспользование соединений (`xmux`) не
-//! реализовано: каждая VLESS-сессия открывает своё соединение.
+//! ломается молча.
+//!
+//! HTTP/2-соединения переиспользуются по правилам `xmux` из `extra=`
+//! (`maxConcurrency`, `maxConnections`, `cMaxReuseTimes`,
+//! `hMaxRequestTimes`, `hMaxReusableSecs`; без `xmux` — умолчания Xray:
+//! 16–32 сессии на соединение, 600–900 запросов, 1800–3000 с), см.
+//! [`super::h2pool`]. HTTP/1.1 — соединения на сессию, как раньше.
 
 use std::io;
 use std::pin::Pin;
@@ -55,6 +60,7 @@ use uuid::Uuid;
 
 use crate::error::{Error, Result};
 use crate::transport::browser_headers::{chrome_headers, Variant};
+use crate::transport::h2pool;
 use crate::transport::tcp_tls::{connect_tls_by_security, SecureStream};
 use crate::vless::protocol::{vless_connect, Address, Command, VlessStream};
 use crate::vless::{Security, VlessConfig};
@@ -155,6 +161,66 @@ pub struct XhttpSettings {
     pub max_post: Range,
     pub min_interval_ms: Range,
     pub method: String,
+    /// Переиспользование HTTP/2-соединений (`xmux`).
+    pub xmux: h2pool::Limits,
+}
+
+/// `xmux` по умолчанию — как у Xray, когда в настройках его нет.
+pub const XMUX_DEFAULT: h2pool::Limits = h2pool::Limits {
+    max_concurrency: Range { from: 16, to: 32 },
+    max_connections: 0,
+    max_reuse: Range { from: 0, to: 0 },
+    max_requests: Range { from: 600, to: 900 },
+    max_age_secs: Range {
+        from: 1800,
+        to: 3000,
+    },
+};
+
+fn parse_xmux(v: &serde_json::Value) -> Result<h2pool::Limits> {
+    let m = match v {
+        serde_json::Value::Null => return Ok(XMUX_DEFAULT),
+        serde_json::Value::Object(m) => m,
+        _ => {
+            return Err(Error::InvalidUri(
+                "xhttp extra: xmux должен быть объектом".into(),
+            ))
+        }
+    };
+    let zero = Range { from: 0, to: 0 };
+    let mut l = h2pool::Limits {
+        max_concurrency: zero,
+        max_connections: 0,
+        max_reuse: zero,
+        max_requests: zero,
+        max_age_secs: zero,
+    };
+    let mut any = false;
+    for (k, v) in m {
+        let r = Range::parse(k, v)?;
+        any |= r.to != 0;
+        match k.as_str() {
+            "maxConcurrency" => l.max_concurrency = r,
+            "maxConnections" => l.max_connections = r.rand(),
+            "cMaxReuseTimes" => l.max_reuse = r,
+            "hMaxRequestTimes" => l.max_requests = r,
+            "hMaxReusableSecs" => l.max_age_secs = r,
+            "hKeepAlivePeriod" => {}
+            other => {
+                tracing::warn!(key = %other, "xhttp extra: xmux: неизвестный параметр, пропущен")
+            }
+        }
+    }
+    if !any {
+        return Ok(XMUX_DEFAULT);
+    }
+    if l.max_concurrency.to != 0 && l.max_connections != 0 {
+        return Err(Error::InvalidUri(
+            "xhttp extra: xmux: maxConnections и maxConcurrency вместе не задаются (как у Xray)"
+                .into(),
+        ));
+    }
+    Ok(l)
 }
 
 impl XhttpSettings {
@@ -186,6 +252,7 @@ impl XhttpSettings {
         let mut method = "POST".to_string();
         let mut user_headers: Vec<(String, String)> = Vec::new();
         let mut has_download_settings = false;
+        let mut xmux = XMUX_DEFAULT;
 
         for (k, v) in &extra {
             let non_default_str = |allowed: &[&str]| -> bool {
@@ -277,10 +344,10 @@ impl XhttpSettings {
                     }
                 }
                 "downloadSettings" => has_download_settings = !v.is_null(),
+                "xmux" => xmux = parse_xmux(v)?,
                 // Серверные или не влияющие на формат настройки, а также
                 // то, что Xray берёт не из extra (host/path/mode).
-                "xmux"
-                | "noSSEHeader"
+                "noSSEHeader"
                 | "scMaxBufferedPosts"
                 | "scStreamUpServerSecs"
                 | "serverMaxHeaderBytes"
@@ -407,6 +474,7 @@ impl XhttpSettings {
             max_post,
             min_interval_ms,
             method,
+            xmux,
         })
     }
 
@@ -482,6 +550,8 @@ fn canonical_header(k: &str) -> String {
 struct Shared {
     err: Mutex<Option<String>>,
     cancel: CancellationToken,
+    /// Место в общем HTTP/2-соединении (xmux) — на всю сессию.
+    lease: std::sync::OnceLock<h2pool::Lease>,
 }
 
 impl Shared {
@@ -710,29 +780,41 @@ mod h2c {
         up: DuplexStream,
         shared: Arc<Shared>,
     ) -> Result<()> {
-        let alpn = cfg
-            .alpn()
-            .unwrap_or_else(|| vec![b"h2".to_vec(), b"http/1.1".to_vec()]);
-        let tls = connect_tls_by_security(cfg, alpn).await?;
-        if cfg.security == Security::Tls {
-            if let Some(p) = tls.alpn() {
-                if p != b"h2" {
-                    return Err(Error::Protocol(format!(
-                        "xhttp: сервер выбрал ALPN {}, а не h2 — для HTTP/1.1 укажите alpn=http/1.1",
-                        String::from_utf8_lossy(&p)
-                    )));
+        // Сессии к одному серверу делят HTTP/2-соединения по правилам
+        // xmux (как у Xray): меньше рукопожатий TLS/REALITY.
+        let c = cfg.clone();
+        let lease = h2pool::acquire(&format!("xhttp|{}", cfg.pool_key()), &st.xmux, move || {
+            let c = c.clone();
+            Box::pin(async move {
+                let alpn = c
+                    .alpn()
+                    .unwrap_or_else(|| vec![b"h2".to_vec(), b"http/1.1".to_vec()]);
+                let tls = connect_tls_by_security(&c, alpn).await?;
+                if c.security == Security::Tls {
+                    if let Some(p) = tls.alpn() {
+                        if p != b"h2" {
+                            return Err(Error::Protocol(format!(
+                                "xhttp: сервер выбрал ALPN {}, а не h2 — для HTTP/1.1 укажите alpn=http/1.1",
+                                String::from_utf8_lossy(&p)
+                            )));
+                        }
+                    }
                 }
-            }
-        }
-        let (send, conn) = builder()
-            .handshake::<SecureStream, Bytes>(tls)
-            .await
-            .map_err(|e| Error::Protocol(format!("xhttp: h2 handshake не удался: {e}")))?;
-        tokio::spawn(async move {
-            if let Err(e) = conn.await {
-                tracing::debug!(error = %e, "xhttp: h2-соединение завершилось");
-            }
-        });
+                let (send, conn) = builder()
+                    .handshake::<SecureStream, Bytes>(tls)
+                    .await
+                    .map_err(|e| Error::Protocol(format!("xhttp: h2 handshake не удался: {e}")))?;
+                let driver: futures_util::future::BoxFuture<'static, ()> = Box::pin(async move {
+                    if let Err(e) = conn.await {
+                        tracing::debug!(error = %e, "xhttp: h2-соединение завершилось");
+                    }
+                });
+                Ok((send, driver))
+            })
+        })
+        .await?;
+        let send = lease.request();
+        let _ = shared.lease.set(lease);
         let mut send = send
             .ready()
             .await
@@ -756,6 +838,9 @@ mod h2c {
                         .ready()
                         .await
                         .map_err(|e| Error::Protocol(format!("xhttp: h2 не готов: {e}")))?;
+                    if let Some(l) = shared.lease.get() {
+                        l.note_request();
+                    }
                     let req = request(
                         &st,
                         &st.method,
@@ -899,6 +984,9 @@ mod h2c {
                     .ready()
                     .await
                     .map_err(|e| format!("xhttp: h2 не готов: {e}"))?;
+                if let Some(l) = shared.lease.get() {
+                    l.note_request();
+                }
                 let path = st.url_path(Some(&session), Some(seq));
                 seq += 1;
                 let req = request(&st, &st.method, &path, false, Some(body.len()))

@@ -194,6 +194,9 @@ pub struct OutboundConfig {
     /// vless: разрешить `security=none` (без шифрования).
     #[serde(default)]
     pub allow_insecure: bool,
+    /// vless: Mux.Cool — до стольких TCP-соединений в одном потоке
+    /// (как `mux.concurrency` у Xray; не вместе с Vision).
+    pub mux: Option<u16>,
 
     // ── только для групп (selector, urltest, fallback) ──
     /// Участники — tag других выходов (в том числе групп).
@@ -232,10 +235,11 @@ impl OutboundConfig {
         let vless_fields = self.link.is_some()
             || self.link_file.is_some()
             || self.ca_file.is_some()
-            || self.allow_insecure;
+            || self.allow_insecure
+            || self.mux.is_some();
         if self.kind != OutboundKind::Vless && vless_fields {
             return Err(Error::Config(format!(
-                "выход {tag}: link, link_file, ca_file, allow_insecure — только у type = \"vless\""
+                "выход {tag}: link, link_file, ca_file, allow_insecure, mux — только у type = \"vless\""
             )));
         }
         if group {

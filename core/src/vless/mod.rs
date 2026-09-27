@@ -1,6 +1,7 @@
 pub mod protocol;
 pub mod uri;
 
+pub mod mux;
 pub mod udp;
 pub mod vision;
 pub mod xudp;

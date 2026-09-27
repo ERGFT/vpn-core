@@ -138,6 +138,24 @@ pub struct RealityParams {
 }
 
 impl VlessConfig {
+    /// Ключ общих соединений (пулы HTTP/2): всё, что влияет на соединение
+    /// с сервером, кроме имени ссылки.
+    pub fn pool_key(&self) -> String {
+        let mut params: Vec<(&String, &String)> = self.raw_params.iter().collect();
+        params.sort();
+        format!(
+            "{}|{}|{}|{:?}|{:?}|{:?}|{:?}|{:?}",
+            self.id,
+            self.host,
+            self.port,
+            self.security,
+            self.network,
+            self.sni,
+            params,
+            self.ca_roots.as_ref().map(std::sync::Arc::as_ptr)
+        )
+    }
+
     pub fn parse(uri: &str) -> Result<Self> {
         let url = url::Url::parse(uri)
             .map_err(|e| Error::InvalidUri(format!("не удалось разобрать URI: {e}")))?;

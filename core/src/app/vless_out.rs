@@ -17,6 +17,7 @@ use super::outbound::{Outbound, Packet, UdpSession, UDP_IDLE};
 use super::Metadata;
 use crate::error::{Error, Result};
 use crate::transport::{self, AsyncStream};
+use crate::vless::mux::MuxPool;
 use crate::vless::{xudp, Address, Command, VlessConfig};
 
 /// Потолок на открытие одного соединения целиком: разрешение имени, TCP,
@@ -34,6 +35,10 @@ pub struct VlessOutbound {
     tag: String,
     cfg: Arc<VlessConfig>,
     xudp: bool,
+    /// Mux.Cool для TCP (если включён).
+    mux: Option<MuxPool>,
+    /// Новый поток Mux.Cool открывается по одному.
+    mux_opening: Mutex<()>,
 }
 
 impl VlessOutbound {
@@ -47,7 +52,63 @@ impl VlessOutbound {
             tag: tag.into(),
             cfg: Arc::new(cfg),
             xudp,
+            mux: None,
+            mux_opening: Mutex::new(()),
         }
+    }
+
+    /// Включить Mux.Cool: до `concurrency` TCP-соединений в одном потоке.
+    /// С XTLS Vision несовместим.
+    pub fn with_mux(mut self, concurrency: u16) -> Result<Self> {
+        if self.cfg.flow.is_vision() {
+            return Err(Error::Config(format!(
+                "выход {}: mux несовместим с flow=xtls-rprx-vision (Xray рвёт такие \
+                 потоки); уберите mux или flow",
+                self.tag
+            )));
+        }
+        if !(1..=128).contains(&concurrency) {
+            return Err(Error::Config(format!(
+                "выход {}: mux — от 1 до 128 соединений в потоке",
+                self.tag
+            )));
+        }
+        self.mux = Some(MuxPool::new(concurrency as usize));
+        Ok(self)
+    }
+
+    /// Соединение через Mux.Cool.
+    async fn connect_mux(&self, pool: &MuxPool, meta: &Metadata) -> Result<Box<dyn AsyncStream>> {
+        for _ in 0..2 {
+            let conn = match pool.pick() {
+                Some(c) => c,
+                None => {
+                    let _one = self.mux_opening.lock().await;
+                    match pool.pick() {
+                        Some(c) => c,
+                        None => {
+                            let s = dial(
+                                &self.cfg,
+                                Command::Mux,
+                                Address::Domain(xudp::MUX_COOL_DOMAIN.into()),
+                                xudp::XUDP_PORT,
+                            )
+                            .await?;
+                            tracing::debug!(outbound = %self.tag, "Mux.Cool: новый поток");
+                            pool.add(s)
+                        }
+                    }
+                }
+            };
+            match conn.open(&meta.target, meta.port).await {
+                Ok(s) => return Ok(Box::new(s)),
+                // Поток закрылся между выбором и открытием — ещё раз.
+                Err(e) => tracing::debug!(error = %e, "Mux.Cool: поток закрыт, повтор"),
+            }
+        }
+        Err(Error::Protocol(
+            "Mux.Cool: не удалось открыть соединение".into(),
+        ))
     }
 
     pub fn config(&self) -> &VlessConfig {
@@ -84,6 +145,9 @@ impl Outbound for VlessOutbound {
     }
 
     fn connect<'a>(&'a self, meta: &'a Metadata) -> BoxFuture<'a, Result<Box<dyn AsyncStream>>> {
+        if let Some(pool) = &self.mux {
+            return Box::pin(self.connect_mux(pool, meta));
+        }
         Box::pin(dial(
             &self.cfg,
             Command::Tcp,

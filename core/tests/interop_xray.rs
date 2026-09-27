@@ -1285,3 +1285,199 @@ async fn xudp_full_cone_against_xray() {
         );
     }
 }
+
+/// TCP-посредник перед Xray: считает соединения клиента с сервером.
+async fn counting_forwarder(to: u16) -> (u16, Arc<std::sync::atomic::AtomicUsize>) {
+    let l = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = l.local_addr().unwrap().port();
+    let n = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let n2 = n.clone();
+    tokio::spawn(async move {
+        while let Ok((mut c, _)) = l.accept().await {
+            n2.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            tokio::spawn(async move {
+                if let Ok(mut s) = TcpStream::connect(("127.0.0.1", to)).await {
+                    let _ = tokio::io::copy_bidirectional(&mut c, &mut s).await;
+                }
+            });
+        }
+    });
+    (port, n)
+}
+
+fn meta(port: u16) -> reality_core::app::Metadata {
+    reality_core::app::Metadata {
+        inbound: "test".into(),
+        source: "127.0.0.1:1".parse().unwrap(),
+        network: reality_core::app::Network::Tcp,
+        target: Address::Ipv4("127.0.0.1".parse().unwrap()),
+        port,
+        sniffed: None,
+    }
+}
+
+/// Mux.Cool: 20 соединений при concurrency = 8 — три потока к серверу,
+/// у каждого соединения свои данные.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "нужен Xray-core: scripts/interop_xray.sh"]
+async fn mux_cool_tcp_against_xray() {
+    use reality_core::app::outbound::Outbound;
+    use reality_core::app::vless_out::VlessOutbound;
+    ensure_crypto_provider();
+    init_log();
+    let decoy = start_decoy().await;
+    let echo = start_echo().await;
+    let keys = reality_keys();
+    let uuid = uuid::Uuid::new_v4();
+    let port = free_port();
+    let _x = Xray::start(
+        vec![vless_inbound(
+            port,
+            &uuid,
+            "",
+            reality_stream("raw", decoy, &keys, vec![], None),
+        )],
+        &[port],
+        tempdir::Dir::new(),
+    )
+    .await;
+    let (fwd, count) = counting_forwarder(port).await;
+    let cfg = reality_link(fwd, &uuid, &keys, "&type=tcp");
+    let out = VlessOutbound::new("mux", cfg, true).with_mux(8).unwrap();
+    let m = meta(echo);
+    let mut streams = Vec::new();
+    for _ in 0..20 {
+        streams.push(out.connect(&m).await.expect("соединение через Mux.Cool"));
+    }
+    let mut tasks = Vec::new();
+    for (i, mut s) in streams.into_iter().enumerate() {
+        tasks.push(tokio::spawn(async move {
+            echo_roundtrip(&mut s, 64 * 1024 + i * 1000).await;
+        }));
+    }
+    for t in tasks {
+        t.await.unwrap();
+    }
+    assert_eq!(
+        count.load(std::sync::atomic::Ordering::SeqCst),
+        3,
+        "20 соединений по 8 в потоке — 3 потока"
+    );
+    // С Vision mux не включается.
+    let v = reality_link(fwd, &uuid, &keys, "&type=tcp&flow=xtls-rprx-vision");
+    assert!(VlessOutbound::new("v", v, true).with_mux(8).is_err());
+}
+
+/// gRPC: потоки к одному серверу идут через одно HTTP/2-соединение.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "нужен Xray-core: scripts/interop_xray.sh"]
+async fn grpc_streams_share_connection_against_xray() {
+    ensure_crypto_provider();
+    let decoy = start_decoy().await;
+    let echo = start_echo().await;
+    let keys = reality_keys();
+    let uuid = uuid::Uuid::new_v4();
+    let port = free_port();
+    let _x = Xray::start(
+        vec![vless_inbound(
+            port,
+            &uuid,
+            "",
+            reality_stream(
+                "grpc",
+                decoy,
+                &keys,
+                vec![("grpcSettings", obj(vec![("serviceName", s("pool"))]))],
+                None,
+            ),
+        )],
+        &[port],
+        tempdir::Dir::new(),
+    )
+    .await;
+    let (fwd, count) = counting_forwarder(port).await;
+    let cfg = reality_link(fwd, &uuid, &keys, "&type=grpc&serviceName=pool");
+    let (a, p) = target(echo);
+    // Первый — отдельно (соединение появляется при нём), остальные разом.
+    let mut first = dial(&cfg, &cfg.id, VlessCommand::Tcp, a.clone(), p)
+        .await
+        .unwrap();
+    echo_roundtrip(&mut first, 1000).await;
+    let mut tasks = Vec::new();
+    for i in 0..10 {
+        let (cfg, a) = (cfg.clone(), a.clone());
+        tasks.push(tokio::spawn(async move {
+            let mut st = dial(&cfg, &cfg.id, VlessCommand::Tcp, a, p).await.unwrap();
+            echo_roundtrip(&mut st, 100_000 + i * 777).await;
+        }));
+    }
+    for t in tasks {
+        t.await.unwrap();
+    }
+    assert_eq!(count.load(std::sync::atomic::Ordering::SeqCst), 1);
+}
+
+/// xhttp: по умолчанию сессии делят соединение (xmux 16–32), с
+/// `maxConcurrency: 2` — по две на соединение.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "нужен Xray-core: scripts/interop_xray.sh"]
+async fn xhttp_xmux_against_xray() {
+    ensure_crypto_provider();
+    init_log();
+    let decoy = start_decoy().await;
+    let echo = start_echo().await;
+    let keys = reality_keys();
+    let uuid = uuid::Uuid::new_v4();
+    let port = free_port();
+    let _x = Xray::start(
+        vec![vless_inbound(
+            port,
+            &uuid,
+            "",
+            reality_stream(
+                "xhttp",
+                decoy,
+                &keys,
+                vec![("xhttpSettings", obj(vec![("path", s("/xm"))]))],
+                None,
+            ),
+        )],
+        &[port],
+        tempdir::Dir::new(),
+    )
+    .await;
+    let (a, p) = target(echo);
+    for (rest, want) in [
+        ("&type=xhttp&path=%2Fxm", 1),
+        ("&type=xhttp&path=%2Fxm&mode=packet-up", 1),
+        (
+            "&type=xhttp&path=%2Fxm&extra=%7B%22xmux%22%3A%7B%22maxConcurrency%22%3A2%7D%7D",
+            4,
+        ),
+    ] {
+        let (fwd, count) = counting_forwarder(port).await;
+        let cfg = reality_link(fwd, &uuid, &keys, rest);
+        let mut streams = Vec::new();
+        for _ in 0..8 {
+            streams.push(
+                dial(&cfg, &cfg.id, VlessCommand::Tcp, a.clone(), p)
+                    .await
+                    .unwrap_or_else(|e| panic!("{rest}: {e}")),
+            );
+        }
+        let mut tasks = Vec::new();
+        for mut st in streams {
+            tasks.push(tokio::spawn(async move {
+                echo_roundtrip(&mut st, 200_000).await;
+            }));
+        }
+        for t in tasks {
+            t.await.unwrap();
+        }
+        assert_eq!(
+            count.load(std::sync::atomic::Ordering::SeqCst),
+            want,
+            "{rest}: соединений с сервером"
+        );
+    }
+}

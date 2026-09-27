@@ -35,6 +35,7 @@ use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 use crate::error::{Error, Result};
+use crate::transport::h2pool;
 use crate::transport::tcp_tls::connect_tls_by_security;
 use crate::vless::protocol::{vless_connect, Address, Command, VlessStream};
 use crate::vless::VlessConfig;
@@ -55,6 +56,8 @@ const RESPONSE_TIMEOUT: Duration = Duration::from_secs(30);
 pub struct GrpcStream {
     inner: DuplexStream,
     cancel: CancellationToken,
+    /// Место в общем HTTP/2-соединении.
+    _lease: h2pool::Lease,
 }
 
 impl Drop for GrpcStream {
@@ -99,20 +102,32 @@ impl AsyncWrite for GrpcStream {
 pub async fn connect_grpc(cfg: &VlessConfig) -> Result<GrpcStream> {
     let service_name = cfg.service_name().to_string();
 
-    // gRPC — только HTTP/2, ALPN всегда `h2`.
-    let tls = connect_tls_by_security(cfg, vec![b"h2".to_vec()]).await?;
-
-    let (send_request, connection) = h2::client::handshake(tls)
-        .await
-        .map_err(|e| Error::Protocol(format!("h2 handshake не удался: {e}")))?;
-
-    tokio::spawn(async move {
-        if let Err(e) = connection.await {
-            tracing::debug!(error = %e, "h2-соединение (gRPC) завершилось");
-        }
-    });
-
-    let mut send_request = send_request
+    // Все gRPC-потоки к одному серверу — в одном HTTP/2-соединении, как у
+    // Xray (`grpc.ClientConn` на сервер): меньше рукопожатий TLS/REALITY.
+    let c = cfg.clone();
+    let lease = h2pool::acquire(
+        &format!("grpc|{}", cfg.pool_key()),
+        &h2pool::Limits::UNLIMITED,
+        move || {
+            let c = c.clone();
+            Box::pin(async move {
+                // gRPC — только HTTP/2, ALPN всегда `h2`.
+                let tls = connect_tls_by_security(&c, vec![b"h2".to_vec()]).await?;
+                let (send, connection) = h2::client::handshake(tls)
+                    .await
+                    .map_err(|e| Error::Protocol(format!("h2 handshake не удался: {e}")))?;
+                let driver: futures_util::future::BoxFuture<'static, ()> = Box::pin(async move {
+                    if let Err(e) = connection.await {
+                        tracing::debug!(error = %e, "h2-соединение (gRPC) завершилось");
+                    }
+                });
+                Ok((send, driver))
+            })
+        },
+    )
+    .await?;
+    let mut send_request = lease
+        .request()
         .ready()
         .await
         .map_err(|e| Error::Protocol(format!("h2 SendRequest не готов: {e}")))?;
@@ -237,6 +252,7 @@ pub async fn connect_grpc(cfg: &VlessConfig) -> Result<GrpcStream> {
     Ok(GrpcStream {
         inner: user_half,
         cancel,
+        _lease: lease,
     })
 }
 

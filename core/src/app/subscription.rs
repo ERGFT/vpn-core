@@ -63,6 +63,8 @@ pub struct SubscriptionConfig {
     pub xudp: bool,
     /// Свои корневые сертификаты панели (самоподписанный сертификат).
     pub ca_file: Option<PathBuf>,
+    /// Mux.Cool для серверов подписки (кроме серверов с Vision).
+    pub mux: Option<u16>,
 }
 
 fn yes() -> bool {
@@ -374,8 +376,17 @@ pub fn parse(body: &[u8]) -> Result<Parsed> {
 /// Готовый к работе сервер подписки.
 pub type BuiltServer = Arc<dyn Outbound>;
 
-/// Собирает выходы из ссылок подписки (проверки — как у выхода vless).
-pub type ServerFactory = dyn Fn(&str, &str, bool, bool) -> Result<BuiltServer> + Send + Sync;
+/// Настройки, общие для всех серверов подписки.
+#[derive(Debug, Clone, Copy)]
+pub struct ServerOpts {
+    pub xudp: bool,
+    pub allow_insecure: bool,
+    pub mux: Option<u16>,
+}
+
+/// Собирает выходы из ссылок подписки (tag, ссылка; проверки — как у
+/// выхода vless).
+pub type ServerFactory = dyn Fn(&str, &str, ServerOpts) -> Result<BuiltServer> + Send + Sync;
 
 pub struct Subscription {
     pub cfg: SubscriptionConfig,
@@ -454,7 +465,12 @@ impl Subscription {
                 continue;
             }
             let tag = format!("{}/{name}", self.cfg.tag);
-            match (self.factory)(&tag, link, self.cfg.xudp, self.cfg.allow_insecure) {
+            let opts = ServerOpts {
+                xudp: self.cfg.xudp,
+                allow_insecure: self.cfg.allow_insecure,
+                mux: self.cfg.mux,
+            };
+            match (self.factory)(&tag, link, opts) {
                 Ok(o) => built.push(o),
                 Err(e) if e.to_string().contains("security=none") => insecure += 1,
                 Err(e) => {
