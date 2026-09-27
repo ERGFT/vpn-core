@@ -69,6 +69,10 @@ pub struct RuleConfig {
     /// Категории из geosite.dat: `category-ads-all`, `google@cn`.
     #[serde(default)]
     pub geosite: Vec<String>,
+    /// tag наборов из `[[route.rule_set]]` (sing-box `.srs`/`.json`):
+    /// их домены и адреса добавляются к условиям правила.
+    #[serde(default)]
+    pub rule_set: Vec<String>,
     /// Адреса и подсети назначения.
     #[serde(default)]
     pub ip_cidr: Vec<IpNet>,

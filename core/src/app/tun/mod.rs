@@ -32,6 +32,7 @@ use super::dns::{answer_bytes, Dns};
 use super::outbound::UDP_IDLE;
 use super::router::{Router, RouterHandle};
 use super::sniff;
+use super::sniff_quic;
 use super::{Metadata, Network};
 use crate::error::{Error, Result};
 use crate::relay;
@@ -343,10 +344,30 @@ impl TunInbound {
             port: dst.port(),
             sniffed: None,
         };
+        // QUIC (HTTP/3): домен из ClientHello в первых Initial-пакетах.
+        let mut pending = Vec::new();
+        if self.settings.sniff {
+            meta.sniffed = sniff_quic::read_and_sniff(&mut u, &mut pending).await?;
+            if pending.is_empty() {
+                return Ok(());
+            }
+            if let Some(d) = &meta.sniffed {
+                tracing::debug!(ip = %meta.target, domain = %d, "sniffing QUIC: найден домен");
+            }
+        }
         let outbound = router.route(&mut meta).await?;
+        if self.settings.sniff_override && !matches!(meta.target, Address::Domain(_)) {
+            if let Some(d) = &meta.sniffed {
+                meta.target = Address::Domain(d.clone());
+            }
+        }
         let session = outbound.udp(&meta).await?;
         let member = outbound.as_group().and_then(|g| g.current());
         let conn = router.tracker().open(&meta, outbound.tag(), member);
+        for d in pending {
+            conn.add_up(d.len() as u64);
+            session.send(meta.target.clone(), meta.port, d).await?;
+        }
         loop {
             tokio::select! {
                 r = u.read(&mut buf) => {

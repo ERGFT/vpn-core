@@ -325,6 +325,10 @@ pub struct RouteConfig {
     /// `cn-direct`, `ir-direct` — после своих правил.
     #[serde(default)]
     pub presets: Vec<String>,
+    /// Наборы правил sing-box: `[[route.rule_set]] tag, path` — для
+    /// `rule_set = [...]` в правилах маршрутизации и DNS.
+    #[serde(default)]
+    pub rule_set: Vec<super::ruleset::RuleSetConfig>,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
@@ -388,6 +392,11 @@ impl Config {
         r.geoip_file.get_or_insert_with(|| "geoip.dat".into());
         fix(&mut r.geosite_file);
         fix(&mut r.geoip_file);
+        for rs in &mut r.rule_set {
+            if rs.path.is_relative() {
+                rs.path = base.join(&rs.path);
+            }
+        }
         if let Some(d) = &mut cfg.dns {
             for s in &mut d.servers {
                 fix(&mut s.ca_file);

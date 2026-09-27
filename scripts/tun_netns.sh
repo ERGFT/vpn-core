@@ -16,7 +16,9 @@
 #   7. после kill -9 сеть работает (таблица TUN пуста);
 #   8. route_exclude — мимо TUN;
 #   9. strict_route (kill switch): после kill -9 сеть закрыта, после
-#      --tun-cleanup — открыта.
+#      --tun-cleanup — открыта;
+#  10. sniffing QUIC: настоящие Initial-пакеты Chromium к IP — домен
+#      найден, правило по домену отправляет их direct.
 #
 # Нужно: root, iproute2, python3, Xray (XRAY_BIN).
 set -euo pipefail
@@ -137,6 +139,7 @@ type = "tun"
 tag = "tun"
 interface_name = "rtun0"
 route_exclude = ["10.99.0.3/32"]
+sniff = true
 
 [[outbounds]]
 tag = "proxy"
@@ -149,6 +152,11 @@ type = "direct"
 
 [[route.rules]]
 port = [$DIRECT_ECHO]
+outbound = "direct"
+
+[[route.rules]]                # QUIC к www.example.test — найден по ClientHello
+domain = ["www.example.test"]
+network = "udp"
 outbound = "direct"
 
 [route]
@@ -182,9 +190,11 @@ start_client() {
 }
 start_client
 
-nsx python3 - "$HOST_IP" "$ECHO" "$DIRECT_ECHO" "$UDPE" "$EXCL_ECHO" <<'PY' || { cat "$TMP/client.log"; exit 1; }
+QUIC_HEX="$ROOT/core/src/app/testdata/chromium140_quic_initial.hex"
+nsx python3 - "$HOST_IP" "$ECHO" "$DIRECT_ECHO" "$UDPE" "$EXCL_ECHO" "$QUIC_HEX" <<'PY' || { cat "$TMP/client.log"; exit 1; }
 import os, socket, struct, sys
 host, echo, direct_echo, udpe, excl = sys.argv[1], *map(int, sys.argv[2:6])
+quic = [bytes.fromhex(l.strip()) for l in open(sys.argv[6]) if l.strip()]
 def tcp(addr, port, data=b"hello over tun"):
     s = socket.create_connection((addr, port), timeout=15)
     f = s.makefile("rb"); peer = f.readline().decode().split()[1]
@@ -226,6 +236,14 @@ for i in range(5):
     b, _ = u.recvfrom(4096)
     assert b.startswith(f"PEER {host} ".encode()) and b.endswith(b"udp-%d" % i), b
 print("OK: UDP через TUN → XUDP (Xray)")
+
+q = socket.socket(socket.AF_INET, socket.SOCK_DGRAM); q.settimeout(15)
+for d in quic[:2]:
+    q.sendto(d, (host, udpe))
+for d in quic[:2]:
+    b, _ = q.recvfrom(4096)
+    assert b.startswith(b"PEER 10.99.0.2 "), f"QUIC к www.example.test должен идти direct: {b[:40]}"
+print("OK: sniffing QUIC — домен из ClientHello Chromium, правило direct")
 
 def dns(name, server="8.8.8.8"):
     q = b"\xab\xcd\x01\x00\x00\x01\x00\x00\x00\x00\x00\x00" + b"".join(bytes([len(p)]) + p.encode() for p in name.split(".")) + b"\x00\x00\x01\x00\x01"

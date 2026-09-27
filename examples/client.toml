@@ -145,9 +145,19 @@ outbound = "direct"
 # впереди — только поддомены), domain_keyword, domain_regex, ip_cidr,
 # port (443 или "1000-2000"), network ("tcp"/"udp"), inbound (tag входов).
 
+# Наборы правил sing-box (.srs или .json), например geosite-category-ru.srs
+# из github.com/SagerNet/sing-geosite (ветка rule-set):
+# [[route.rule_set]]
+# tag = "ru-sites"
+# path = "geosite-category-ru.srs"
+#
+# [[route.rules]]
+# rule_set = ["ru-sites"]      # можно и в [[dns.rules]]
+# outbound = "direct"
+
 [route]
-final = "proxy"
-# presets = ["block-ads", "private-direct"]   # готовые наборы правил — после своих                # всё остальное — через сервер
+final = "proxy"                # всё остальное — через сервер
+# presets = ["block-ads", "private-direct"]   # готовые наборы правил — после своих
 # domain_strategy = "ip_if_non_match"   # нет правила для имени — разрешить его
 #                                        # через [dns] и проверить правила по IP
 # geosite_file = "geosite.dat"

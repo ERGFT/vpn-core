@@ -21,6 +21,8 @@
 #   9. сверка эталона Chrome-отпечатка с utls    (если есть сеть)
 #  10. сборка .exe под Windows и проверка под Wine (если есть mingw-w64;
 #      тесты и smoke — если есть wine64)
+#  11. сверка разбора наборов .srs с sing-box      (если есть sing-box:
+#      $SING_BOX_BIN или target/sing-box/sing-box — scripts/fetch_sing_box.sh)
 #
 # Код возврата ненулевой, если упал любой обязательный шаг или любой
 # необязательный, который был запущен.
@@ -87,6 +89,15 @@ if [[ $QUICK -eq 0 ]]; then
         skip "интероп с Xray-core" "нет бинарника Xray ($XRAY)"
         skip "сквозной smoke против Xray-core" "нет бинарника Xray"
         skip "TUN в netns" "нет бинарника Xray"
+    fi
+
+    SB="${SING_BOX_BIN:-$ROOT/target/sing-box/sing-box}"
+    if [[ -x "$SB" ]]; then
+        step "наборы правил .srs против sing-box" env SING_BOX_BIN="$SB" \
+            SING_BOX_SRS_SAMPLES="$ROOT/target/sing-box/samples" \
+            cargo test -q -p reality-core --test app_ruleset -- --nocapture
+    else
+        skip "наборы правил .srs против sing-box" "нет sing-box ($SB) — scripts/fetch_sing_box.sh"
     fi
 
     if curl -fsS --max-time 10 -o /dev/null \

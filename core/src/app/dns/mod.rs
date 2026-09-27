@@ -95,6 +95,9 @@ pub struct DnsRuleConfig {
     pub domain_regex: Vec<String>,
     #[serde(default)]
     pub geosite: Vec<String>,
+    /// tag наборов из `[[route.rule_set]]` (берутся только домены).
+    #[serde(default)]
+    pub rule_set: Vec<String>,
     /// tag сервера.
     pub server: String,
 }

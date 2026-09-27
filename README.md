@@ -28,8 +28,8 @@
 | Файл настроек (`--config`, TOML): несколько входов и выходов (`vless`, `direct`, `block`) | ✅ |
 | Группы серверов `selector`, `urltest`, `fallback` (проверка по HTTP, переход к следующему при отказе); подписки: base64/текст/JSON sing-box/YAML Clash, кеш на диске | ✅ проверено с панелью на HTTPS и сервером Xray |
 | Входы SOCKS5, HTTP-прокси (CONNECT и обычные запросы) и `mixed` — оба на одном порту | ✅ |
-| Маршрутизация: домен (точно, суффикс, подстрока, regex), IP/подсеть, частные адреса, порт, сеть, вход, базы `geosite.dat`/`geoip.dat` (v2fly) | ✅ наборы правил sing-box (`.srs`) — нет |
-| Sniffing: домен по TLS SNI и HTTP Host, когда приложение прислало IP | ✅ QUIC — нет |
+| Маршрутизация: домен (точно, суффикс, подстрока, regex), IP/подсеть, частные адреса, порт, сеть, вход, базы `geosite.dat`/`geoip.dat` (v2fly), наборы правил sing-box (`.srs` и `.json`) | ✅ разбор `.srs` сверен с `sing-box rule-set decompile` на настоящих наборах SagerNet и MetaCubeX; в наборах — только домены и адреса |
+| Sniffing: домен по TLS SNI и HTTP Host, когда приложение прислало IP; в TUN — и по QUIC (HTTP/3, v1 и v2) | ✅ QUIC проверен на векторах RFC 9001/9369 и настоящих пакетах Chromium (ClientHello на два пакета, перемешанные CRYPTO-кадры) |
 | Системный прокси Windows (`--system-proxy`) | ✅ проверен под Wine |
 | TUN — весь трафик компьютера (как VPN): свой TCP/IP-стек, `auto_route`, перехват DNS, fake-IP, `route_exclude`, kill switch `strict_route` | ✅ Linux — проверен против Xray в изолированном netns (TCP, UDP, DNS, fake-IP, ~85 МиБ/с); 🟡 Windows (Wintun) — собирается, на настоящей Windows не запускался; kill switch — только Linux |
 | Свой DNS: серверы UDP, TCP, DoT, DoH, системный; выбор сервера по доменам и geosite; кеш; вход DNS-сервера; перехват DNS (выход `dns`); fake-IP; `domain_strategy = "ip_if_non_match"` | ✅ DoH/DoT проверены на своих серверах, UDP-DNS через Xray; DNS over QUIC — нет |
@@ -162,6 +162,28 @@ final = "proxy"            # куда идёт всё, что не попало 
 ищутся рядом с файлом настроек; из них читаются только нужные категории
 (обе базы целиком — ~0,2 с).
 
+Наборы правил sing-box — `.srs` (например, из
+[SagerNet/sing-geosite](https://github.com/SagerNet/sing-geosite/tree/rule-set),
+[sing-geoip](https://github.com/SagerNet/sing-geoip/tree/rule-set) или
+MetaCubeX/meta-rules-dat) и исходный `.json`:
+
+```toml
+[[route.rule_set]]
+tag = "ru"
+path = "geosite-category-ru.srs"   # формат — по расширению; format = "binary"/"source"
+
+[[route.rules]]
+rule_set = ["ru"]                  # домены и адреса набора — в условия правила
+outbound = "direct"
+```
+
+`rule_set` можно указывать и в `[[dns.rules]]` (берутся домены).
+Загружаются только наборы, на которые ссылаются правила, и заново — при
+перечитывании настроек. Наборы с другими условиями (порт, процесс,
+логические `and`/`or`, `invert`) отвергаются с ошибкой: упростить их молча
+значило бы маршрутизировать не так, как задумано. Скачивать наборы по URL
+клиент сам не умеет — положите файл рядом с настройками.
+
 Ключи командной строки — сокращение для одного входа `mixed` и одного
 выхода `proxy`. Опечатка в имени поля — ошибка при запуске. Выход
 `direct` не пускает клиентов из сети к службам этого компьютера
@@ -269,10 +291,15 @@ curl -H "$T" -X POST http://127.0.0.1:9090/reload
 ```toml
 [[inbounds]]
 type = "tun"
-sniff = true
+sniff = true                     # домен по SNI/Host и по QUIC (HTTP/3)
 # strict_route = true            # kill switch (Linux)
 # route_exclude = ["192.168.0.0/16"]
 ```
+
+- `sniff = true` в TUN находит домен и у QUIC: из первых Initial-пакетов
+  (их ключи выводятся из открытого Connection ID) собирается ClientHello —
+  правила по доменам работают и для HTTP/3. Не QUIC — без задержки; QUIC
+  ждёт второй пакет не дольше 300 мс.
 
 - Нужны права администратора (Windows) или root (Linux). На Windows
   рядом с `reality-client.exe` должен лежать `wintun.dll` (из
@@ -428,10 +455,11 @@ scripts/ci.sh --quick  # только fmt, clippy, тесты
 
 | Скрипт | Что проверяет |
 |---|---|
-| `cargo test --workspace` | 195 тестов (134 unit + 61 интеграционный), всё на loopback; с `GEO_DIR=…` и `--ignored` — ещё проверка на настоящих базах geosite/geoip |
+| `cargo test --workspace` | 208 тестов (144 unit + 64 интеграционных), всё на loopback; с `GEO_DIR=…` и `--ignored` — ещё проверка на настоящих базах geosite/geoip |
+| `scripts/fetch_sing_box.sh` + `ci.sh` | разбор `.srs` против настоящего sing-box: наборы версий 1–3, собранные `sing-box rule-set compile` (3000+ доменов, IDN, суффиксы, IPv4/IPv6-диапазоны), и 5 настоящих наборов geosite/geoip — совпадение с `rule-set decompile` запись в запись |
 | `scripts/interop_xray.sh` | 21 тест против **настоящего Xray-core**: REALITY (в т.ч. с сайтом без ML-KEM), Vision (padding и переход на прямую передачу), ML-DSA-65 (и отказ при чужом ключе), WebSocket и httpupgrade без TLS и с TLS + `--ca`, gRPC поверх REALITY, xhttp во всех режимах (HTTP/1.1, h2, поверх REALITY; отказы 404/400 с понятной ошибкой), UDP и XUDP (Full Cone), отказ Vision-аккаунта клиенту без flow, Mux.Cool (20 соединений — 3 потока), общие HTTP/2-соединения gRPC и xhttp (`xmux`), раздробленный ClientHello (`fragment`), отпечатки `fp=firefox/safari/…` |
 | `scripts/smoke_xray.sh` | собранный бинарник как у пользователя против Xray-core: SOCKS5 с паролем → REALITY → Vision → VLESS, 1 МиБ внутреннего TLS туда-обратно с переходом на прямую передачу, 20 UDP-датаграмм через XUDP; файл настроек: `--check`, опечатки, вход `mixed` (SOCKS5 и HTTP CONNECT), правило `block`, DNS-вход с запросом через Xray |
-| `scripts/tun_netns.sh` | TUN с `auto_route` в изолированном сетевом пространстве (root) против Xray-core: TCP (32 МиБ туда-обратно), `direct` без петли, `route_exclude`, UDP/XUDP, перехват DNS к 8.8.8.8, fake-IP, возврат маршрутов по Ctrl+C, сеть после `kill -9`, kill switch `strict_route` и `--tun-cleanup` |
+| `scripts/tun_netns.sh` | TUN с `auto_route` в изолированном сетевом пространстве (root) против Xray-core: TCP (32 МиБ туда-обратно), `direct` без петли, `route_exclude`, UDP/XUDP, sniffing QUIC на пакетах Chromium, перехват DNS к 8.8.8.8, fake-IP, возврат маршрутов по Ctrl+C, сеть после `kill -9`, kill switch `strict_route` и `--tun-cleanup` |
 | `scripts/cross_windows.sh` | `.exe` под Windows (mingw-w64) + все тесты и smoke против Xray-core под Wine, `--system-proxy`: запись в реестр и возврат по Ctrl+C |
 | `scripts/interop_go_reality.sh` | 4 теста против REALITY-сервера на Go-библиотеке `XTLS/REALITY` (нужен Go ≥ 1.27) |
 | `scripts/smoke_e2e.sh` | бинарник против Go-стенда; несовместимая ссылка отклоняется при старте |
@@ -450,8 +478,9 @@ bin/client/            reality-client: CLI (ключи или --config), sysprox
 core/src/
   app/                 приложение: входы -> маршрутизатор -> выходы;
                        config.rs (TOML), proxy_in.rs + http_in.rs (входы
-                       socks/http/mixed), sniff.rs, router.rs + rules.rs +
-                       geo.rs (правила, geosite/geoip), outbound.rs
+                       socks/http/mixed), sniff.rs + sniff_quic.rs, router.rs + rules.rs +
+                       geo.rs (правила, geosite/geoip), ruleset.rs
+                       (наборы sing-box .srs/.json), outbound.rs
                        (direct, block, dns), vless_out.rs, access.rs,
                        dns/ (upstream.rs: UDP/TCP/DoT/DoH, cache.rs,
                        fakeip.rs), dns_in.rs (вход DNS), tun/ (вход TUN

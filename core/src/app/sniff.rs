@@ -74,7 +74,7 @@ pub fn tls_sni(b: &[u8]) -> Sniff {
 }
 
 /// `Some(None)` — ClientHello без SNI; `None` — не разобрался.
-fn parse_client_hello(hs: &[u8]) -> Option<Option<String>> {
+pub(crate) fn parse_client_hello(hs: &[u8]) -> Option<Option<String>> {
     if *hs.first()? != 1 {
         return None;
     }
@@ -209,7 +209,7 @@ pub async fn read_and_sniff<R: AsyncRead + Unpin>(
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     /// ClientHello с одним расширением SNI.

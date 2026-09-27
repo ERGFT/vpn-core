@@ -29,7 +29,9 @@ pub mod outbound;
 pub mod proxy_in;
 pub mod router;
 pub mod rules;
+pub mod ruleset;
 pub mod sniff;
+pub mod sniff_quic;
 pub mod stats;
 pub mod subscription;
 pub mod trojan_out;
@@ -761,6 +763,9 @@ fn build_core(
     check_group_cycles(&cfg.outbounds)?;
     let mut route = cfg.route.clone();
     route.rules.extend(preset_rules(cfg)?);
+    let mut dns_cfg = cfg.dns.clone();
+    ruleset::expand(&mut route, dns_cfg.as_mut())?;
+    let cfg_dns = dns_cfg.as_ref();
 
     // Выходы `direct` и `dns` получают DNS-модуль позже: он сам ходит
     // к серверам через выходы.
@@ -875,7 +880,7 @@ fn build_core(
     let groups: Vec<Arc<Group>> = groups.into_iter().map(|(_, g)| g).collect();
 
     let mut site_codes: Vec<String> = route.rules.iter().flat_map(|r| r.geosite.clone()).collect();
-    if let Some(d) = &cfg.dns {
+    if let Some(d) = cfg_dns {
         site_codes.extend(d.rules.iter().flat_map(|r| r.geosite.clone()));
     }
     let geo = rules::GeoFiles::load(
@@ -891,7 +896,7 @@ fn build_core(
             .unwrap_or(std::path::Path::new("geoip.dat")),
     )?;
 
-    let dns = match &cfg.dns {
+    let dns = match cfg_dns {
         Some(dc) => {
             let default_detour = route
                 .final_
