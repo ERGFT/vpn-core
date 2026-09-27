@@ -90,12 +90,24 @@ if ($others) { Fail "в папку есть доступ у: $($others.IdentityR
 Write-Host 'OK: папка службы закрыта от пользователей'
 
 $log = Join-Path $dir 'reality-client.log'
-$up = $false
-for ($i = 0; $i -lt 60; $i++) {
-    if ((Test-Path $log) -and ((Get-Content $log -Raw -Encoding utf8) -match 'весь трафик направлен в TUN')) { $up = $true; break }
-    Start-Sleep -Milliseconds 500
+function Wait-Tun {
+    for ($i = 0; $i -lt 60; $i++) {
+        if ((Test-Path $log) -and ((Get-Content $log -Raw -Encoding utf8) -match 'весь трафик направлен в TUN')) { return $true }
+        Start-Sleep -Milliseconds 500
+    }
+    return $false
 }
-if (-not $up) { Fail 'служба не подняла TUN за 30 с' }
+if (-not (Wait-Tun)) { Fail 'служба не подняла TUN за 30 с' }
+
+# Подробный журнал для разбора: переменная окружения службы (читается при
+# запуске) и перезапуск; заодно проверяется штатная остановка службы.
+Stop-Service RealityClient
+Remove-Item $log -ErrorAction SilentlyContinue
+Set-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Services\RealityClient' -Name Environment `
+    -Type MultiString -Value @('RUST_LOG=debug,netstack_smoltcp=info,smoltcp=info')
+Start-Service RealityClient
+if (-not (Wait-Tun)) { Fail 'служба после перезапуска не подняла TUN за 30 с' }
+Write-Host 'OK: служба остановлена и запущена снова'
 Get-NetAdapter | Format-Table Name, InterfaceDescription, Status -AutoSize | Out-Host
 
 $ip = (Resolve-DnsName $site -Type A | Where-Object { $_.IPAddress } | Select-Object -First 1).IPAddress

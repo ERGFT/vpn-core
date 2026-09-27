@@ -286,6 +286,17 @@ fn runtime() -> Result<tokio::runtime::Runtime> {
         .build()?)
 }
 
+/// Выполнить `f` в новом рантайме и остановить его не дольше чем за 2 с.
+/// Обычное уничтожение рантайма ждёт все `spawn_blocking` (системный
+/// резолвер и т.п.) сколько угодно — служба Windows тогда не
+/// останавливалась за отведённое диспетчером время.
+fn block_on<F: std::future::Future>(f: F) -> Result<F::Output> {
+    let rt = runtime()?;
+    let r = rt.block_on(f);
+    rt.shutdown_timeout(std::time::Duration::from_secs(2));
+    Ok(r)
+}
+
 fn main() -> Result<()> {
     let args = Args::parse();
     init_logging(args.log_file.as_deref())?;
@@ -311,9 +322,9 @@ fn main() -> Result<()> {
         }
         if args.service {
             return winservice::run_as_service(move |stop| {
-                runtime()?.block_on(run(args, async {
+                block_on(run(args, async {
                     let _ = stop.await;
-                }))
+                }))?
             });
         }
     }
@@ -329,7 +340,7 @@ fn main() -> Result<()> {
              (examples/reality-client.service)"
         );
     }
-    runtime()?.block_on(run(args, shutdown_signal()))
+    block_on(run(args, shutdown_signal()))?
 }
 
 async fn run(args: Args, stop: impl std::future::Future<Output = ()>) -> Result<()> {
