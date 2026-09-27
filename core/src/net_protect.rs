@@ -109,7 +109,15 @@ mod windows {
             match v6 {
                 // Для IPv6 индекс — в обычном порядке байт.
                 Some(i) => (IPPROTO_IPV6, IPV6_UNICAST_IF, i),
-                None => return Ok(()),
+                // У компьютера нет выхода в IPv6: сокет без привязки ушёл
+                // бы по маршруту через TUN обратно в клиент — петля,
+                // съедающая все соединения. Лучше сразу «сеть недоступна».
+                None => {
+                    return Err(io::Error::new(
+                        io::ErrorKind::NetworkUnreachable,
+                        "нет IPv6 мимо TUN (у физического интерфейса нет IPv6)",
+                    ))
+                }
             }
         } else {
             // Для IPv4 — в сетевом порядке байт (так требует Windows).

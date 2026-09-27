@@ -46,8 +46,8 @@ works and what does not is listed honestly below.
 | Routing: domain (exact, suffix, keyword, regex), IP/subnet, private addresses, port, network, inbound, `geosite.dat`/`geoip.dat` databases (v2fly), sing-box rule sets (`.srs` and `.json`) | ✅ `.srs` parsing checked against `sing-box rule-set decompile` on real SagerNet and MetaCubeX sets; only domains and addresses in rule sets |
 | Sniffing: domain from TLS SNI and HTTP Host when the app sent an IP; in TUN — also from QUIC (HTTP/3, v1 and v2) | ✅ QUIC tested on RFC 9001/9369 vectors and real Chromium packets (ClientHello split across two packets, shuffled CRYPTO frames) |
 | Windows system proxy (`--system-proxy`) | ✅ tested under Wine |
-| Autostart: Windows service (`--service-install`, config in a locked-down ProgramData folder), start at logon (`--autostart-install`), systemd on Linux | ✅ service and autostart tested under Wine; ProgramData folder permissions — on real Windows only |
-| TUN — all of the computer's traffic (like a VPN): own TCP/IP stack, `auto_route`, DNS hijacking, fake-IP, `route_exclude`, `strict_route` kill switch | ✅ Linux — tested against Xray in an isolated netns (TCP, UDP, DNS, fake-IP, ~85 MiB/s); 🟡 Windows (Wintun) — builds, not run on real Windows; kill switch — Linux only |
+| Autostart: Windows service (`--service-install`, config in a locked-down ProgramData folder), start at logon (`--autostart-install`), systemd on Linux | ✅ service — on real Windows (CI: install, ProgramData folder permissions, stop and start, removal); autostart at logon — under Wine |
+| TUN — all of the computer's traffic (like a VPN): own TCP/IP stack, `auto_route`, DNS hijacking, fake-IP, `route_exclude`, `strict_route` kill switch | ✅ Linux — tested against Xray in an isolated netns (TCP, UDP, DNS, fake-IP, ~200 MiB/s, resilient to packet loss); ✅ Windows (Wintun) — on real Windows (CI: service, `auto_route`, HTTPS through TUN); kill switch — Linux only |
 | Own DNS: UDP, TCP, DoT, DoH, DNS over QUIC (`quic://`) and system servers; server selection by domain and geosite; cache; DNS server inbound; DNS hijacking (`dns` outbound); fake-IP; `domain_strategy = "ip_if_non_match"` | ✅ DoH/DoT/DoQ tested on own servers, UDP DNS and DoQ — through Xray (XUDP) |
 | Mux.Cool for TCP (`mux = 8` on an outbound or subscription; not together with Vision) | ✅ tested against Xray-core |
 | Shared HTTP/2 connections: gRPC — all streams in one connection (as in Xray), xhttp — `xmux` (Xray defaults: 16–32 sessions per connection; for both HTTP/2 and HTTP/3) | ✅ tested against Xray-core (connection count) |
@@ -56,7 +56,7 @@ works and what does not is listed honestly below.
 | `trojan` outbound (`trojan://` link, TLS or REALITY, all VLESS transports, TCP and UDP); Trojan servers in subscriptions | ✅ tested against Xray-core (tcp, ws, REALITY, UDP) |
 | Transport `kcp` | ❌ not supported (see below why); `quic`/`h2` have been removed from Xray-core itself — the error suggests `xhttp` |
 | Linux | ✅ builds and tested |
-| Windows | 🟡 the `.exe` is cross-compiled and passes all tests and the smoke test against Xray-core under Wine ([`docs/WINDOWS.en.md`](docs/WINDOWS.en.md)); not run on real Windows |
+| Windows | ✅ CI on real Windows: all tests, the `.exe` build, the service and TUN with real traffic; smoke test against Xray-core — under Wine ([`docs/WINDOWS.en.md`](docs/WINDOWS.en.md)) |
 
 There has been no third-party crypto review of the REALITY implementation
 (details — `PLAN.md`, Stage 5).
@@ -552,7 +552,8 @@ core/src/
                        (direct, block, dns), vless_out.rs, access.rs,
                        dns/ (upstream.rs: UDP/TCP/DoT/DoH/DoQ, cache.rs,
                        fakeip.rs), dns_in.rs (DNS inbound), tun/ (TUN inbound
-                       on ipstack + tun-rs, route.rs: auto_route)
+                       on smoltcp + tun-rs, udp.rs: UDP flows,
+                       route.rs: auto_route)
   net_protect.rs       marking outgoing sockets (bypassing TUN)
   vless/               vless:// parsing (uri.rs), VLESS protocol (protocol.rs),
                        XTLS Vision (vision.rs), UDP packets (udp.rs), XUDP (xudp.rs)
@@ -631,7 +632,7 @@ cargo run -p bench --bin memwatch -- --pid <PID> --duration-secs 30 --csv rss.cs
   TLS 1.2 could pick one) and neither is ALPS (if a BoringSSL-based CDN
   negotiates it, the client must answer, and rustls cannot). With REALITY the
   match is exact.
-- Not run on real Windows — only under Wine.
+- On real Windows (CI) the tests, the service and TUN are checked; the system proxy, autostart at logon and Xray-core interop — only under Wine so far.
 - A third-party crypto review (Stage 5) and the decision to publish (Stage 8)
   are up to people: `docs/stage5-crypto-review-and-interop.en.md`.
 

@@ -202,6 +202,14 @@ fn windows(ifname: &str, if_index: Option<u32>, v6: bool, exclude: &[IpNet]) -> 
         v4: phys4,
         v6: phys6,
     }));
+    // Без IPv6 у физического интерфейса IPv6 в TUN не направляется: иначе
+    // система считала бы IPv6 рабочим, программы шли бы на AAAA-адреса, а
+    // выход `direct` их никуда не донёс бы. Без маршрута программа сразу
+    // получает «сеть недоступна» и переходит на IPv4.
+    let v6 = v6 && phys6.is_some();
+    if !v6 {
+        tracing::info!("tun: у компьютера нет IPv6 — IPv6 в TUN не направляется");
+    }
     let mut prefixes = vec![("ipv4", "0.0.0.0/1"), ("ipv4", "128.0.0.0/1")];
     if v6 {
         prefixes.push(("ipv6", "::/1"));

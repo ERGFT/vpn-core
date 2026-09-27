@@ -47,8 +47,8 @@
 | Маршрутизация: домен (точно, суффикс, подстрока, regex), IP/подсеть, частные адреса, порт, сеть, вход, базы `geosite.dat`/`geoip.dat` (v2fly), наборы правил sing-box (`.srs` и `.json`) | ✅ разбор `.srs` сверен с `sing-box rule-set decompile` на настоящих наборах SagerNet и MetaCubeX; в наборах — только домены и адреса |
 | Sniffing: домен по TLS SNI и HTTP Host, когда приложение прислало IP; в TUN — и по QUIC (HTTP/3, v1 и v2) | ✅ QUIC проверен на векторах RFC 9001/9369 и настоящих пакетах Chromium (ClientHello на два пакета, перемешанные CRYPTO-кадры) |
 | Системный прокси Windows (`--system-proxy`) | ✅ проверен под Wine |
-| Автозапуск: служба Windows (`--service-install`, настройки в закрытой папке ProgramData), запуск при входе (`--autostart-install`), systemd на Linux | ✅ служба и автозапуск проверены под Wine; права папки ProgramData — только на настоящей Windows |
-| TUN — весь трафик компьютера (как VPN): свой TCP/IP-стек, `auto_route`, перехват DNS, fake-IP, `route_exclude`, kill switch `strict_route` | ✅ Linux — проверен против Xray в изолированном netns (TCP, UDP, DNS, fake-IP, ~85 МиБ/с); 🟡 Windows (Wintun) — собирается, на настоящей Windows не запускался; kill switch — только Linux |
+| Автозапуск: служба Windows (`--service-install`, настройки в закрытой папке ProgramData), запуск при входе (`--autostart-install`), systemd на Linux | ✅ служба — на настоящей Windows (CI: установка, права папки ProgramData, остановка и запуск, удаление); автозапуск при входе — под Wine |
+| TUN — весь трафик компьютера (как VPN): свой TCP/IP-стек, `auto_route`, перехват DNS, fake-IP, `route_exclude`, kill switch `strict_route` | ✅ Linux — проверен против Xray в изолированном netns (TCP, UDP, DNS, fake-IP, ~200 МиБ/с, устойчив к потерям пакетов); ✅ Windows (Wintun) — на настоящей Windows (CI: служба, `auto_route`, HTTPS через TUN); kill switch — только Linux |
 | Свой DNS: серверы UDP, TCP, DoT, DoH, DNS over QUIC (`quic://`), системный; выбор сервера по доменам и geosite; кеш; вход DNS-сервера; перехват DNS (выход `dns`); fake-IP; `domain_strategy = "ip_if_non_match"` | ✅ DoH/DoT/DoQ проверены на своих серверах, UDP-DNS и DoQ — через Xray (XUDP) |
 | Mux.Cool для TCP (`mux = 8` у выхода или подписки; не вместе с Vision) | ✅ проверен против Xray-core |
 | Общие HTTP/2-соединения: gRPC — все потоки в одном соединении (как у Xray), xhttp — `xmux` (умолчания Xray: 16–32 сессии на соединение; и для HTTP/2, и для HTTP/3) | ✅ проверено против Xray-core (счёт соединений) |
@@ -57,7 +57,7 @@
 | Выход `trojan` (ссылка `trojan://`, TLS или REALITY, все транспорты VLESS, TCP и UDP); серверы Trojan в подписках | ✅ проверен против Xray-core (tcp, ws, REALITY, UDP) |
 | Транспорт `kcp` | ❌ не поддерживается (почему — ниже); `quic`/`h2` удалены из самого Xray-core — ошибка подсказывает `xhttp` |
 | Linux | ✅ собирается и проверен |
-| Windows | 🟡 `.exe` собирается кросс-компиляцией и проходит все тесты и smoke против Xray-core под Wine ([`docs/WINDOWS.md`](docs/WINDOWS.md)); на настоящей Windows не запускался |
+| Windows | ✅ CI на настоящей Windows: все тесты, сборка `.exe`, служба и TUN с настоящим трафиком; smoke против Xray-core — под Wine ([`docs/WINDOWS.md`](docs/WINDOWS.md)) |
 
 Стороннее крипто-ревью реализации REALITY не проводилось (подробности —
 `PLAN.md`, Этап 5).
@@ -552,7 +552,8 @@ core/src/
                        (direct, block, dns), vless_out.rs, access.rs,
                        dns/ (upstream.rs: UDP/TCP/DoT/DoH/DoQ, cache.rs,
                        fakeip.rs), dns_in.rs (вход DNS), tun/ (вход TUN
-                       на ipstack + tun-rs, route.rs: auto_route)
+                       на smoltcp + tun-rs, udp.rs: потоки UDP,
+                       route.rs: auto_route)
   net_protect.rs       метка исходящих сокетов (мимо TUN)
   vless/               разбор vless:// (uri.rs), протокол VLESS (protocol.rs),
                        XTLS Vision (vision.rs), UDP-пакеты (udp.rs), XUDP (xudp.rs)
@@ -630,7 +631,7 @@ cargo run -p bench --bin memwatch -- --pid <PID> --duration-secs 30 --csv rss.cs
   не заявляются 6 legacy cipher suite'ов (сервер с откатом на TLS 1.2 мог бы
   выбрать такой) и ALPS (если CDN на BoringSSL его согласует, клиент обязан
   ответить, а rustls этого не умеет). В REALITY совпадение полное.
-- Под настоящей Windows не запускалось — только под Wine.
+- На настоящей Windows (CI) проверены тесты, служба и TUN; системный прокси, автозапуск при входе и интероп с Xray-core — пока только под Wine.
 - Стороннее крипто-ревью (Этап 5) и решение о публикации (Этап 8) —
   за людьми: `docs/stage5-crypto-review-and-interop.md`.
 

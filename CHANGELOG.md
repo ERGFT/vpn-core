@@ -35,6 +35,9 @@
 - Лицензия GPL-3.0-or-later (раньше — MIT); SPDX-метки в исходниках;
   лицензии зависимостей в каждом релизе.
 - CI на Linux и настоящей Windows; интероп-тесты против Xray-core.
+- TUN: стек smoltcp вместо ipstack — соединения не встают после потери
+  пакетов, ~200 МиБ/с; на Windows TUN и служба проверены на настоящей
+  машине, без IPv6 у компьютера нет петли через TUN.
 - Документация на русском и английском; CONTRIBUTING, SECURITY,
   CODE_OF_CONDUCT, SUPPORT, шаблоны issue и PR.
 
@@ -78,6 +81,9 @@ It will include:
 - License GPL-3.0-or-later (previously MIT); SPDX headers in sources;
   dependency licenses shipped with every release.
 - CI on Linux and real Windows; interop tests against Xray-core.
+- TUN: smoltcp stack instead of ipstack — connections no longer stall after
+  packet loss, ~200 MiB/s; on Windows TUN and the service are checked on a
+  real machine, no loop through TUN without IPv6 on the computer.
 - Documentation in Russian and English; CONTRIBUTING, SECURITY,
   CODE_OF_CONDUCT, SUPPORT, issue and PR templates.
 

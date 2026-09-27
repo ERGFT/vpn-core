@@ -552,7 +552,7 @@ mod tests {
         let ch = client_hello("a.example", 1500);
         let p1 = protect(&dcid, 0, &crypto(0, &ch[..800]));
         let p2 = protect(&dcid, 1, &crypto(800, &ch[800..]));
-        // Датаграммы по одной за чтение, как у потока ipstack.
+        // Датаграммы по одной за чтение, как у потока TUN (`tun::udp::UdpFlow`).
         let (mut a, mut b) = tokio::io::duplex(1 << 16);
         let mut pending = Vec::new();
         let (p1c, p2c) = (p1.clone(), p2.clone());
