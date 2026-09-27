@@ -46,6 +46,7 @@ aws-lc-rs.workspace = true
 brotli-decompressor.workspace = true
 regex.workspace = true
 hickory-proto.workspace = true
+yaml_serde.workspace = true
 tun-rs.workspace = true
 ipstack.workspace = true
 socket2.workspace = true

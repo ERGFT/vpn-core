@@ -181,12 +181,19 @@ fn config_from_args(args: &Args) -> Result<Config> {
             ca_file: args.ca.clone(),
             xudp: !args.no_xudp,
             allow_insecure: args.allow_insecure,
+            outbounds: Vec::new(),
+            subscriptions: Vec::new(),
+            url: None,
+            interval: None,
+            tolerance: None,
+            default: None,
         }],
         route: RouteConfig {
             final_: Some("proxy".into()),
             ..Default::default()
         },
         dns: None,
+        subscriptions: Vec::new(),
     })
 }
 

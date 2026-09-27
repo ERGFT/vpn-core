@@ -11,19 +11,25 @@
 //! - `access` — кто может пользоваться входом (адреса, подбор пароля);
 //! - `dns`, `dns_in` — свой DNS (DoH/DoT/UDP/TCP, кеш, fake-IP) и вход
 //!   DNS-сервера;
-//! - `tun` — вход TUN (весь трафик компьютера) и `auto_route`.
+//! - `tun` — вход TUN (весь трафик компьютера) и `auto_route`;
+//! - `group` — группы серверов (selector, urltest, fallback);
+//! - `subscription` — серверы с панели по подписке;
+//! - `http_client` — HTTP-запросы через выход (проверки, подписки).
 
 pub mod access;
 pub mod config;
 pub mod dns;
 pub mod dns_in;
 pub mod geo;
+pub mod group;
+pub mod http_client;
 pub mod http_in;
 pub mod outbound;
 pub mod proxy_in;
 pub mod router;
 pub mod rules;
 pub mod sniff;
+pub mod subscription;
 pub mod tun;
 pub mod vless_out;
 
@@ -39,9 +45,11 @@ use crate::vless::{Address, Security, VlessConfig};
 use config::{Config, InboundKind, OutboundKind};
 use dns::{Dns, DnsSlot};
 use dns_in::DnsInbound;
+use group::{Group, GroupSettings, Strategy};
 use outbound::{BlockOutbound, DirectOutbound, DnsOutbound, Outbound};
 use proxy_in::ProxyInbound;
 use router::Router;
+use subscription::Subscription;
 use vless_out::VlessOutbound;
 
 /// Минимальная длина пароля входа, если он открыт в сеть.
@@ -91,6 +99,9 @@ pub struct App {
     /// Имена серверов (VLESS, DNS), которые надо разрешить до включения
     /// маршрутов TUN.
     pinned_hosts: Vec<(String, u16)>,
+    groups: Vec<Arc<Group>>,
+    /// Подписки и есть ли уже список серверов.
+    subs: Vec<(Arc<Subscription>, bool)>,
 }
 
 /// Запущенное приложение: фактические адреса входов и задачи.
@@ -103,6 +114,9 @@ pub struct Running {
     /// Маршруты TUN: держатся ради `Drop` — снимаются при уничтожении.
     #[allow(dead_code)]
     routes: Vec<tun::route::RouteGuard>,
+    groups: Vec<Arc<Group>>,
+    /// Задан резолвер для режима TUN — снять при остановке.
+    tun_resolver: bool,
 }
 
 impl Running {
@@ -122,6 +136,11 @@ impl Running {
     pub fn dns(&self) -> Option<&Arc<Dns>> {
         self.dns.as_ref()
     }
+
+    /// Группа серверов по tag.
+    pub fn group(&self, tag: &str) -> Option<&Arc<Group>> {
+        self.groups.iter().find(|g| g.tag() == tag)
+    }
 }
 
 impl Drop for Running {
@@ -132,6 +151,9 @@ impl Drop for Running {
         // Таблица fake-IP переживает перезапуск.
         if let Some(d) = &self.dns {
             d.save();
+        }
+        if self.tun_resolver {
+            crate::transport::tcp_tls::set_tun_resolver(None);
         }
     }
 }
@@ -154,7 +176,24 @@ fn secret(
 fn build_vless(o: &config::OutboundConfig) -> Result<VlessOutbound> {
     let link = secret(&o.link, &o.link_file, &format!("выход {}", o.tag))?
         .ok_or_else(|| Error::Config(format!("выход {}: нужна link или link_file", o.tag)))?;
-    let mut cfg = VlessConfig::parse(&link)?;
+    let roots = match &o.ca_file {
+        Some(ca) => Some(Arc::new(config::load_ca(ca)?)),
+        None => None,
+    };
+    vless_from_link(&o.tag, &link, o.xudp, o.allow_insecure, roots, false)
+}
+
+/// Выход VLESS из ссылки (из настроек или из подписки). `quiet` — не
+/// писать в журнал о каждом сервере (подписка).
+fn vless_from_link(
+    tag: &str,
+    link: &str,
+    xudp: bool,
+    allow_insecure: bool,
+    ca_roots: Option<Arc<rustls::RootCertStore>>,
+    quiet: bool,
+) -> Result<VlessOutbound> {
+    let mut cfg = VlessConfig::parse(link)?;
     // Сразу при старте, а не на каждом соединении: неподходящая ссылка
     // не должна выглядеть как «прокси работает, но сайты не открываются».
     cfg.validate()?;
@@ -162,39 +201,124 @@ fn build_vless(o: &config::OutboundConfig) -> Result<VlessOutbound> {
         cfg.reality_params()?;
     }
     if cfg.security == Security::None {
-        if !o.allow_insecure {
+        if !allow_insecure {
             return Err(Error::Config(format!(
-                "выход {}: в ссылке security=none — соединение с сервером не шифруется. \
+                "выход {tag}: в ссылке security=none — соединение с сервером не шифруется. \
                  Любой в той же Wi-Fi сети (или по пути до сервера) увидит ваш UUID и весь \
                  трафик и сможет пользоваться вашим сервером. Если это осознанно, разрешите \
-                 явно (--allow-insecure или allow_insecure = true)",
-                o.tag
+                 явно (--allow-insecure или allow_insecure = true)"
             )));
         }
-        tracing::warn!(outbound = %o.tag, "security=none: соединение с сервером НЕ шифруется");
+        if !quiet {
+            tracing::warn!(outbound = %tag, "security=none: соединение с сервером НЕ шифруется");
+        }
     }
     if let Some(fp) = cfg.fingerprint.as_deref() {
-        if !fp.is_empty() && fp != "chrome" {
+        if !quiet && !fp.is_empty() && fp != "chrome" {
             tracing::warn!(
                 fp,
                 "отпечаток TLS всегда Chrome-подобный; fp={fp} из ссылки игнорируется"
             );
         }
     }
-    if let Some(ca) = &o.ca_file {
-        cfg.ca_roots = Some(Arc::new(config::load_ca(ca)?));
+    cfg.ca_roots = ca_roots;
+    if quiet {
+        tracing::debug!(outbound = %tag, host = %cfg.host, port = cfg.port, "сервер подписки");
+    } else {
+        tracing::info!(
+            outbound = %tag,
+            host = %cfg.host,
+            port = cfg.port,
+            sni = %cfg.effective_sni(),
+            security = ?cfg.security,
+            network = ?cfg.network,
+            flow = ?cfg.flow,
+            "сервер загружен"
+        );
     }
-    tracing::info!(
-        outbound = %o.tag,
-        host = %cfg.host,
-        port = cfg.port,
-        sni = %cfg.effective_sni(),
-        security = ?cfg.security,
-        network = ?cfg.network,
-        flow = ?cfg.flow,
-        "сервер загружен"
-    );
-    Ok(VlessOutbound::new(o.tag.clone(), cfg, o.xudp))
+    Ok(VlessOutbound::new(tag.to_string(), cfg, xudp))
+}
+
+/// Адрес проверки групп по умолчанию.
+pub const DEFAULT_PROBE_URL: &str = "https://www.gstatic.com/generate_204";
+
+fn group_settings(o: &config::OutboundConfig) -> Result<GroupSettings> {
+    let strategy = match o.kind {
+        OutboundKind::Selector => Strategy::Selector,
+        OutboundKind::Urltest => Strategy::UrlTest,
+        OutboundKind::Fallback => Strategy::Fallback,
+        _ => unreachable!("только группы"),
+    };
+    let url = http_client::Url::parse(o.url.as_deref().unwrap_or(DEFAULT_PROBE_URL))
+        .map_err(|e| Error::Config(format!("выход {}: {e}", o.tag)))?;
+    let interval = o.interval.unwrap_or(180);
+    if interval < 10 {
+        return Err(Error::Config(format!(
+            "выход {}: interval меньше 10 секунд — слишком частые проверки заметны",
+            o.tag
+        )));
+    }
+    Ok(GroupSettings {
+        strategy,
+        url,
+        interval: std::time::Duration::from_secs(interval),
+        tolerance: std::time::Duration::from_millis(o.tolerance.unwrap_or(50)),
+        timeout: std::time::Duration::from_secs(5),
+    })
+}
+
+/// Группа не должна входить сама в себя (прямо или через другие группы).
+fn check_group_cycles(outs: &[config::OutboundConfig]) -> Result<()> {
+    use std::collections::HashMap;
+    let groups: HashMap<&str, &config::OutboundConfig> = outs
+        .iter()
+        .filter(|o| o.kind.is_group())
+        .map(|o| (o.tag.as_str(), o))
+        .collect();
+    // 0 — не посещена, 1 — в пути, 2 — проверена.
+    fn visit<'a>(
+        t: &'a str,
+        groups: &HashMap<&'a str, &'a config::OutboundConfig>,
+        state: &mut HashMap<&'a str, u8>,
+        path: &mut Vec<&'a str>,
+    ) -> Result<()> {
+        match state.get(t) {
+            Some(2) => return Ok(()),
+            Some(1) => {
+                path.push(t);
+                return Err(Error::Config(format!(
+                    "группы входят друг в друга по кругу: {}",
+                    path.join(" → ")
+                )));
+            }
+            _ => {}
+        }
+        state.insert(t, 1);
+        path.push(t);
+        for m in &groups[t].outbounds {
+            if groups.contains_key(m.as_str()) {
+                visit(m, groups, state, path)?;
+            }
+        }
+        path.pop();
+        state.insert(t, 2);
+        Ok(())
+    }
+    let mut state = HashMap::new();
+    let mut tags: Vec<&str> = groups.keys().copied().collect();
+    tags.sort();
+    for t in tags {
+        visit(t, &groups, &mut state, &mut Vec::new())?;
+    }
+    Ok(())
+}
+
+fn valid_sub_tag(t: &str) -> bool {
+    !t.is_empty()
+        && !t.starts_with('.')
+        && t.len() <= 64
+        && t.chars()
+            .all(|c| c.is_ascii_alphanumeric() || "-_.".contains(c))
 }
 
 fn inbound_tag(i: &config::InboundConfig, n: usize) -> String {
@@ -357,10 +481,16 @@ impl App {
             tags.push(t);
         }
 
+        for o in &cfg.outbounds {
+            o.check_fields()?;
+        }
+        check_group_cycles(&cfg.outbounds)?;
+
         // Выходы `direct` и `dns` получают DNS-модуль позже: он сам ходит
         // к серверам через выходы.
         let dns_slot: DnsSlot = Arc::new(std::sync::OnceLock::new());
         let mut outbounds: Vec<Arc<dyn Outbound>> = Vec::new();
+        let mut groups: Vec<(&config::OutboundConfig, Arc<Group>)> = Vec::new();
         for o in &cfg.outbounds {
             let built: Arc<dyn Outbound> = match o.kind {
                 OutboundKind::Vless => Arc::new(build_vless(o)?),
@@ -378,9 +508,100 @@ impl App {
                     }
                     Arc::new(DnsOutbound::new(o.tag.clone(), dns_slot.clone()))
                 }
+                OutboundKind::Selector | OutboundKind::Urltest | OutboundKind::Fallback => {
+                    let g = Group::new(o.tag.clone(), group_settings(o)?, o.default.clone());
+                    groups.push((o, g.clone()));
+                    g
+                }
             };
             outbounds.push(built);
         }
+        // Участники групп — когда все выходы собраны.
+        let find_out = |t: &str| outbounds.iter().find(|o| o.tag() == t).cloned();
+        for (o, g) in &groups {
+            let mut members = Vec::new();
+            for t in &o.outbounds {
+                let m = find_out(t)
+                    .ok_or_else(|| Error::Config(format!("группа {}: нет выхода «{t}»", o.tag)))?;
+                members.push(m);
+            }
+            for s in &o.subscriptions {
+                if !cfg.subscriptions.iter().any(|c| &c.tag == s) {
+                    return Err(Error::Config(format!(
+                        "группа {}: нет подписки «{s}» (раздел [[subscriptions]])",
+                        o.tag
+                    )));
+                }
+            }
+            if let Some(d) = &o.default {
+                let from_sub = o
+                    .subscriptions
+                    .iter()
+                    .any(|s| d.starts_with(&format!("{s}/")));
+                if !o.outbounds.contains(d) && !from_sub {
+                    return Err(Error::Config(format!(
+                        "группа {}: default = «{d}» — не участник группы",
+                        o.tag
+                    )));
+                }
+            }
+            g.set_fixed(members);
+        }
+
+        // Подписки.
+        let mut subs = Vec::new();
+        for (n, sc) in cfg.subscriptions.iter().enumerate() {
+            let t = &sc.tag;
+            if !valid_sub_tag(t) {
+                return Err(Error::Config(format!(
+                    "подписка «{t}»: tag — латиница, цифры, «-», «_», «.»"
+                )));
+            }
+            if cfg.subscriptions[..n].iter().any(|c| &c.tag == t)
+                || cfg.outbounds.iter().any(|o| &o.tag == t)
+            {
+                return Err(Error::Config(format!("подписка «{t}»: такой tag уже есть")));
+            }
+            let url = secret(&sc.url, &sc.url_file, &format!("подписка {t}"))?
+                .ok_or_else(|| Error::Config(format!("подписка {t}: нужен url или url_file")))?;
+            let members: Vec<std::sync::Weak<Group>> = groups
+                .iter()
+                .filter(|(o, _)| o.subscriptions.contains(t))
+                .map(|(_, g)| Arc::downgrade(g))
+                .collect();
+            if members.is_empty() {
+                return Err(Error::Config(format!(
+                    "подписка {t} не входит ни в одну группу: добавьте subscriptions = [\"{t}\"] \
+                     в selector, urltest или fallback"
+                )));
+            }
+            let detour = match &sc.detour {
+                Some(d) => Some(find_out(d).ok_or_else(|| {
+                    Error::Config(format!("подписка {t}: нет выхода «{d}» (detour)"))
+                })?),
+                None => None,
+            };
+            let factory: Arc<subscription::ServerFactory> =
+                Arc::new(|tag: &str, link: &str, xudp: bool, insecure: bool| {
+                    Ok(
+                        Arc::new(vless_from_link(tag, link, xudp, insecure, None, true)?)
+                            as Arc<dyn Outbound>,
+                    )
+                });
+            let direct: Arc<dyn Outbound> =
+                Arc::new(DirectOutbound::new(http_client::INTERNAL.to_string()));
+            let sub = Arc::new(Subscription::new(
+                sc.clone(),
+                url,
+                members,
+                detour,
+                direct,
+                factory,
+            )?);
+            let loaded = sub.load_cache().is_some();
+            subs.push((sub, loaded));
+        }
+        let groups: Vec<Arc<Group>> = groups.into_iter().map(|(_, g)| g).collect();
 
         let mut site_codes: Vec<String> = cfg
             .route
@@ -461,12 +682,22 @@ impl App {
             router: Arc::new(router),
             dns,
             pinned_hosts,
+            groups,
+            subs,
         })
     }
 
     /// Открыть все входы и начать принимать соединения.
     pub async fn start(self) -> Result<Running> {
         crate::transport::tcp_tls::ensure_crypto_provider();
+        let App {
+            inbounds: built,
+            router,
+            dns,
+            pinned_hosts,
+            groups,
+            mut subs,
+        } = self;
         let mut tasks = JoinSet::new();
         let mut listen_addrs = Vec::new();
         let mut inbounds = Vec::new();
@@ -474,18 +705,32 @@ impl App {
             Error::Config(format!("не удалось слушать {a}: {e}"))
         };
         let mut routes = Vec::new();
-        for i in self.inbounds {
+        let mut tun_resolver = false;
+        for i in built {
             if let InboundSvc::Tun(t) = &i.svc {
                 let dev = t.create_device()?;
                 tracing::info!(inbound = %t.tag, interface = %dev.name, "TUN создан");
                 if t.settings.auto_route {
-                    // Адреса серверов — заранее, пока системный DNS ещё
-                    // работает напрямую.
-                    for (h, p) in &self.pinned_hosts {
-                        if let Err(e) = crate::transport::tcp_tls::resolve_server(h, *p).await {
-                            tracing::warn!(host = %h, error = %e, "tun: имя сервера не разрешилось заранее");
+                    // Пока системный DNS ещё работает напрямую: загрузить
+                    // подписки без сохранённого списка и узнать адреса
+                    // всех серверов.
+                    for (sub, loaded) in &mut subs {
+                        if !*loaded {
+                            match sub.update(true).await {
+                                Ok(_) => *loaded = true,
+                                Err(e) => {
+                                    tracing::warn!(subscription = %sub.cfg.tag, error = %e, "подписка: не загрузилась до включения TUN")
+                                }
+                            }
                         }
                     }
+                    let mut hosts = pinned_hosts.clone();
+                    for g in &groups {
+                        hosts.extend(g.members().iter().filter_map(|m| m.out.server()));
+                    }
+                    hosts.sort();
+                    hosts.dedup();
+                    pre_resolve(hosts).await;
                     routes.push(tun::route::setup(
                         &dev.name,
                         dev.if_index,
@@ -493,8 +738,27 @@ impl App {
                         &t.settings.route_exclude,
                         t.settings.strict_route,
                     )?);
+                    if let Some(d) = &dns {
+                        // Новые имена (серверы из обновлённой подписки) —
+                        // у своего DNS, а не у системы: её запросы теперь
+                        // идут через TUN и могли бы получить fake-IP.
+                        let w = Arc::downgrade(d);
+                        crate::transport::tcp_tls::set_tun_resolver(Some(Arc::new(
+                            move |host: String| {
+                                let w = w.clone();
+                                Box::pin(async move {
+                                    let d = w
+                                        .upgrade()
+                                        .ok_or_else(|| Error::Protocol("DNS остановлен".into()))?;
+                                    d.lookup(&host).await
+                                })
+                                    as futures_util::future::BoxFuture<'static, _>
+                            },
+                        )));
+                        tun_resolver = true;
+                    }
                 }
-                tasks.spawn(t.clone().serve(dev, self.router.clone()));
+                tasks.spawn(t.clone().serve(dev, router.clone()));
                 inbounds.push((i.tag, i.kind, SocketAddr::from(([0, 0, 0, 0], 0))));
                 continue;
             }
@@ -513,7 +777,7 @@ impl App {
                         sniff = p.sniff,
                         "прокси слушает"
                     );
-                    tasks.spawn(p.serve(listener, self.router.clone()));
+                    tasks.spawn(p.serve(listener, router.clone()));
                 }
                 InboundSvc::Dns(d) => {
                     // UDP — на тот же порт, что и TCP (важно при порте 0).
@@ -527,15 +791,35 @@ impl App {
             listen_addrs.push(addr);
             inbounds.push((i.tag, i.kind, addr));
         }
-        if let Some(d) = &self.dns {
+        if let Some(d) = &dns {
             d.spawn_persistence();
+        }
+        for g in &groups {
+            tasks.spawn(Group::check_loop(Arc::downgrade(g)));
+        }
+        for (sub, loaded) in subs {
+            tasks.spawn(sub.run(loaded));
         }
         Ok(Running {
             listen_addrs,
             inbounds,
             tasks,
-            dns: self.dns,
+            dns,
             routes,
+            groups,
+            tun_resolver,
         })
     }
+}
+
+/// Узнать адреса серверов заранее (по 16 одновременно).
+async fn pre_resolve(hosts: Vec<(String, u16)>) {
+    use futures_util::StreamExt;
+    futures_util::stream::iter(hosts)
+        .for_each_concurrent(16, |(h, p)| async move {
+            if let Err(e) = crate::transport::tcp_tls::resolve_server(&h, p).await {
+                tracing::warn!(host = %h, error = %e, "tun: имя сервера не разрешилось заранее");
+            }
+        })
+        .await;
 }

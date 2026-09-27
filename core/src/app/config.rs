@@ -45,6 +45,9 @@ pub struct Config {
     /// Свой DNS (см. `super::dns`); не задан — имена разрешает система
     /// (для `direct`) или сервер VLESS.
     pub dns: Option<super::dns::DnsConfig>,
+    /// Подписки: списки серверов с панели (см. `super::subscription`).
+    #[serde(default)]
+    pub subscriptions: Vec<super::subscription::SubscriptionConfig>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
@@ -160,6 +163,18 @@ pub enum OutboundKind {
     Block,
     /// Ответить самому DNS-модулем (перехват DNS-запросов).
     Dns,
+    /// Группа: участник, выбранный вручную (по умолчанию первый).
+    Selector,
+    /// Группа: самый быстрый по проверке.
+    Urltest,
+    /// Группа: первый работающий по порядку.
+    Fallback,
+}
+
+impl OutboundKind {
+    pub fn is_group(self) -> bool {
+        matches!(self, Self::Selector | Self::Urltest | Self::Fallback)
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -179,6 +194,76 @@ pub struct OutboundConfig {
     /// vless: разрешить `security=none` (без шифрования).
     #[serde(default)]
     pub allow_insecure: bool,
+
+    // ── только для групп (selector, urltest, fallback) ──
+    /// Участники — tag других выходов (в том числе групп).
+    #[serde(default)]
+    pub outbounds: Vec<String>,
+    /// Подписки, серверы которых входят в группу.
+    #[serde(default)]
+    pub subscriptions: Vec<String>,
+    /// Адрес проверки (по умолчанию `https://www.gstatic.com/generate_204`).
+    pub url: Option<String>,
+    /// Как часто проверять, секунд (по умолчанию 180).
+    pub interval: Option<u64>,
+    /// urltest: не переключаться, пока текущий хуже лучшего не больше
+    /// чем на столько миллисекунд (по умолчанию 50).
+    pub tolerance: Option<u64>,
+    /// selector: участник по умолчанию.
+    pub default: Option<String>,
+}
+
+impl OutboundConfig {
+    /// Поля, которые бывают только у одного вида выхода.
+    pub fn check_fields(&self) -> Result<()> {
+        let tag = &self.tag;
+        let group = self.kind.is_group();
+        let group_fields = !self.outbounds.is_empty()
+            || !self.subscriptions.is_empty()
+            || self.url.is_some()
+            || self.interval.is_some()
+            || self.tolerance.is_some()
+            || self.default.is_some();
+        if !group && group_fields {
+            return Err(Error::Config(format!(
+                "выход {tag}: outbounds, subscriptions, url, interval, tolerance, default — только у групп (selector, urltest, fallback)"
+            )));
+        }
+        let vless_fields = self.link.is_some()
+            || self.link_file.is_some()
+            || self.ca_file.is_some()
+            || self.allow_insecure;
+        if self.kind != OutboundKind::Vless && vless_fields {
+            return Err(Error::Config(format!(
+                "выход {tag}: link, link_file, ca_file, allow_insecure — только у type = \"vless\""
+            )));
+        }
+        if group {
+            if self.outbounds.is_empty() && self.subscriptions.is_empty() {
+                return Err(Error::Config(format!(
+                    "выход {tag}: в группе нет участников (outbounds или subscriptions)"
+                )));
+            }
+            if self.default.is_some() && self.kind != OutboundKind::Selector {
+                return Err(Error::Config(format!(
+                    "выход {tag}: default бывает только у selector"
+                )));
+            }
+            if self.tolerance.is_some() && self.kind != OutboundKind::Urltest {
+                return Err(Error::Config(format!(
+                    "выход {tag}: tolerance бывает только у urltest"
+                )));
+            }
+            if self.kind == OutboundKind::Selector
+                && (self.url.is_some() || self.interval.is_some())
+            {
+                return Err(Error::Config(format!(
+                    "выход {tag}: selector не проверяет участников — url и interval не нужны"
+                )));
+            }
+        }
+        Ok(())
+    }
 }
 
 fn yes() -> bool {
@@ -249,6 +334,14 @@ impl Config {
         for o in &mut cfg.outbounds {
             fix(&mut o.link_file);
             fix(&mut o.ca_file);
+        }
+        for sub in &mut cfg.subscriptions {
+            fix(&mut sub.url_file);
+            fix(&mut sub.ca_file);
+            let tag = sub.tag.clone();
+            sub.cache_file
+                .get_or_insert_with(|| format!("{tag}.subscription").into());
+            fix(&mut sub.cache_file);
         }
         let r = &mut cfg.route;
         r.geosite_file.get_or_insert_with(|| "geosite.dat".into());

@@ -115,6 +115,30 @@ fn server_cache() -> &'static ServerCache {
     C.get_or_init(Default::default)
 }
 
+fn refreshing() -> &'static std::sync::Mutex<std::collections::HashSet<String>> {
+    static R: std::sync::OnceLock<std::sync::Mutex<std::collections::HashSet<String>>> =
+        std::sync::OnceLock::new();
+    R.get_or_init(Default::default)
+}
+
+/// Разрешение имён, пока включён TUN: системный резолвер тогда сам идёт
+/// через TUN (и мог бы получить fake-IP), поэтому имена спрашиваются у
+/// DNS-модуля клиента напрямую.
+pub type HostResolver = dyn Fn(String) -> futures_util::future::BoxFuture<'static, Result<Vec<std::net::IpAddr>>>
+    + Send
+    + Sync;
+
+fn tun_resolver() -> &'static std::sync::RwLock<Option<Arc<HostResolver>>> {
+    static R: std::sync::OnceLock<std::sync::RwLock<Option<Arc<HostResolver>>>> =
+        std::sync::OnceLock::new();
+    R.get_or_init(Default::default)
+}
+
+/// Задать (или снять) резолвер для режима TUN.
+pub fn set_tun_resolver(r: Option<Arc<HostResolver>>) {
+    *tun_resolver().write().unwrap() = r;
+}
+
 /// Адреса VLESS-сервера с кешем: не спрашивать DNS на каждое соединение,
 /// а при сбое DNS — продолжать работать по последним известным адресам.
 /// Имя сервера всегда разрешается напрямую, системным резолвером: чтобы
@@ -131,15 +155,20 @@ pub async fn resolve_server(host: &str, port: u16) -> Result<Vec<SocketAddr>> {
         // этот же сервер): ждать его здесь — петля. Отдаём прежние адреса,
         // а обновляем в фоне.
         if crate::net_protect::tun_active() {
-            let (h, k) = (host.to_string(), key.clone());
-            tokio::spawn(async move {
-                if let Ok(a) = resolve_host(&h, port).await {
-                    server_cache()
-                        .lock()
-                        .unwrap()
-                        .insert(k, (a, std::time::Instant::now()));
-                }
-            });
+            // Одно обновление на имя за раз: иначе запрос DNS, идущий к
+            // этому же серверу, порождал бы новое обновление, и так по кругу.
+            if refreshing().lock().unwrap().insert(key.clone()) {
+                let (h, k) = (host.to_string(), key.clone());
+                tokio::spawn(async move {
+                    if let Ok(a) = resolve_host(&h, port).await {
+                        server_cache()
+                            .lock()
+                            .unwrap()
+                            .insert(k.clone(), (a, std::time::Instant::now()));
+                    }
+                    refreshing().lock().unwrap().remove(&k);
+                });
+            }
             return Ok(addrs.clone());
         }
     }
@@ -164,6 +193,26 @@ pub async fn resolve_server(host: &str, port: u16) -> Result<Vec<SocketAddr>> {
 
 /// Разрешить имя системным резолвером (асинхронно, с таймаутом).
 pub async fn resolve_host(host: &str, port: u16) -> Result<Vec<SocketAddr>> {
+    if let Ok(ip) = host.trim_matches(['[', ']']).parse::<std::net::IpAddr>() {
+        return Ok(vec![SocketAddr::new(ip, port)]);
+    }
+    if crate::net_protect::tun_active() {
+        let r = tun_resolver().read().unwrap().clone();
+        if let Some(r) = r {
+            let ips = tokio::time::timeout(DNS_TIMEOUT, r(host.to_string()))
+                .await
+                .map_err(|_| {
+                    Error::Protocol(format!(
+                        "не удалось разрешить имя {host} за {} с",
+                        DNS_TIMEOUT.as_secs()
+                    ))
+                })??;
+            return Ok(ips
+                .into_iter()
+                .map(|ip| SocketAddr::new(ip, port))
+                .collect());
+        }
+    }
     let addr = if host.contains(':') && !host.starts_with('[') {
         format!("[{host}]:{port}")
     } else {

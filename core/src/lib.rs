@@ -22,6 +22,7 @@
 pub mod app;
 pub mod error;
 pub mod fingerprint;
+pub mod http1;
 pub mod net_protect;
 pub mod reality;
 pub mod relay;

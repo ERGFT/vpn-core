@@ -339,4 +339,86 @@ s.sendall(b"CONNECT ads.blocked.test:443 HTTP/1.1\r\n\r\n")
 assert s.recv(64).startswith(b"HTTP/1.1 403")
 print("OK: --config: правило block для домена (SOCKS5 0x02, HTTP 403)")
 PY
+# Фаза 4: группа urltest из «мёртвого» сервера и сервера из подписки.
+# Подписка — HTTPS-панель на 127.0.0.1 со своим сертификатом, в ответе
+# base64 со ссылкой на Xray; проверка групп идёт через Xray к HTTP-серверу.
+PANEL_PORT="$(free_port)"; PROBE_PORT="$(free_port)"; SOCKS3_PORT="$(free_port)"; DEAD_PORT="$(free_port)"
+openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes -days 1 \
+    -keyout "$TMP/panel-key.pem" -out "$TMP/conf/panel-ca.pem" -subj "/CN=panel" \
+    -addext "subjectAltName=IP:127.0.0.1" -addext "basicConstraints=critical,CA:FALSE" 2>/dev/null
+cat > "$TMP/panel.py" <<'PY'
+import base64, http.server, ssl, sys, threading
+panel, probe, d, link = int(sys.argv[1]), int(sys.argv[2]), sys.argv[3], sys.argv[4]
+class Panel(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        if self.path != "/sub/tok":
+            self.send_response(404); self.end_headers(); return
+        body = base64.b64encode((link + "\nvmess://e30=\n").encode())
+        self.send_response(200); self.send_header("Content-Length", str(len(body))); self.end_headers()
+        self.wfile.write(body)
+    def log_message(self, *a): pass
+class Probe(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(204); self.send_header("Content-Length", "0"); self.end_headers()
+    def log_message(self, *a): pass
+p = http.server.ThreadingHTTPServer(("127.0.0.1", panel), Panel)
+ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+ctx.load_cert_chain(d + "/conf/panel-ca.pem", d + "/panel-key.pem")
+p.socket = ctx.wrap_socket(p.socket, server_side=True)
+threading.Thread(target=p.serve_forever, daemon=True).start()
+http.server.ThreadingHTTPServer(("127.0.0.1", probe), Probe).serve_forever()
+PY
+python3 "$TMP/panel.py" "$PANEL_PORT" "$PROBE_PORT" "$TMP" "${LINK%#*}#from-panel" &
+PIDS+=($!)
+echo "https://127.0.0.1:$PANEL_PORT/sub/tok" > "$TMP/conf/sub.txt"
+cat > "$TMP/conf/groups.toml" <<TOML
+[[inbounds]]
+type = "socks"
+listen = "127.0.0.1:$SOCKS3_PORT"
+
+[[outbounds]]
+tag = "auto"
+type = "urltest"
+outbounds = ["dead"]
+subscriptions = ["panel"]
+url = "http://127.0.0.1:$PROBE_PORT/generate_204"
+interval = 10
+
+[[outbounds]]
+tag = "dead"
+type = "vless"
+link = "vless://$UUID@127.0.0.1:$DEAD_PORT?encryption=none&security=reality&sni=decoy.test&pbk=$PBK&sid=$SID&type=tcp"
+
+[[outbounds]]
+tag = "direct"
+type = "direct"
+
+[[subscriptions]]
+tag = "panel"
+url_file = "sub.txt"
+ca_file = "panel-ca.pem"
+detour = "direct"
+
+[route]
+final = "auto"
+TOML
+sleep 0.5
+$CLIENT_RUNNER "$CLIENT_BIN" --config "$TMP/conf/groups.toml" > "$TMP/client3.log" 2>&1 &
+PIDS+=($!)
+for _ in $(seq 1 300); do grep -q 'группа: переключение' "$TMP/client3.log" && break; sleep 0.1; done
+grep -q 'подписка обновлена' "$TMP/client3.log" || { echo "подписка не загрузилась:"; cat "$TMP/client3.log"; exit 1; }
+grep -q 'member="\?panel/from-panel' "$TMP/client3.log" || { echo "urltest не выбрал сервер из подписки:"; cat "$TMP/client3.log"; exit 1; }
+if grep -q 'sub/tok' "$TMP/client3.log"; then echo "адрес подписки попал в журнал"; exit 1; fi
+[[ -f "$TMP/conf/panel.subscription" ]] || { echo "список подписки не сохранён"; exit 1; }
+python3 - "$SOCKS3_PORT" "$ECHO_PORT" "$TMP/cert.pem" <<'PY' || { cat "$TMP/client3.log"; exit 1; }
+import socket, ssl, struct, sys
+socks, echo, ca = int(sys.argv[1]), int(sys.argv[2]), sys.argv[3]
+s = socket.create_connection(("127.0.0.1", socks), timeout=30)
+s.sendall(b"\x05\x01\x00"); assert s.recv(2) == b"\x05\x00"
+s.sendall(b"\x05\x01\x00\x01" + socket.inet_aton("127.0.0.1") + struct.pack(">H", echo))
+rep = s.recv(10); assert rep[:2] == b"\x05\x00", rep
+t = ssl.create_default_context(cafile=ca).wrap_socket(s, server_hostname="inner.test")
+t.sendall(b"group"); assert t.recv(64) == b"group"
+print("OK: подписка (HTTPS, base64) → urltest выбрал её сервер → TLS-эхо через Xray")
+PY
 echo "SMOKE (Xray) PASSED"

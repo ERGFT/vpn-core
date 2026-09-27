@@ -49,6 +49,10 @@ pub trait Outbound: Send + Sync {
     fn server(&self) -> Option<(String, u16)> {
         None
     }
+    /// Группа серверов (selector/urltest/fallback).
+    fn as_group(&self) -> Option<&super::group::Group> {
+        None
+    }
 }
 
 /// UDP-сессия закрывается после стольких секунд без пакетов.
