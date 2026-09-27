@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 //! Выход `vless`: VLESS-сервер (любой транспорт, REALITY/TLS, Vision).
 //!
 //! TCP — `transport::dial` с общим потолком времени. UDP — две схемы:

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 //! QUIC-клиент на quinn — для DNS over QUIC и xhttp через HTTP/3.
 //!
 //! TLS внутри QUIC — та же rustls с провайдером aws-lc-rs, только

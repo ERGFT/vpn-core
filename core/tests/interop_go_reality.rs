@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 //! Интероп-тест против ЧУЖОЙ серверной реализации REALITY (PLAN.md,
 //! "План дальнейших действий", шаг 2). Сервер —
 //! `interop/go-reality-server`: Go-программа на библиотеке

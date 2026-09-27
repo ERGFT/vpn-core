@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 //! Реализация `rustls::client::RealityClientHook` — то самое место, где
 //! REALITY реально подключается к настоящему TLS-рукопожатию, а не
 //! только проверен в отрыве от него.

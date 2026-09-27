@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: GPL-3.0-or-later
 # Интероп-тесты против настоящего Xray-core (core/tests/interop_xray.rs):
 # REALITY, XTLS Vision (с проверкой перехода на прямую передачу),
 # ML-DSA-65, WebSocket (без TLS и с TLS), gRPC, UDP.

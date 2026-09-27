@@ -41,6 +41,11 @@ jobs:
           bash scripts/fetch_sing_box.sh
       - name: scripts/ci.sh
         run: bash scripts/ci.sh
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-about@0.9.2
+      - name: лицензии зависимостей (новая зависимость с лицензией не из about.toml — ошибка)
+        run: bash scripts/third_party_licenses.sh target/THIRD-PARTY-LICENSES.html
       - name: TUN в изолированном netns (root)
         run: sudo -E env "PATH=$PATH" XRAY_BIN="$PWD/target/xray/xray" CLIENT_BIN="$PWD/target/release/reality-client" bash scripts/tun_netns.sh
 

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 //! CLI: локальный прокси (SOCKS5 и HTTP на одном порту) → VLESS-сервер (или напрямую, или отказ — по
 //! маршрутизации). Два способа запуска:
 //!
@@ -45,7 +46,14 @@ use reality_core::app::App;
 #[command(
     name = "reality-client",
     version,
-    about = "VLESS core — локальный SOCKS5/HTTP-прокси -> VLESS (tcp/ws/grpc/httpupgrade/xhttp, tls/reality, XTLS Vision)"
+    long_version = concat!(
+        env!("CARGO_PKG_VERSION"),
+        "\nCopyright (C) 2026 ERGFT\n",
+        "Лицензия GPL-3.0-or-later: <https://www.gnu.org/licenses/gpl-3.0.html>.\n",
+        "Это свободная программа: её можно изменять и распространять.\n",
+        "Гарантий нет в той мере, в какой это допускает закон."
+    ),
+    about ="VLESS core — локальный SOCKS5/HTTP-прокси -> VLESS (tcp/ws/grpc/httpupgrade/xhttp, tls/reality, XTLS Vision)"
 )]
 struct Args {
     /// Файл настроек (TOML): входы, выходы, маршрутизация. Вместо

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 //! Trojan (trojan-gfw, в Xray — `proxy/trojan`): пароль вместо UUID,
 //! поверх TLS или REALITY и тех же транспортов, что у VLESS.
 //!

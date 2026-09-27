@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Интероп-стенд (PLAN.md, "План дальнейших действий", шаг 2): настоящий
 // REALITY-сервер на библиотеке github.com/xtls/reality — той же, что
 // использует Xray-core, — чтобы проверять клиента reality-core против

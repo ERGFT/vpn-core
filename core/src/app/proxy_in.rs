@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 //! Входы `socks`, `http` и `mixed` (SOCKS5 и HTTP на одном порту — вид
 //! определяется по первому байту: 0x05 — SOCKS5, иначе HTTP).
 //!

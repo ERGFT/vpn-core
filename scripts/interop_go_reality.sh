@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: GPL-3.0-or-later
 # Интероп-тест клиента против настоящего REALITY-сервера на библиотеке
 # github.com/xtls/reality (PLAN.md, "План дальнейших действий", шаг 2).
 #

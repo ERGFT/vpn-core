@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>reality-client — лицензии сторонних компонентов</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { font: 15px/1.5 system-ui, sans-serif; max-width: 60rem; margin: 2rem auto; padding: 0 1rem; }
+  pre { white-space: pre-wrap; background: rgba(127,127,127,.12); padding: 1rem; border-radius: 6px; font-size: 13px; }
+  li { margin: .2rem 0; }
+  h2 { margin-top: 2.5rem; border-top: 1px solid rgba(127,127,127,.3); padding-top: 1rem; }
+</style>
+</head>
+<body>
+<h1>Лицензии сторонних компонентов</h1>
+<p>reality-client распространяется под GNU GPL v3.0 или более поздней версией
+(файл <code>LICENSE</code>). В него входят перечисленные ниже библиотеки;
+их лицензии совместимы с GPL-3.0, тексты — ниже.</p>
+<h2>Сводка</h2>
+<ul>
+{{#each overview}}
+  <li><a href="#{{id}}">{{name}}</a> — {{count}}</li>
+{{/each}}
+</ul>
+{{#each licenses}}
+<h2 id="{{id}}">{{name}}</h2>
+<p>Используется в:</p>
+<ul>
+{{#each used_by}}
+  <li><a href="{{#if crate.repository}}{{crate.repository}}{{else}}https://crates.io/crates/{{crate.name}}{{/if}}">{{crate.name}} {{crate.version}}</a></li>
+{{/each}}
+</ul>
+<pre>{{text}}</pre>
+{{/each}}
+</body>
+</html>

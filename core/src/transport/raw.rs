@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 //! Сырое TCP-соединение под TLS/REALITY — с одной особенностью, нужной
 //! XTLS Vision.
 //!

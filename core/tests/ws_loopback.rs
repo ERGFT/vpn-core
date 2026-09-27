@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 //! Сквозная проверка транспорта Этапа 4 (WebSocket): настоящий TCP+TLS
 //! (самоподписанный тестовый сертификат, как в `tls_loopback.rs`) плюс
 //! настоящий WS upgrade и фреймирование через `async-tungstenite` — не

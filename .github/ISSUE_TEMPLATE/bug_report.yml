@@ -1,0 +1,46 @@
+name: Ошибка
+description: Что-то работает не так, как описано в README
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ⚠️ Не вставляйте настоящую ссылку на сервер, UUID, ключи и адрес подписки — замените их заглушками.
+        Уязвимость — не сюда, а закрыто: см. SECURITY.md.
+  - type: input
+    id: version
+    attributes:
+      label: Версия
+      description: Вывод `reality-client --version` или коммит
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: Система
+      options: [Linux, Windows, другая]
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: Что произошло и что ожидалось
+    validations:
+      required: true
+  - type: textarea
+    id: config
+    attributes:
+      label: Настройки
+      description: Ключи запуска или client.toml (без секретов); security, type, flow ссылки
+      render: toml
+  - type: textarea
+    id: log
+    attributes:
+      label: Журнал
+      description: Лучше с `RUST_LOG=debug` (адреса сайтов можно вычеркнуть)
+      render: text
+  - type: input
+    id: server
+    attributes:
+      label: Сервер
+      description: Xray-core какой версии, sing-box, панель…

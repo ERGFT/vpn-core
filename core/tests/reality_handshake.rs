@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 //! Этап 5 — проверка ПОЛНОГО REALITY-рукопожатия через новый хук
 //! `rustls::client::RealityClientHook` (`core/src/reality/hook.rs`,
 //! патч `vendor/rustls-reality-patch/src/client/{client_conn,hs}.rs`).

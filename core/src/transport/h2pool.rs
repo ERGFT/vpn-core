@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 //! Общие HTTP/2-соединения для транспортов gRPC и xhttp (у Xray — общий
 //! `grpc.ClientConn` на сервер и `xmux` у xhttp): несколько VLESS-сессий —
 //! отдельные потоки HTTP/2 в одном соединении TLS/REALITY.

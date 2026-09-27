@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 //! Фаза 7 — ClientHello разных браузеров (`fp=` в ссылке, как у Xray):
 //! `chrome` (по умолчанию), `firefox`, `safari`, `ios`, `edge`, `android`,
 //! `random`, `randomized`.

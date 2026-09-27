@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 //! Транспорт Этапа 4: VLESS поверх одного bidi-стрима gRPC — режим
 //! "gun" у Xray-core/V2Ray (без мультиплексирования, `multiMode=false`).
 //!

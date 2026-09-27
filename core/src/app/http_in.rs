@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 //! HTTP-прокси: разбор запроса к прокси (RFC 9110, 9112).
 //!
 //! - `CONNECT host:port` — туннель (так ходит весь HTTPS);

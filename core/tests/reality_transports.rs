@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 //! Этап 5 — проверка, что `security=reality` реально доходит до
 //! WS- и gRPC-транспортов (`transport::ws`/`transport::grpc`), а не
 //! используется только "голым" TCP-транспортом.

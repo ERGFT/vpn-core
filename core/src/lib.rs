@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 //! reality_core — ядро клиента VLESS(+REALITY).
 //!
 //! Что где (подробно — README.md и PLAN.md в корне репозитория):

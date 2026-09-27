@@ -1,0 +1,15 @@
+name: Предложение
+description: Новая возможность или улучшение
+labels: [enhancement]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: Что нужно
+      description: Какую задачу это решает; как это сделано в Xray-core или sing-box, если сделано
+    validations:
+      required: true
+  - type: textarea
+    id: why
+    attributes:
+      label: Почему это важно

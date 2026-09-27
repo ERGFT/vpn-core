@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 //! «Шум» перед UDP (`noises` у Xray, `freedom`): перед первой датаграммой
 //! к новому адресу выход `direct` шлёт туда несколько пакетов-пустышек.
 //! DPI, который узнаёт протокол (QUIC, WireGuard, игры) по первому

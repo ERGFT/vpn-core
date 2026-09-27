@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 //! Подписки: адрес, по которому панель (3x-ui, Marzban, Remnawave и
 //! подобные) отдаёт список серверов.
 //!

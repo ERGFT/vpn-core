@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 //! Этап 3 — TLS-отпечаток: ClientHello как у Chrome 133 ([`chrome_profile`])
 //! и инструменты сверки (разбор ClientHello, JA3/JA4).
 //!

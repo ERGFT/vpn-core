@@ -11,6 +11,8 @@ members = [
 version = "0.1.0"
 edition = "2021"
 license = "GPL-3.0-or-later"
+authors = ["ERGFT"]
+repository = "https://github.com/ERGFT/vpn-core"
 
 [workspace.dependencies]
 tokio = { version = "1", features = ["full"] }

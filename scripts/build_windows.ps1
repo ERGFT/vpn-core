@@ -1,4 +1,5 @@
-﻿# Сборка reality-client на Windows (x86_64, MSVC).
+﻿# SPDX-License-Identifier: GPL-3.0-or-later
+# Сборка reality-client на Windows (x86_64, MSVC).
 #
 # Запуск из корня репозитория в PowerShell:
 #   powershell -ExecutionPolicy Bypass -File scripts\build_windows.ps1

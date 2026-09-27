@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 //! Этап 3 — живая проверка GREASE (RFC 8701) за пределами cipher suites:
 //! группа в `supported_groups` (0x000a) и `key_share` (0x0033), версия в
 //! `supported_versions` (0x002b) и два отдельных GREASE-расширения

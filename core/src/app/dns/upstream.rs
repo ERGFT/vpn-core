@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 //! Вышестоящие DNS-серверы: обычный UDP и TCP, DNS over TLS (DoT),
 //! DNS over HTTPS (DoH), DNS over QUIC (DoQ, RFC 9250), системный резолвер. Запросы к серверу идут через
 //! выбранный выход (`detour`): через VLESS-сервер (`proxy`) — тогда ни

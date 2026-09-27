@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 //! Этап 5 — полный сквозной REALITY-хендшейк через боевые функции ВСЕХ
 //! ТРЁХ транспортов (`connect_and_handshake`/`_ws`/`_grpc`), включая
 //! настоящую проверку сертификата через `RealityCertVerifier` — то есть

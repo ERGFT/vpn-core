@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 //! Вход `dns`: DNS-сервер (UDP и TCP на одном адресе) для системы и
 //! программ. Отвечает DNS-модуль (`super::dns`) — со своими правилами,
 //! кешем и fake-IP.

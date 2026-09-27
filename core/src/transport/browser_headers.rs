@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 //! HTTP-заголовки браузера для HTTP-транспортов (ws, httpupgrade, xhttp)
 //! — того же, чей ClientHello изображается (`fp=`, Фаза 7): Chrome,
 //! Firefox или Safari. TLS-отпечаток Firefox с User-Agent Chrome —

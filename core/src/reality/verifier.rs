@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 //! `rustls::client::danger::ServerCertVerifier` для модели доверия
 //! REALITY. См. предупреждения и первоисточники в `reality/mod.rs`.
 

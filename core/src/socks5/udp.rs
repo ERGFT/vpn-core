@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 //! SOCKS5 UDP ASSOCIATE (RFC 1928 §7): формат датаграмм и правило «кто
 //! владелец ассоциации». Сама ассоциация (маршрутизация датаграмм по
 //! выходам, XUDP) — `crate::app::proxy_in`.

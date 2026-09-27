@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: GPL-3.0-or-later
 # Собрать Xray-core из исходников — для сред, где релизы с GitHub и
 # proxy.golang.org недоступны, а `git` по https://github.com работает
 # (так было в песочнице, где писался этот проект). Там, где релиз

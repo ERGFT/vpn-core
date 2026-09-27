@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 pub mod browser_headers;
 pub mod browser_mimic;
 pub mod fragment;

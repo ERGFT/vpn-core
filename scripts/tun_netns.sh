@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: GPL-3.0-or-later
 # Проверка входа TUN с auto_route в изолированном сетевом пространстве
 # (Linux, root). Хост-система не затрагивается: всё происходит в netns.
 #

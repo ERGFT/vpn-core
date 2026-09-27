@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: GPL-3.0-or-later
 # Этап 8 — сравнение этого клиента с настоящим Xray-core на ОДИНАКОВОЙ
 # нагрузке: память (RSS/PSS) и пропускная способность.
 #

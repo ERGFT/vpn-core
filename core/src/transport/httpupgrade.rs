@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 //! Транспорт `type=httpupgrade` (Xray-core, `transport/internet/httpupgrade`):
 //! обычный HTTP/1.1-запрос Upgrade, как у WebSocket, но после ответа
 //! `101 Switching Protocols` данные идут по соединению как есть — без

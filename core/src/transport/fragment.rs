@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 //! Дробление начала соединения (`fragment` у Xray, `freedom`): против DPI,
 //! который ищет имя сайта (SNI) в первом пакете и не собирает TCP-поток.
 //!

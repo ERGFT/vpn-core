@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 //! Windows: служба (автозапуск до входа в систему — для TUN) и автозапуск
 //! при входе пользователя (для `--system-proxy`).
 //!

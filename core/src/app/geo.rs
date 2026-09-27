@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 //! Базы `geosite.dat` и `geoip.dat` в формате V2Ray/Xray (protobuf):
 //! списки доменов и подсетей по категориям и странам
 //! (`geosite:category-ads-all`, `geoip:ru`).
