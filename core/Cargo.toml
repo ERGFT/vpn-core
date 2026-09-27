@@ -46,6 +46,12 @@ aws-lc-rs.workspace = true
 brotli-decompressor.workspace = true
 regex.workspace = true
 hickory-proto.workspace = true
+tun-rs.workspace = true
+ipstack.workspace = true
+socket2.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Networking_WinSock", "Win32_NetworkManagement_IpHelper", "Win32_NetworkManagement_Ndis"] }
 
 [dev-dependencies]
 # В тестах серверу нужно уметь СЖИМАТЬ сертификат (проверка нашего

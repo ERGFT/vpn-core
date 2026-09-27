@@ -78,9 +78,15 @@ if [[ $QUICK -eq 0 ]]; then
         export XRAY_BIN="$XRAY"
         step "интероп с Xray-core" bash scripts/interop_xray.sh
         step "сквозной smoke против Xray-core" bash scripts/smoke_xray.sh
+        if [[ $(id -u) == 0 ]] && command -v ip >/dev/null && [[ -e /dev/net/tun ]]; then
+            step "TUN с auto_route в netns против Xray-core" bash scripts/tun_netns.sh
+        else
+            skip "TUN в netns" "нужны root, iproute2 и /dev/net/tun"
+        fi
     else
         skip "интероп с Xray-core" "нет бинарника Xray ($XRAY)"
         skip "сквозной smoke против Xray-core" "нет бинарника Xray"
+        skip "TUN в netns" "нет бинарника Xray"
     fi
 
     if curl -fsS --max-time 10 -o /dev/null \

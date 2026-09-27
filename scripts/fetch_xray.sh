@@ -29,5 +29,5 @@ curl -fsSL --max-time 300 -o "$DEST/xray.zip" "$URL"
 unzip -o -q "$DEST/xray.zip" -d "$DEST" xray LICENSE
 chmod +x "$DEST/xray"
 rm -f "$DEST/xray.zip"
-"$DEST/xray" version | head -1
+{ "$DEST/xray" version || true; } | head -1 || true
 echo "готово: $DEST/xray"

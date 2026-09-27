@@ -106,7 +106,7 @@ impl Router {
                     Reverse::Name(n) => meta.target = Address::Domain(n),
                     Reverse::Unknown => {
                         return Err(Error::Protocol(format!(
-                            "адрес {ip} из диапазона fake-IP, но имя для него неизвестно                              (устарел после перезапуска?)"
+                            "адрес {ip} из диапазона fake-IP, но имя для него неизвестно (устарел после перезапуска?)"
                         )))
                     }
                 }

@@ -45,6 +45,10 @@ pub trait Outbound: Send + Sync {
     fn is_dns(&self) -> bool {
         false
     }
+    /// Адрес VLESS-сервера (у выхода `vless`).
+    fn server(&self) -> Option<(String, u16)> {
+        None
+    }
 }
 
 /// UDP-сессия закрывается после стольких секунд без пакетов.
@@ -116,6 +120,11 @@ async fn resolve(dns: Option<&Arc<Dns>>, target: &Address, port: u16) -> Result<
             .into_iter()
             .map(|ip| SocketAddr::new(ip, port))
             .collect()),
+        // Имя DNS-сервера (запрос самого DNS-модуля) — с кешем, как имя
+        // VLESS-сервера: с TUN системный DNS идёт через клиент.
+        (Address::Domain(d), None) if crate::net_protect::tun_active() => {
+            crate::transport::tcp_tls::resolve_server(d, port).await
+        }
         (Address::Domain(d), None) => crate::transport::tcp_tls::resolve_host(d, port).await,
     }
 }
@@ -154,11 +163,10 @@ impl Outbound for DirectOutbound {
 
     fn udp<'a>(&'a self, meta: &'a Metadata) -> BoxFuture<'a, Result<Arc<dyn UdpSession>>> {
         Box::pin(async move {
-            let v4 = UdpSocket::bind(SocketAddr::from((Ipv4Addr::UNSPECIFIED, 0))).await?;
+            let v4 = crate::net_protect::udp_bind(SocketAddr::from((Ipv4Addr::UNSPECIFIED, 0)))?;
             // IPv6 может отсутствовать — тогда только IPv4.
-            let v6 = UdpSocket::bind(SocketAddr::from((Ipv6Addr::UNSPECIFIED, 0)))
-                .await
-                .ok();
+            let v6 =
+                crate::net_protect::udp_bind(SocketAddr::from((Ipv6Addr::UNSPECIFIED, 0))).ok();
             Ok(Arc::new(DirectUdp {
                 v4,
                 v6,

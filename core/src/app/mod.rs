@@ -10,7 +10,8 @@
 //! - `vless_out` — выход `vless` (сервер);
 //! - `access` — кто может пользоваться входом (адреса, подбор пароля);
 //! - `dns`, `dns_in` — свой DNS (DoH/DoT/UDP/TCP, кеш, fake-IP) и вход
-//!   DNS-сервера.
+//!   DNS-сервера;
+//! - `tun` — вход TUN (весь трафик компьютера) и `auto_route`.
 
 pub mod access;
 pub mod config;
@@ -23,6 +24,7 @@ pub mod proxy_in;
 pub mod router;
 pub mod rules;
 pub mod sniff;
+pub mod tun;
 pub mod vless_out;
 
 use std::net::SocketAddr;
@@ -70,10 +72,12 @@ pub struct Metadata {
 enum InboundSvc {
     Proxy(Arc<ProxyInbound>),
     Dns(Arc<DnsInbound>),
+    Tun(Arc<tun::TunInbound>),
 }
 
 struct BuiltInbound {
-    listen: SocketAddr,
+    /// У TUN адреса нет.
+    listen: Option<SocketAddr>,
     tag: Arc<str>,
     kind: InboundKind,
     svc: InboundSvc,
@@ -84,6 +88,9 @@ pub struct App {
     inbounds: Vec<BuiltInbound>,
     router: Arc<Router>,
     dns: Option<Arc<Dns>>,
+    /// Имена серверов (VLESS, DNS), которые надо разрешить до включения
+    /// маршрутов TUN.
+    pinned_hosts: Vec<(String, u16)>,
 }
 
 /// Запущенное приложение: фактические адреса входов и задачи.
@@ -93,6 +100,9 @@ pub struct Running {
     pub inbounds: Vec<(Arc<str>, InboundKind, SocketAddr)>,
     tasks: JoinSet<Result<()>>,
     dns: Option<Arc<Dns>>,
+    /// Маршруты TUN: держатся ради `Drop` — снимаются при уничтожении.
+    #[allow(dead_code)]
+    routes: Vec<tun::route::RouteGuard>,
 }
 
 impl Running {
@@ -116,6 +126,9 @@ impl Running {
 
 impl Drop for Running {
     fn drop(&mut self) {
+        // Сначала остановить входы, потом снять маршруты (поле routes
+        // уничтожится после этого метода).
+        self.tasks.abort_all();
         // Таблица fake-IP переживает перезапуск.
         if let Some(d) = &self.dns {
             d.save();
@@ -191,6 +204,7 @@ fn inbound_tag(i: &config::InboundConfig, n: usize) -> String {
             InboundKind::Http => "http",
             InboundKind::Mixed => "mixed",
             InboundKind::Dns => "dns",
+            InboundKind::Tun => "tun",
         };
         if n == 0 {
             base.to_string()
@@ -213,11 +227,11 @@ fn build_dns_inbound(
             "вход {tag}: у DNS-входа не бывает пароля и sniffing"
         )));
     }
-    if !proxy_in::is_loopback_listen(&i.listen) && i.allow_ip.is_empty() {
+    let listen = i.listen_addr()?;
+    if !proxy_in::is_loopback_listen(&listen) && i.allow_ip.is_empty() {
         return Err(Error::Config(format!(
-            "вход {tag}: DNS-сервер, открытый в сеть ({}), без allow_ip — «открытый \
-             резолвер»: им пользуются для DDoS-атак; перечислите свои устройства в allow_ip",
-            i.listen
+            "вход {tag}: DNS-сервер, открытый в сеть ({listen}), без allow_ip — «открытый \
+             резолвер»: им пользуются для DDoS-атак; перечислите свои устройства в allow_ip"
         )));
     }
     Ok(Arc::new(DnsInbound {
@@ -235,11 +249,11 @@ fn build_proxy_inbound(i: &config::InboundConfig, tag: &str) -> Result<Arc<Proxy
         })?),
         None => None,
     };
-    if !proxy_in::is_loopback_listen(&i.listen) {
+    let listen = i.listen_addr()?;
+    if !proxy_in::is_loopback_listen(&listen) {
         let Some(creds) = &auth else {
             return Err(Error::Config(format!(
-                "вход {tag}: {} открывает прокси для всей сети без пароля; задайте логин:пароль",
-                i.listen
+                "вход {tag}: {listen} открывает прокси для всей сети без пароля; задайте логин:пароль"
             )));
         };
         if creds.password.len() < MIN_LAN_PASSWORD {
@@ -273,6 +287,44 @@ fn build_proxy_inbound(i: &config::InboundConfig, tag: &str) -> Result<Arc<Proxy
     }))
 }
 
+fn build_tun_inbound(
+    i: &config::InboundConfig,
+    tag: &str,
+    dns: Option<&Arc<Dns>>,
+) -> Result<Arc<tun::TunInbound>> {
+    let settings = tun::settings(i)?;
+    if settings.dns_hijack && dns.is_none() {
+        return Err(Error::Config(format!(
+            "вход {tag}: TUN перехватывает DNS (dns_hijack), а раздела [dns] нет; \
+             добавьте [dns] или dns_hijack = false"
+        )));
+    }
+    if settings.auto_route && dns.is_some_and(|d| d.has_local()) {
+        return Err(Error::Config(format!(
+            "вход {tag}: DNS-сервер address = \"local\" (системный) вместе с TUN — петля: \
+             системный DNS сам идёт через TUN; укажите сервер адресом"
+        )));
+    }
+    Ok(Arc::new(tun::TunInbound {
+        tag: tag.into(),
+        settings,
+        dns: dns.cloned(),
+    }))
+}
+
+/// Адреса VLESS-серверов (по выходам с типом vless).
+fn router_vless_servers(
+    router: &Router,
+    outs: &[config::OutboundConfig],
+) -> Vec<Option<(String, u16)>> {
+    outs.iter()
+        .map(|o| match o.kind {
+            OutboundKind::Vless => router.get(&o.tag).and_then(|b| b.server()),
+            _ => None,
+        })
+        .collect()
+}
+
 impl App {
     /// Собрать приложение из настроек, проверив всё, что можно проверить
     /// до запуска.
@@ -281,6 +333,20 @@ impl App {
             return Err(Error::Config("не задан ни один вход (inbounds)".into()));
         }
         let mut tags: Vec<String> = Vec::new();
+        for i in &cfg.inbounds {
+            i.check_fields()?;
+        }
+        if cfg
+            .inbounds
+            .iter()
+            .filter(|i| i.kind == InboundKind::Tun)
+            .count()
+            > 1
+        {
+            return Err(Error::Config(
+                "вход type = \"tun\" может быть только один".into(),
+            ));
+        }
         for (n, i) in cfg.inbounds.iter().enumerate() {
             let t = inbound_tag(i, n);
             if tags.contains(&t) {
@@ -373,6 +439,7 @@ impl App {
         for (i, tag) in cfg.inbounds.iter().zip(&tags) {
             let svc = match i.kind {
                 InboundKind::Dns => InboundSvc::Dns(build_dns_inbound(i, tag, dns.as_ref())?),
+                InboundKind::Tun => InboundSvc::Tun(build_tun_inbound(i, tag, dns.as_ref())?),
                 _ => InboundSvc::Proxy(build_proxy_inbound(i, tag)?),
             };
             inbounds.push(BuiltInbound {
@@ -382,10 +449,18 @@ impl App {
                 svc,
             });
         }
+        let mut pinned_hosts: Vec<(String, u16)> = router_vless_servers(&router, &cfg.outbounds)
+            .into_iter()
+            .flatten()
+            .collect();
+        if let Some(d) = &dns {
+            pinned_hosts.extend(d.server_hosts());
+        }
         Ok(App {
             inbounds,
             router: Arc::new(router),
             dns,
+            pinned_hosts,
         })
     }
 
@@ -398,10 +473,35 @@ impl App {
         let bind_err = |a: SocketAddr, e: std::io::Error| {
             Error::Config(format!("не удалось слушать {a}: {e}"))
         };
+        let mut routes = Vec::new();
         for i in self.inbounds {
-            let listener = TcpListener::bind(i.listen)
+            if let InboundSvc::Tun(t) = &i.svc {
+                let dev = t.create_device()?;
+                tracing::info!(inbound = %t.tag, interface = %dev.name, "TUN создан");
+                if t.settings.auto_route {
+                    // Адреса серверов — заранее, пока системный DNS ещё
+                    // работает напрямую.
+                    for (h, p) in &self.pinned_hosts {
+                        if let Err(e) = crate::transport::tcp_tls::resolve_server(h, *p).await {
+                            tracing::warn!(host = %h, error = %e, "tun: имя сервера не разрешилось заранее");
+                        }
+                    }
+                    routes.push(tun::route::setup(
+                        &dev.name,
+                        dev.if_index,
+                        dev.has_v6,
+                        &t.settings.route_exclude,
+                        t.settings.strict_route,
+                    )?);
+                }
+                tasks.spawn(t.clone().serve(dev, self.router.clone()));
+                inbounds.push((i.tag, i.kind, SocketAddr::from(([0, 0, 0, 0], 0))));
+                continue;
+            }
+            let listen = i.listen.expect("проверено при сборке");
+            let listener = TcpListener::bind(listen)
                 .await
-                .map_err(|e| bind_err(i.listen, e))?;
+                .map_err(|e| bind_err(listen, e))?;
             let addr = listener.local_addr()?;
             match i.svc {
                 InboundSvc::Proxy(p) => {
@@ -422,6 +522,7 @@ impl App {
                     tasks.spawn(d.clone().serve_tcp(listener));
                     tasks.spawn(d.serve_udp(udp));
                 }
+                InboundSvc::Tun(_) => unreachable!("обработан выше"),
             }
             listen_addrs.push(addr);
             inbounds.push((i.tag, i.kind, addr));
@@ -434,6 +535,7 @@ impl App {
             inbounds,
             tasks,
             dns: self.dns,
+            routes,
         })
     }
 }

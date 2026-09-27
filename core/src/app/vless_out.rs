@@ -37,6 +37,11 @@ pub struct VlessOutbound {
 }
 
 impl VlessOutbound {
+    /// Адрес сервера (для заблаговременного разрешения имени перед TUN).
+    pub fn server_addr(&self) -> (String, u16) {
+        (self.cfg.host.clone(), self.cfg.port)
+    }
+
     pub fn new(tag: impl Into<String>, cfg: VlessConfig, xudp: bool) -> Self {
         VlessOutbound {
             tag: tag.into(),
@@ -72,6 +77,10 @@ async fn dial(
 impl Outbound for VlessOutbound {
     fn tag(&self) -> &str {
         &self.tag
+    }
+
+    fn server(&self) -> Option<(String, u16)> {
+        Some(self.server_addr())
     }
 
     fn connect<'a>(&'a self, meta: &'a Metadata) -> BoxFuture<'a, Result<Box<dyn AsyncStream>>> {

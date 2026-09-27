@@ -29,6 +29,7 @@
 | Маршрутизация: домен (точно, суффикс, подстрока, regex), IP/подсеть, частные адреса, порт, сеть, вход, базы `geosite.dat`/`geoip.dat` (v2fly) | ✅ наборы правил sing-box (`.srs`) — нет |
 | Sniffing: домен по TLS SNI и HTTP Host, когда приложение прислало IP | ✅ QUIC — нет |
 | Системный прокси Windows (`--system-proxy`) | ✅ проверен под Wine |
+| TUN — весь трафик компьютера (как VPN): свой TCP/IP-стек, `auto_route`, перехват DNS, fake-IP, `route_exclude`, kill switch `strict_route` | ✅ Linux — проверен против Xray в изолированном netns (TCP, UDP, DNS, fake-IP, ~85 МиБ/с); 🟡 Windows (Wintun) — собирается, на настоящей Windows не запускался; kill switch — только Linux |
 | Свой DNS: серверы UDP, TCP, DoT, DoH, системный; выбор сервера по доменам и geosite; кеш; вход DNS-сервера; перехват DNS (выход `dns`); fake-IP; `domain_strategy = "ip_if_non_match"` | ✅ DoH/DoT проверены на своих серверах, UDP-DNS через Xray; DNS over QUIC — нет |
 | Mux.Cool для TCP, транспорт `kcp` | ❌ не поддерживаются (почему — ниже); `quic`/`h2` удалены из самого Xray-core — ошибка подсказывает `xhttp` |
 | Linux | ✅ собирается и проверен |
@@ -159,6 +160,42 @@ final = "proxy"            # куда идёт всё, что не попало 
 `direct` не пускает клиентов из сети к службам этого компьютера
 (`127.0.0.1`, `localhost`); выход `block` отвечает SOCKS5-кодом 0x02 или
 HTTP 403. Полный пример — [`examples/client.toml`](examples/client.toml).
+
+### TUN — весь трафик компьютера
+
+Вход `type = "tun"` создаёт виртуальный сетевой интерфейс, и через клиент
+идёт трафик всех программ, а не только настроенных на прокси:
+
+```toml
+[[inbounds]]
+type = "tun"
+sniff = true
+# strict_route = true            # kill switch (Linux)
+# route_exclude = ["192.168.0.0/16"]
+```
+
+- Нужны права администратора (Windows) или root (Linux). На Windows
+  рядом с `reality-client.exe` должен лежать `wintun.dll` (из
+  [wintun.net](https://www.wintun.net/), архитектура amd64).
+- `auto_route` (по умолчанию включён) направляет в TUN весь трафик;
+  соединения самого клиента (к серверу, `direct`, DNS) идут мимо TUN:
+  на Linux они помечаются (`SO_MARK`), на Windows привязаны к физическому
+  интерфейсу. Петли нет, а правила `direct` работают как обычно.
+- DNS-запросы на порт 53 любого адреса отвечает раздел `[dns]`
+  (`dns_hijack`, по умолчанию включён; без `[dns]` — ошибка настроек).
+  Fake-IP с TUN работает полностью: программа получает адрес
+  198.18.x.x, а соединяется клиент уже с именем через сервер.
+- Выход из клиента (Ctrl+C, закрытие окна) возвращает маршруты. Если
+  клиент убит, интерфейс исчезает вместе со своими маршрутами — сеть
+  снова работает напрямую. С `strict_route = true` (Linux) — наоборот:
+  сеть остаётся закрытой (kill switch), пока клиент не запущен снова
+  или не выполнено `reality-client --tun-cleanup`.
+- Системный DNS-сервер (`address = "local"`) вместе с TUN — ошибка
+  настроек: системный DNS сам идёт через TUN (петля).
+- Ограничения: IPv6 включается, только если он есть в системе; ICMP
+  (ping) через TUN не проходит; на Windows `route_exclude` — только
+  IPv4, kill switch нет, а при исключённой локальной сети Windows может
+  спрашивать DNS роутера напрямую.
 
 ### DNS
 
@@ -291,9 +328,10 @@ scripts/ci.sh --quick  # только fmt, clippy, тесты
 
 | Скрипт | Что проверяет |
 |---|---|
-| `cargo test --workspace` | 153 теста (110 unit + 43 интеграционных), всё на loopback; с `GEO_DIR=…` и `--ignored` — ещё проверка на настоящих базах geosite/geoip |
+| `cargo test --workspace` | 154 теста (110 unit + 44 интеграционных), всё на loopback; с `GEO_DIR=…` и `--ignored` — ещё проверка на настоящих базах geosite/geoip |
 | `scripts/interop_xray.sh` | 15 тестов против **настоящего Xray-core**: REALITY (в т.ч. с сайтом без ML-KEM), Vision (padding и переход на прямую передачу), ML-DSA-65 (и отказ при чужом ключе), WebSocket и httpupgrade без TLS и с TLS + `--ca`, gRPC поверх REALITY, xhttp во всех режимах (HTTP/1.1, h2, поверх REALITY; отказы 404/400 с понятной ошибкой), UDP и XUDP (Full Cone), отказ Vision-аккаунта клиенту без flow |
 | `scripts/smoke_xray.sh` | собранный бинарник как у пользователя против Xray-core: SOCKS5 с паролем → REALITY → Vision → VLESS, 1 МиБ внутреннего TLS туда-обратно с переходом на прямую передачу, 20 UDP-датаграмм через XUDP; файл настроек: `--check`, опечатки, вход `mixed` (SOCKS5 и HTTP CONNECT), правило `block`, DNS-вход с запросом через Xray |
+| `scripts/tun_netns.sh` | TUN с `auto_route` в изолированном сетевом пространстве (root) против Xray-core: TCP (32 МиБ туда-обратно), `direct` без петли, `route_exclude`, UDP/XUDP, перехват DNS к 8.8.8.8, fake-IP, возврат маршрутов по Ctrl+C, сеть после `kill -9`, kill switch `strict_route` и `--tun-cleanup` |
 | `scripts/cross_windows.sh` | `.exe` под Windows (mingw-w64) + все тесты и smoke против Xray-core под Wine, `--system-proxy`: запись в реестр и возврат по Ctrl+C |
 | `scripts/interop_go_reality.sh` | 4 теста против REALITY-сервера на Go-библиотеке `XTLS/REALITY` (нужен Go ≥ 1.27) |
 | `scripts/smoke_e2e.sh` | бинарник против Go-стенда; несовместимая ссылка отклоняется при старте |
@@ -316,7 +354,9 @@ core/src/
                        geo.rs (правила, geosite/geoip), outbound.rs
                        (direct, block, dns), vless_out.rs, access.rs,
                        dns/ (upstream.rs: UDP/TCP/DoT/DoH, cache.rs,
-                       fakeip.rs), dns_in.rs (вход DNS)
+                       fakeip.rs), dns_in.rs (вход DNS), tun/ (вход TUN
+                       на ipstack + tun-rs, route.rs: auto_route)
+  net_protect.rs       метка исходящих сокетов (мимо TUN)
   vless/               разбор vless:// (uri.rs), протокол VLESS (protocol.rs),
                        XTLS Vision (vision.rs), UDP-пакеты (udp.rs), XUDP (xudp.rs)
   transport/           tcp_tls.rs (TCP, TLS, REALITY), raw.rs (сокет с выдачей

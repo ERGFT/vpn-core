@@ -135,5 +135,5 @@ cp go.sum go.sandbox.sum
 
 PATH="$(dirname "$GO127"):$PATH" GOTOOLCHAIN=local GOFLAGS=-mod=mod GOPROXY=off GOSUMDB=off \
     go build -modfile=go.sandbox.mod -trimpath -ldflags "-s -w" -o "$DEST/xray" ./main
-"$DEST/xray" version | head -1
+{ "$DEST/xray" version || true; } | head -1 || true
 echo "готово: $DEST/xray"

@@ -127,6 +127,21 @@ pub async fn resolve_server(host: &str, port: u16) -> Result<Vec<SocketAddr>> {
         if at.elapsed() < SERVER_CACHE_FRESH {
             return Ok(addrs.clone());
         }
+        // С TUN системный DNS сам идёт через клиент (и, возможно, через
+        // этот же сервер): ждать его здесь — петля. Отдаём прежние адреса,
+        // а обновляем в фоне.
+        if crate::net_protect::tun_active() {
+            let (h, k) = (host.to_string(), key.clone());
+            tokio::spawn(async move {
+                if let Ok(a) = resolve_host(&h, port).await {
+                    server_cache()
+                        .lock()
+                        .unwrap()
+                        .insert(k, (a, std::time::Instant::now()));
+                }
+            });
+            return Ok(addrs.clone());
+        }
     }
     match resolve_host(host, port).await {
         Ok(addrs) => {
@@ -193,7 +208,8 @@ pub async fn connect_host(host: &str, port: u16) -> Result<TcpStream> {
 pub async fn connect_addrs(addrs: &[SocketAddr], what: &str) -> Result<TcpStream> {
     let mut last_err = None;
     for sa in addrs {
-        match tokio::time::timeout(CONNECT_TIMEOUT, TcpStream::connect(sa)).await {
+        let connect = async { crate::net_protect::tcp_socket(sa)?.connect(*sa).await };
+        match tokio::time::timeout(CONNECT_TIMEOUT, connect).await {
             Ok(Ok(tcp)) => {
                 tcp.set_nodelay(true).ok();
                 return Ok(tcp);

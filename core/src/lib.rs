@@ -10,8 +10,9 @@
 //!   `fingerprint` — ClientHello как у Chrome 133, разбор, JA3/JA4
 //!   `socks5`      — локальный SOCKS5: CONNECT, UDP ASSOCIATE, логин/пароль
 //!   `relay`       — двусторонний релей, один буфер на направление
-//!   `app`         — клиент целиком: входы → маршрутизатор → выходы,
-//!                   файл настроек
+//!   `app`         — клиент целиком: входы (SOCKS5/HTTP/DNS/TUN) →
+//!                   маршрутизатор → выходы, свой DNS, файл настроек
+//!   `net_protect` — метка исходящих сокетов, чтобы они шли мимо TUN
 //!
 //! Ядро не резолвит DNS самостоятельно для доменных адресов — это
 //! осознанно передаётся серверу (как и в оригинальном VLESS), поэтому
@@ -21,6 +22,7 @@
 pub mod app;
 pub mod error;
 pub mod fingerprint;
+pub mod net_protect;
 pub mod reality;
 pub mod relay;
 pub mod socks5;

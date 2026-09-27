@@ -59,6 +59,7 @@ impl ProxyInbound {
             InboundKind::Http => "HTTP",
             InboundKind::Mixed => "SOCKS5+HTTP",
             InboundKind::Dns => "DNS",
+            InboundKind::Tun => "TUN",
         }
     }
 }
@@ -281,7 +282,7 @@ impl ProxyInbound {
     ) -> Result<Accepted> {
         let socks = match self.kind {
             InboundKind::Socks => true,
-            InboundKind::Http | InboundKind::Dns => false,
+            InboundKind::Http | InboundKind::Dns | InboundKind::Tun => false,
             InboundKind::Mixed => {
                 let mut b = [0u8; 1];
                 if socket.peek(&mut b).await? == 0 {

@@ -70,6 +70,11 @@ struct Args {
     #[arg(long, exclusive = true)]
     system_proxy_off: bool,
 
+    /// Linux: снять правила маршрутизации TUN (и блокировку strict_route),
+    /// оставшиеся после аварийного завершения, и выйти
+    #[arg(long, exclusive = true)]
+    tun_cleanup: bool,
+
     /// vless:// ссылка сервера. В командной строке она видна другим
     /// пользователям машины (список процессов) — надёжнее
     /// --server-file или переменная окружения REALITY_SERVER
@@ -152,13 +157,21 @@ fn config_from_args(args: &Args) -> Result<Config> {
         inbounds: vec![InboundConfig {
             kind: InboundKind::Mixed,
             tag: None,
-            listen: args.listen,
+            listen: Some(args.listen),
             auth,
             auth_file,
             allow_ip: args.allow_ip.clone(),
             max_conns: Some(args.max_conns),
             sniff: args.sniff,
             sniff_override_destination: args.sniff,
+            interface_name: None,
+            inet4_address: None,
+            inet6_address: None,
+            mtu: None,
+            auto_route: None,
+            route_exclude: Vec::new(),
+            strict_route: None,
+            dns_hijack: None,
         }],
         outbounds: vec![OutboundConfig {
             tag: "proxy".into(),
@@ -182,7 +195,7 @@ async fn main() -> Result<()> {
     // По умолчанию — уровень info: иначе при незаданном RUST_LOG было не
     // понять, запустился ли клиент и на каком порту слушает.
     let filter = tracing_subscriber::EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
+        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info,ipstack=error"));
     // Цвета — только в настоящем терминале и не на Windows: в старой
     // консоли cmd.exe escape-последовательности печатаются как мусор.
     let ansi = cfg!(not(windows)) && std::io::IsTerminal::is_terminal(&std::io::stderr());
@@ -192,6 +205,11 @@ async fn main() -> Result<()> {
         .with_ansi(ansi)
         .init();
     let args = Args::parse();
+    if args.tun_cleanup {
+        reality_core::app::tun::route::cleanup()?;
+        println!("правила TUN сняты");
+        return Ok(());
+    }
     if args.system_proxy_off {
         sysproxy::disable()?;
         println!("системный прокси выключен");

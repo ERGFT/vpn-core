@@ -283,6 +283,16 @@ impl Dns {
             .expect("проверено при сборке")
     }
 
+    /// Серверы, заданные именем (их адреса нужно узнать до включения TUN).
+    pub fn server_hosts(&self) -> Vec<(String, u16)> {
+        self.servers.iter().filter_map(|s| s.host_name()).collect()
+    }
+
+    /// Есть ли сервер `local` (системный резолвер).
+    pub fn has_local(&self) -> bool {
+        self.servers.iter().any(|s| s.kind == upstream::Kind::Local)
+    }
+
     pub fn fakeip(&self) -> Option<&FakeIp> {
         self.fakeip.as_ref()
     }

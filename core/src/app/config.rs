@@ -58,6 +58,8 @@ pub enum InboundKind {
     Mixed,
     /// DNS-сервер (UDP и TCP) для системы и программ.
     Dns,
+    /// Виртуальный сетевой интерфейс: весь трафик компьютера (как VPN).
+    Tun,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -66,7 +68,8 @@ pub struct InboundConfig {
     #[serde(rename = "type")]
     pub kind: InboundKind,
     pub tag: Option<String>,
-    pub listen: SocketAddr,
+    /// Адрес входа (у `tun` не бывает).
+    pub listen: Option<SocketAddr>,
     /// `логин:пароль` прямо в файле (лучше — `auth_file`).
     pub auth: Option<String>,
     pub auth_file: Option<PathBuf>,
@@ -80,6 +83,73 @@ pub struct InboundConfig {
     /// Подставлять найденный домен вместо IP (имя разрешит сервер).
     #[serde(default)]
     pub sniff_override_destination: bool,
+
+    // ── только для type = "tun" ──
+    /// Имя интерфейса (по умолчанию `reality-tun`).
+    pub interface_name: Option<String>,
+    /// Адрес интерфейса (по умолчанию `172.19.0.1/30`).
+    pub inet4_address: Option<IpNet>,
+    /// IPv6-адрес интерфейса (по умолчанию `fdfe:dcba:9876::1/126`;
+    /// без IPv6 его трафик шёл бы мимо TUN).
+    pub inet6_address: Option<IpNet>,
+    pub mtu: Option<u16>,
+    /// Направить весь трафик компьютера в TUN (по умолчанию да).
+    pub auto_route: Option<bool>,
+    /// Подсети, которые остаются мимо TUN.
+    #[serde(default)]
+    pub route_exclude: Vec<IpNet>,
+    /// Kill switch (Linux): если клиент упал, трафик не идёт мимо туннеля,
+    /// пока клиент не запущен снова (или `--tun-cleanup`).
+    pub strict_route: Option<bool>,
+    /// Отвечать на DNS-запросы (порт 53 на любой адрес) своим DNS
+    /// (по умолчанию да; нужен раздел [dns]).
+    pub dns_hijack: Option<bool>,
+}
+
+impl InboundConfig {
+    /// Адрес входа; у всех, кроме `tun`, обязателен.
+    pub fn listen_addr(&self) -> Result<SocketAddr> {
+        self.listen.ok_or_else(|| {
+            Error::Config(format!(
+                "вход {}: не задан listen",
+                self.tag.as_deref().unwrap_or("без tag")
+            ))
+        })
+    }
+
+    fn has_tun_fields(&self) -> bool {
+        self.interface_name.is_some()
+            || self.inet4_address.is_some()
+            || self.inet6_address.is_some()
+            || self.mtu.is_some()
+            || self.auto_route.is_some()
+            || !self.route_exclude.is_empty()
+            || self.strict_route.is_some()
+            || self.dns_hijack.is_some()
+    }
+
+    /// Поля, которые бывают только у одного вида входа.
+    pub fn check_fields(&self) -> Result<()> {
+        let tag = self.tag.as_deref().unwrap_or("без tag");
+        match self.kind {
+            InboundKind::Tun => {
+                if self.listen.is_some() || self.auth.is_some() || self.auth_file.is_some() {
+                    return Err(Error::Config(format!(
+                        "вход {tag}: у tun не бывает listen и пароля"
+                    )));
+                }
+            }
+            _ => {
+                if self.has_tun_fields() {
+                    return Err(Error::Config(format!(
+                        "вход {tag}: interface_name, inet4_address, auto_route и т.п. — только у type = \"tun\""
+                    )));
+                }
+                self.listen_addr()?;
+            }
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]

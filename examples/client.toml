@@ -35,6 +35,18 @@ sniff = true                   # домен по TLS SNI / HTTP Host, когда
 # type = "dns"
 # listen = "127.0.0.1:53"
 
+# TUN — весь трафик компьютера через клиент, как у VPN (нужны права
+# администратора/root; на Windows — wintun.dll рядом с программой).
+# DNS-запросы (порт 53 на любой адрес) отвечает раздел [dns] ниже.
+# [[inbounds]]
+# type = "tun"
+# sniff = true
+# # auto_route = true             # весь трафик в TUN (по умолчанию)
+# # strict_route = true           # kill switch (Linux): упал клиент — сеть закрыта
+# # route_exclude = ["192.168.0.0/16"]   # подсети мимо TUN
+# # inet4_address = "172.19.0.1/30"
+# # mtu = 1500
+
 # ── Выходы: куда уходят соединения ──────────────────────────────────
 [[outbounds]]
 tag = "proxy"

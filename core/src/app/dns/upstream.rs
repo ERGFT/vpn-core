@@ -216,6 +216,16 @@ impl Upstream {
         })
     }
 
+    /// Имя сервера, если он задан именем (не IP): `tls://dns.google`.
+    pub fn host_name(&self) -> Option<(String, u16)> {
+        match &self.host {
+            Address::Domain(d) if !matches!(self.kind, Kind::Local | Kind::FakeIp) => {
+                Some((d.clone(), self.port))
+            }
+            _ => None,
+        }
+    }
+
     pub fn is_fake(&self) -> bool {
         self.kind == Kind::FakeIp
     }
