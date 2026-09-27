@@ -1,0 +1,40 @@
+# Выпуск: git tag v0.2.0 && git push origin v0.2.0 — собирает .exe для
+# Windows и бинарник для Linux и прикладывает их к релизу (черновику).
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - os: windows-latest
+            bin: target/release/reality-client.exe
+            asset: reality-client-windows-x86_64.exe
+          - os: ubuntu-latest
+            bin: target/release/reality-client
+            asset: reality-client-linux-x86_64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: ilammy/setup-nasm@v1
+        if: runner.os == 'Windows'
+      - run: cargo build --release -p reality-client
+      - name: имя файла и SHA-256
+        shell: bash
+        run: |
+          cp "${{ matrix.bin }}" "${{ matrix.asset }}"
+          sha256sum "${{ matrix.asset }}" > "${{ matrix.asset }}.sha256"
+      - uses: softprops/action-gh-release@v2
+        with:
+          draft: true
+          files: |
+            ${{ matrix.asset }}
+            ${{ matrix.asset }}.sha256

@@ -1,0 +1,69 @@
+# Проверка на каждый push и pull request.
+#
+# linux   — весь scripts/ci.sh: fmt, clippy, тесты, release-сборка, интероп
+#           с Go REALITY-сервером и с настоящим Xray-core, smoke, сверка .srs
+#           с sing-box, эталон отпечатка Chrome; отдельно — TUN в netns (root).
+# windows — на настоящей Windows (не Wine): тесты, сборка .exe, служба и
+#           TUN (Wintun, маршруты) с настоящим трафиком.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  linux:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+          cache: false
+      - uses: Swatinem/rust-cache@v2
+      - name: Xray-core и sing-box для интероп-тестов
+        run: |
+          bash scripts/fetch_xray.sh
+          bash scripts/fetch_sing_box.sh
+      - name: scripts/ci.sh
+        run: bash scripts/ci.sh
+      - name: TUN в изолированном netns (root)
+        run: sudo -E env "PATH=$PATH" XRAY_BIN="$PWD/target/xray/xray" CLIENT_BIN="$PWD/target/release/reality-client" bash scripts/tun_netns.sh
+
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: ilammy/setup-nasm@v1
+      - uses: Swatinem/rust-cache@v2
+      - name: clippy (код только для Windows)
+        run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: тесты
+        run: cargo test --workspace
+      - name: сборка
+        run: cargo build --release -p reality-client
+      - uses: actions/upload-artifact@v4
+        with:
+          name: reality-client-windows
+          path: target/release/reality-client.exe
+      - name: служба и TUN на настоящей Windows
+        shell: pwsh
+        run: ./scripts/windows_live_test.ps1 -Exe target/release/reality-client.exe

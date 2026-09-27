@@ -504,6 +504,15 @@ scripts/ci.sh --quick  # только fmt, clippy, тесты
 | `scripts/check_chrome_fingerprint.sh` | не устарел ли эталон Chrome в utls: cipher suites, набор расширений, `signature_algorithms` (стоит запускать раз в месяц-два) |
 | `cargo run -p fpcheck -- --server 'vless://...'` | JA3/JA4 реального ClientHello этого клиента |
 
+На GitHub то же самое делает сама платформа (`.github/workflows/ci.yml`) на
+каждый push в `main` и каждый pull request: на Linux — весь `scripts/ci.sh`
+(включая интероп с Go-сервером REALITY и Xray-core) и TUN в netns; на
+**настоящей Windows** — тесты, сборка `.exe` (его можно скачать со
+страницы запуска, «Artifacts») и `scripts/windows_live_test.ps1`: служба,
+права её папки и TUN с настоящим трафиком. Выпуск —
+`git tag v0.2.0 && git push origin v0.2.0`: `.github/workflows/release.yml`
+собирает бинарники для Windows и Linux с SHA-256 в черновик релиза.
+
 Xray-core для тестов: `scripts/fetch_xray.sh` (скачать релиз) или
 `scripts/build_xray_from_source.sh` (собрать из исходников по git — для
 сред без доступа к релизам и `proxy.golang.org`). В такой же среде

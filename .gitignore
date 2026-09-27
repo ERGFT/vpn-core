@@ -1,2 +1,28 @@
 /target
 /dist
+
+# Секреты и личные настройки — никогда в репозиторий (ссылка на сервер =
+# UUID, адрес подписки, пароли, токен API).
+server.txt
+trojan.txt
+subscription.txt
+auth.txt
+lan-auth.txt
+api-token.txt
+*.subscription
+fakeip.txt
+/client.toml
+/config.toml
+*.log
+*.log.old
+
+# Скачиваемые базы и наборы правил.
+geosite.dat
+geoip.dat
+dlc.dat
+/*.srs
+
+# Рабочие папки Claude и редакторов.
+/Claude outputs/
+.vscode/
+.idea/
