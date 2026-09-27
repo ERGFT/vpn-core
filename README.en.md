@@ -637,8 +637,11 @@ cargo run -p bench --bin memwatch -- --pid <PID> --duration-secs 30 --csv rss.cs
 
 ## Contributing
 
-How to send a fix — [CONTRIBUTING.md](CONTRIBUTING.md); how to report a
-vulnerability privately — [SECURITY.md](SECURITY.md).
+How to send a fix — [CONTRIBUTING.md](CONTRIBUTING.md#english); how to
+report a vulnerability privately — [SECURITY.md](SECURITY.md#english); where
+to get help — [SUPPORT.md](SUPPORT.md#english); community rules —
+[CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md#english); what changed —
+[CHANGELOG.md](CHANGELOG.md#english).
 
 ## License
 

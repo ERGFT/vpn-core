@@ -1,0 +1,265 @@
+[Русский](#кодекс-поведения) | [English](#english)
+
+# Кодекс поведения
+
+Это перевод [Contributor Covenant](https://www.contributor-covenant.org)
+версии 2.1; при расхождениях действует английский текст ниже.
+
+## Наше обязательство
+
+Мы, участники, авторы и ведущие проекта, обязуемся сделать участие в
+нашем сообществе свободным от притеснений для всех — независимо от
+возраста, телосложения, видимой или невидимой инвалидности, этнической
+принадлежности, половых признаков, гендерной идентичности и её
+выражения, уровня опыта, образования, социально-экономического
+положения, национальности, внешности, расы, касты, цвета кожи, религии
+или сексуальной идентичности и ориентации.
+
+Мы обязуемся вести себя и взаимодействовать так, чтобы сообщество было
+открытым, доброжелательным, разнообразным, инклюзивным и здоровым.
+
+## Наши стандарты
+
+Примеры поведения, которое помогает создать хорошую обстановку в
+сообществе:
+
+- проявлять сочувствие и доброту к другим людям;
+- уважать мнения, точки зрения и опыт, отличные от собственных;
+- давать и достойно принимать конструктивную обратную связь;
+- брать ответственность, извиняться перед теми, кого затронули наши
+  ошибки, и учиться на этом опыте;
+- думать о том, что лучше не только для каждого из нас, но и для
+  сообщества в целом.
+
+Примеры недопустимого поведения:
+
+- сексуализированные высказывания или изображения, а также
+  сексуальное внимание или ухаживания в любой форме;
+- троллинг, оскорбительные или уничижительные комментарии, личные или
+  политические нападки;
+- публичные или частные притеснения;
+- публикация чужой личной информации, например физического или
+  электронного адреса, без явного разрешения;
+- иное поведение, которое разумно считать неуместным в
+  профессиональной среде.
+
+## Обязанности по соблюдению
+
+Ведущие сообщества отвечают за разъяснение и соблюдение наших
+стандартов допустимого поведения и принимают уместные и справедливые
+меры в ответ на любое поведение, которое они сочтут неуместным,
+угрожающим, оскорбительным или вредным.
+
+Ведущие сообщества вправе удалять, редактировать или отклонять
+комментарии, коммиты, код, правки вики, issue и другие материалы, не
+соответствующие этому кодексу, и сообщают причины своих решений о
+модерации, когда это уместно.
+
+## Область действия
+
+Кодекс действует во всех пространствах сообщества, а также когда
+человек официально представляет сообщество в публичных местах. Примеры
+представительства: использование официального адреса электронной почты,
+публикации от имени официального аккаунта в соцсетях, участие в
+мероприятии в роли назначенного представителя.
+
+## Соблюдение
+
+О случаях оскорбительного, притесняющего или иного недопустимого
+поведения можно сообщить ведущему проекта — [@ERGFT](https://github.com/ERGFT)
+(адрес электронной почты — в профиле GitHub). Все жалобы будут
+рассмотрены быстро и справедливо.
+
+Все ведущие сообщества обязаны уважать частную жизнь и безопасность
+того, кто сообщил о нарушении.
+
+## Правила применения
+
+Ведущие сообщества руководствуются этими правилами, определяя
+последствия за любое действие, которое они сочтут нарушением кодекса.
+
+### 1. Исправление
+
+**Влияние на сообщество**: неуместные выражения или иное поведение,
+которое сочтено непрофессиональным или нежелательным в сообществе.
+
+**Последствия**: частное письменное предупреждение от ведущих
+сообщества с объяснением, в чём состояло нарушение и почему поведение
+было неуместным. Может потребоваться публичное извинение.
+
+### 2. Предупреждение
+
+**Влияние на сообщество**: нарушение в результате отдельного случая или
+серии действий.
+
+**Последствия**: предупреждение с последствиями за продолжение такого
+поведения. Какое-то время — никакого взаимодействия с участниками
+разбирательства, включая непрошеное общение с ведущими сообщества. Это
+касается и пространств сообщества, и внешних каналов, например
+соцсетей. Нарушение этих условий может привести к временному или
+постоянному запрету.
+
+### 3. Временный запрет
+
+**Влияние на сообщество**: серьёзное нарушение стандартов сообщества,
+включая продолжительное неуместное поведение.
+
+**Последствия**: временный запрет на любое взаимодействие или публичное
+общение с сообществом на определённый срок. Всё это время запрещено
+любое публичное или частное общение с участниками разбирательства,
+включая непрошеное общение с ведущими сообщества. Нарушение этих
+условий может привести к постоянному запрету.
+
+### 4. Постоянный запрет
+
+**Влияние на сообщество**: систематическое нарушение стандартов
+сообщества, включая продолжительное неуместное поведение, притеснение
+человека, агрессию по отношению к группам людей или их унижение.
+
+**Последствия**: постоянный запрет на любое публичное взаимодействие с
+сообществом.
+
+## Источник
+
+Кодекс основан на [Contributor Covenant][homepage] версии 2.1:
+<https://www.contributor-covenant.org/version/2/1/code_of_conduct.html>.
+Правила применения вдохновлены [лестницей мер][Mozilla CoC] из кодекса
+поведения Mozilla. Ответы на частые вопросы — <https://www.contributor-covenant.org/faq>,
+переводы — <https://www.contributor-covenant.org/translations>.
+
+---
+
+<a id="english"></a>
+
+# Contributor Covenant Code of Conduct
+
+## Our Pledge
+
+We as members, contributors, and leaders pledge to make participation in our
+community a harassment-free experience for everyone, regardless of age, body
+size, visible or invisible disability, ethnicity, sex characteristics, gender
+identity and expression, level of experience, education, socio-economic status,
+nationality, personal appearance, race, caste, color, religion, or sexual
+identity and orientation.
+
+We pledge to act and interact in ways that contribute to an open, welcoming,
+diverse, inclusive, and healthy community.
+
+## Our Standards
+
+Examples of behavior that contributes to a positive environment for our
+community include:
+
+* Demonstrating empathy and kindness toward other people
+* Being respectful of differing opinions, viewpoints, and experiences
+* Giving and gracefully accepting constructive feedback
+* Accepting responsibility and apologizing to those affected by our mistakes,
+  and learning from the experience
+* Focusing on what is best not just for us as individuals, but for the overall
+  community
+
+Examples of unacceptable behavior include:
+
+* The use of sexualized language or imagery, and sexual attention or advances of
+  any kind
+* Trolling, insulting or derogatory comments, and personal or political attacks
+* Public or private harassment
+* Publishing others' private information, such as a physical or email address,
+  without their explicit permission
+* Other conduct which could reasonably be considered inappropriate in a
+  professional setting
+
+## Enforcement Responsibilities
+
+Community leaders are responsible for clarifying and enforcing our standards of
+acceptable behavior and will take appropriate and fair corrective action in
+response to any behavior that they deem inappropriate, threatening, offensive,
+or harmful.
+
+Community leaders have the right and responsibility to remove, edit, or reject
+comments, commits, code, wiki edits, issues, and other contributions that are
+not aligned to this Code of Conduct, and will communicate reasons for moderation
+decisions when appropriate.
+
+## Scope
+
+This Code of Conduct applies within all community spaces, and also applies when
+an individual is officially representing the community in public spaces.
+Examples of representing our community include using an official e-mail address,
+posting via an official social media account, or acting as an appointed
+representative at an online or offline event.
+
+## Enforcement
+
+Instances of abusive, harassing, or otherwise unacceptable behavior may be
+reported to the project maintainer, [@ERGFT](https://github.com/ERGFT) (the
+e-mail address is on the GitHub profile). All complaints will be reviewed and
+investigated promptly and fairly.
+
+All community leaders are obligated to respect the privacy and security of the
+reporter of any incident.
+
+## Enforcement Guidelines
+
+Community leaders will follow these Community Impact Guidelines in determining
+the consequences for any action they deem in violation of this Code of Conduct:
+
+### 1. Correction
+
+**Community Impact**: Use of inappropriate language or other behavior deemed
+unprofessional or unwelcome in the community.
+
+**Consequence**: A private, written warning from community leaders, providing
+clarity around the nature of the violation and an explanation of why the
+behavior was inappropriate. A public apology may be requested.
+
+### 2. Warning
+
+**Community Impact**: A violation through a single incident or series of
+actions.
+
+**Consequence**: A warning with consequences for continued behavior. No
+interaction with the people involved, including unsolicited interaction with
+those enforcing the Code of Conduct, for a specified period of time. This
+includes avoiding interactions in community spaces as well as external channels
+like social media. Violating these terms may lead to a temporary or permanent
+ban.
+
+### 3. Temporary Ban
+
+**Community Impact**: A serious violation of community standards, including
+sustained inappropriate behavior.
+
+**Consequence**: A temporary ban from any sort of interaction or public
+communication with the community for a specified period of time. No public or
+private interaction with the people involved, including unsolicited interaction
+with those enforcing the Code of Conduct, is allowed during this period.
+Violating these terms may lead to a permanent ban.
+
+### 4. Permanent Ban
+
+**Community Impact**: Demonstrating a pattern of violation of community
+standards, including sustained inappropriate behavior, harassment of an
+individual, or aggression toward or disparagement of classes of individuals.
+
+**Consequence**: A permanent ban from any sort of public interaction within the
+community.
+
+## Attribution
+
+This Code of Conduct is adapted from the [Contributor Covenant][homepage],
+version 2.1, available at
+[https://www.contributor-covenant.org/version/2/1/code_of_conduct.html][v2.1].
+
+Community Impact Guidelines were inspired by
+[Mozilla's code of conduct enforcement ladder][Mozilla CoC].
+
+For answers to common questions about this code of conduct, see the FAQ at
+[https://www.contributor-covenant.org/faq][FAQ]. Translations are available at
+[https://www.contributor-covenant.org/translations][translations].
+
+[homepage]: https://www.contributor-covenant.org
+[v2.1]: https://www.contributor-covenant.org/version/2/1/code_of_conduct.html
+[Mozilla CoC]: https://github.com/mozilla/diversity
+[FAQ]: https://www.contributor-covenant.org/faq
+[translations]: https://www.contributor-covenant.org/translations

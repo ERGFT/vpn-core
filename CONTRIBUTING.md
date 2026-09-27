@@ -2,7 +2,8 @@
 
 # Как внести изменения
 
-Спасибо, что решили помочь. Коротко о том, как здесь принято.
+Спасибо, что решили помочь. Коротко о том, как здесь принято. Участвуя,
+вы соглашаетесь с [кодексом поведения](CODE_OF_CONDUCT.md).
 
 ## Лицензия правок
 
@@ -35,8 +36,8 @@ scripts/ci.sh           # плюс release-сборка, интероп с Xray-
   возможности с проверкой против настоящего Xray-core
   (`scripts/interop_xray.sh`).
 - Меняется то, что видит пользователь, — обновите `README.md` и
-  `README.en.md`; меняется
-  решение или открывается риск — `PLAN.md`.
+  `README.en.md` и допишите строку в `CHANGELOG.md` (раздел «Не выпущено»);
+  меняется решение или открывается риск — `PLAN.md`.
 - Комментарии в коде, `PLAN.md` и сообщения коммитов — на русском, как в
   остальном проекте; документация для пользователя — на двух языках
   (`*.md` и `*.en.md`); issue и pull request — на русском или английском.
@@ -51,7 +52,8 @@ scripts/ci.sh           # плюс release-сборка, интероп с Xray-
 
 # Contributing
 
-Thanks for helping out. Here is how things are done here.
+Thanks for helping out. Here is how things are done here. By taking part
+you agree to the [Code of Conduct](CODE_OF_CONDUCT.md#english).
 
 ## License of contributions
 
@@ -82,7 +84,8 @@ CI on GitHub runs the same — on Linux and on real Windows.
   `// SPDX-License-Identifier: GPL-3.0-or-later` (or with `#`).
 - New behaviour comes with a test; anything protocol-related — where
   possible with a check against real Xray-core (`scripts/interop_xray.sh`).
-- If what the user sees changes, update both `README.md` and `README.en.md`;
+- If what the user sees changes, update both `README.md` and `README.en.md`
+  and add a line to `CHANGELOG.md` (the "Unreleased" section);
   if a decision changes or a risk appears — `PLAN.md`.
 - Code comments, `PLAN.md` and commit messages are in Russian, like the rest
   of the project; issues and pull requests may be in English or Russian.

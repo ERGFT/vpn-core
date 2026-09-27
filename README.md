@@ -637,7 +637,10 @@ cargo run -p bench --bin memwatch -- --pid <PID> --duration-secs 30 --csv rss.cs
 ## Участие
 
 Как прислать исправление — [CONTRIBUTING.md](CONTRIBUTING.md); как
-закрыто сообщить об уязвимости — [SECURITY.md](SECURITY.md).
+закрыто сообщить об уязвимости — [SECURITY.md](SECURITY.md); где искать
+помощь — [SUPPORT.md](SUPPORT.md); правила общения —
+[CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md); что изменилось —
+[CHANGELOG.md](CHANGELOG.md).
 
 ## Лицензия
 
