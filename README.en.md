@@ -552,7 +552,8 @@ core/src/
                        (direct, block, dns), vless_out.rs, access.rs,
                        dns/ (upstream.rs: UDP/TCP/DoT/DoH/DoQ, cache.rs,
                        fakeip.rs), dns_in.rs (DNS inbound), tun/ (TUN inbound
-                       on ipstack + tun-rs, route.rs: auto_route)
+                       on smoltcp + tun-rs, udp.rs: UDP flows,
+                       route.rs: auto_route)
   net_protect.rs       marking outgoing sockets (bypassing TUN)
   vless/               vless:// parsing (uri.rs), VLESS protocol (protocol.rs),
                        XTLS Vision (vision.rs), UDP packets (udp.rs), XUDP (xudp.rs)

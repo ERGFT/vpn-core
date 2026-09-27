@@ -59,7 +59,7 @@ regex.workspace = true
 hickory-proto.workspace = true
 yaml_serde.workspace = true
 tun-rs.workspace = true
-ipstack.workspace = true
+netstack-smoltcp.workspace = true
 socket2.workspace = true
 
 [target.'cfg(windows)'.dependencies]

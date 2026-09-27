@@ -1,13 +1,15 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Вход `tun`: виртуальный сетевой интерфейс, как у VPN. Весь трафик
 //! компьютера (при `auto_route`) попадает в интерфейс, свой TCP/IP-стек
-//! (`ipstack`) превращает пакеты в соединения, и дальше они идут тем же
-//! путём, что и соединения из SOCKS5: маршрутизатор → выход.
+//! (smoltcp через `netstack-smoltcp`) превращает пакеты в соединения, и
+//! дальше они идут тем же путём, что и соединения из SOCKS5:
+//! маршрутизатор → выход.
 //!
 //! - TCP: соединение с приложением принимается сразу, выход открывается
-//!   следом; не открылся — приложению уходит сброс.
-//! - UDP: поток на каждую пару (приложение, назначение); ответы идут от
-//!   того адреса, куда приложение отправляло (в том числе от fake-IP).
+//!   следом; не открылся — соединение с приложением закрывается.
+//! - UDP: поток на каждую пару (приложение, назначение), см. [`udp`];
+//!   ответы идут от того адреса, куда приложение отправляло (в том числе
+//!   от fake-IP).
 //! - DNS (порт 53 на любой адрес, UDP и TCP) при `dns_hijack` отвечает
 //!   свой DNS-модуль — что бы ни было записано в настройках системы.
 //! - Широковещательные и групповые пакеты, ICMP — отбрасываются.
@@ -16,17 +18,14 @@
 //! [`crate::net_protect`] и [`route`].
 
 pub mod route;
+mod udp;
 
 use std::net::{IpAddr, SocketAddr};
-use std::pin::Pin;
 use std::sync::Arc;
-use std::task::{Context, Poll};
 use std::time::Duration;
 
-use ipstack::{
-    IpStack, IpStackConfig, IpStackStream, IpStackTcpStream, IpStackUdpStream, TcpConfig,
-};
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadBuf};
+use futures_util::{SinkExt, StreamExt};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 use super::access::IpNet;
 use super::dns::{answer_bytes, Dns};
@@ -64,44 +63,45 @@ pub struct TunInbound {
     pub settings: TunSettings,
 }
 
-/// Пакетный ввод-вывод устройства как поток для `ipstack`: одно чтение —
-/// один пакет, одна запись — один пакет.
-struct TunIo(tun_rs::AsyncDevice);
+/// Окно TCP к приложению (буферы приёма и отправки стека, байт).
+const TCP_WINDOW: u32 = 256 * 1024;
+/// Очереди пакетов между устройством и стеком.
+const PACKET_QUEUE: usize = 4096;
 
-impl AsyncRead for TunIo {
-    fn poll_read(
-        self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-        buf: &mut ReadBuf<'_>,
-    ) -> Poll<std::io::Result<()>> {
-        let dst = buf.initialize_unfilled();
-        match self.0.poll_recv(cx, dst) {
-            Poll::Ready(Ok(n)) => {
-                buf.advance(n);
-                Poll::Ready(Ok(()))
+/// Перекачка пакетов между устройством и стеком в обе стороны.
+async fn pump(dev: tun_rs::AsyncDevice, stack: netstack_smoltcp::Stack, mtu: u16) -> Result<()> {
+    let dev = Arc::new(dev);
+    let (mut to_stack, mut from_stack) = stack.split();
+    let rx_dev = dev.clone();
+    let inbound = async move {
+        // С запасом над MTU: устройство может отдать пакет чуть длиннее.
+        let mut buf = vec![0u8; mtu as usize + 256];
+        loop {
+            let n = rx_dev.recv(&mut buf).await?;
+            if n == 0 {
+                continue;
             }
-            Poll::Ready(Err(e)) => Poll::Ready(Err(e)),
-            Poll::Pending => Poll::Pending,
+            // Битый пакет стек отвергает ошибкой — это не повод
+            // останавливать весь TUN.
+            if let Err(e) = to_stack.send(buf[..n].to_vec()).await {
+                if e.kind() == std::io::ErrorKind::BrokenPipe {
+                    return Err::<(), std::io::Error>(e);
+                }
+                tracing::trace!(error = %e, "tun: пакет отброшен стеком");
+            }
         }
+    };
+    let outbound = async move {
+        while let Some(p) = from_stack.next().await {
+            dev.send(&p?).await?;
+        }
+        Ok::<(), std::io::Error>(())
+    };
+    tokio::select! {
+        r = inbound => r,
+        r = outbound => r,
     }
-}
-
-impl AsyncWrite for TunIo {
-    fn poll_write(
-        self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-        buf: &[u8],
-    ) -> Poll<std::io::Result<usize>> {
-        self.0.poll_send(cx, buf)
-    }
-
-    fn poll_flush(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
-        Poll::Ready(Ok(()))
-    }
-
-    fn poll_shutdown(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
-        Poll::Ready(Ok(()))
-    }
+    .map_err(|e| Error::Protocol(format!("tun: устройство: {e}")))
 }
 
 fn ip_address(ip: IpAddr) -> Address {
@@ -213,63 +213,78 @@ impl TunInbound {
         device: TunDevice,
         routers: Arc<RouterHandle>,
     ) -> Result<()> {
-        let mut cfg = IpStackConfig::default();
-        cfg.mtu(self.settings.mtu)
-            .map_err(|e| Error::Config(format!("tun: mtu: {e}")))?;
-        cfg.udp_timeout(UDP_IDLE);
-        let mut tcp = TcpConfig::default();
-        // По умолчанию у ipstack окно 16 КиБ и простой 60 с: для
-        // скачиваний мало, а долгие тихие соединения (SSH) рвались бы
-        // (простой и так ограничивает релей). Опцию MSS в SYN-ACK не
-        // ставим: с ней ipstack 1.0 на проверке терял соединения
-        // (scripts/tun_netns.sh, 4 из 4), без неё — ни разу, ~85 МиБ/с.
-        tcp.max_unacked_bytes = 512 * 1024;
-        tcp.read_buffer_size = 256 * 1024;
-        tcp.timeout = Duration::from_secs(3600);
-        tcp.max_retransmit_count = 8;
-        cfg.with_tcp_config(tcp);
-        let mut stack = IpStack::new(cfg, TunIo(device.dev));
+        let stack_err = |e: std::io::Error| Error::Protocol(format!("tun: стек: {e}"));
+        let (stack, runner, udp, tcp) = netstack_smoltcp::StackBuilder::default()
+            .enable_tcp(true)
+            .enable_udp(true)
+            .mtu(self.settings.mtu as usize)
+            // Окно TCP к приложению: пропускная способность одного
+            // соединения — окно ÷ RTT. Память буферов выделяется сразу, но
+            // страницы, в которые ещё не писали, система не заводит.
+            .tcp_recv_buffer_size(TCP_WINDOW)
+            .tcp_send_buffer_size(TCP_WINDOW)
+            // Очереди пакетов между устройством и стеком (в пакетах).
+            .stack_buffer_size(PACKET_QUEUE)
+            .tcp_buffer_size(PACKET_QUEUE)
+            .udp_buffer_size(PACKET_QUEUE)
+            .build()
+            .map_err(stack_err)?;
+        let (Some(runner), Some(udp), Some(mut tcp)) = (runner, udp, tcp) else {
+            return Err(Error::Protocol("tun: стек собран без TCP/UDP".into()));
+        };
         let slots = Arc::new(tokio::sync::Semaphore::new(self.settings.max_conns.max(1)));
+        let (udp_read, udp_write) = udp.split();
+        let (udp_tx, mut udp_rx) = tokio::sync::mpsc::channel(PACKET_QUEUE);
+        let mut tasks = tokio::task::JoinSet::new();
+        tasks.spawn(async move { runner.await.map_err(stack_err) });
+        tasks.spawn(pump(device.dev, stack, self.settings.mtu));
+        let udp_slots = slots.clone();
+        tasks.spawn(async move {
+            udp::dispatch(udp_read, udp_write, udp_slots, UDP_IDLE, udp_tx).await;
+            Ok(())
+        });
         loop {
-            let stream = stack
-                .accept()
-                .await
-                .map_err(|e| Error::Protocol(format!("tun: стек остановился: {e}")))?;
-            let Ok(permit) = slots.clone().try_acquire_owned() else {
-                // Переполнено: соединение сбрасывается (стрим уничтожается).
-                tracing::debug!("tun: предел соединений — новое отброшено");
-                continue;
-            };
-            let (this, router) = (self.clone(), routers.get());
-            match stream {
-                IpStackStream::Tcp(t) => {
+            tokio::select! {
+                s = tcp.next() => {
+                    let Some((t, _, _)) = s else {
+                        return Err(Error::Protocol("tun: стек остановился".into()));
+                    };
+                    let Ok(permit) = slots.clone().try_acquire_owned() else {
+                        // Переполнено: соединение закрывается сразу.
+                        tracing::debug!("tun: предел соединений — новое отброшено");
+                        continue;
+                    };
+                    let (this, router) = (self.clone(), routers.get());
                     tokio::spawn(async move {
                         let _permit = permit;
-                        let (src, dst) = (t.local_addr(), t.peer_addr());
+                        let (src, dst) = (*t.local_addr(), *t.remote_addr());
                         if let Err(e) = this.tcp(t, &router).await {
                             tracing::debug!(%src, %dst, error = %e, "tun: TCP-соединение завершилось с ошибкой");
                         }
                     });
                 }
-                IpStackStream::Udp(u) => {
+                Some(u) = udp_rx.recv() => {
+                    let (this, router) = (self.clone(), routers.get());
                     tokio::spawn(async move {
-                        let _permit = permit;
                         let (src, dst) = (u.local_addr(), u.peer_addr());
                         if let Err(e) = this.udp(u, &router).await {
                             tracing::debug!(%src, %dst, error = %e, "tun: UDP-поток завершился с ошибкой");
                         }
                     });
                 }
-                IpStackStream::UnknownTransport(u) => {
-                    tracing::trace!(proto = ?u.ip_protocol(), dst = %u.dst_addr(), "tun: пакет не TCP/UDP — отброшен");
+                Some(r) = tasks.join_next() => {
+                    return match r {
+                        Ok(Ok(())) => Err(Error::Protocol("tun: стек остановился".into())),
+                        Ok(Err(e)) => Err(e),
+                        Err(e) => Err(Error::Protocol(format!("tun: стек: {e}"))),
+                    };
                 }
-                IpStackStream::UnknownNetwork(_) => {}
             }
         }
     }
 
-    async fn tcp(&self, mut t: IpStackTcpStream, router: &Router) -> Result<()> {
-        let (src, dst) = (t.local_addr(), t.peer_addr());
+    async fn tcp(&self, mut t: netstack_smoltcp::TcpStream, router: &Router) -> Result<()> {
+        let (src, dst) = (*t.local_addr(), *t.remote_addr());
         if is_local_only(dst.ip()) {
             return Ok(());
         }
@@ -315,7 +330,7 @@ impl TunInbound {
         Ok(())
     }
 
-    async fn udp(&self, mut u: IpStackUdpStream, router: &Router) -> Result<()> {
+    async fn udp(&self, mut u: udp::UdpFlow, router: &Router) -> Result<()> {
         let (src, dst) = (u.local_addr(), u.peer_addr());
         if is_local_only(dst.ip()) {
             return Ok(());
@@ -382,7 +397,7 @@ impl TunInbound {
                 r = session.recv() => {
                     match r? {
                         // Ответ пишется «от» адреса, куда отправляло
-                        // приложение (так устроен поток ipstack).
+                        // приложение (так устроен [`udp::UdpFlow`]).
                         Some((_, _, data)) => {
                             conn.add_down(data.len() as u64);
                             u.write_all(&data).await?
@@ -397,7 +412,7 @@ impl TunInbound {
 }
 
 /// DNS поверх TCP: запросы с длиной впереди.
-async fn dns_over_tcp(dns: &Dns, t: &mut IpStackTcpStream) -> Result<()> {
+async fn dns_over_tcp<S: AsyncRead + AsyncWrite + Unpin>(dns: &Dns, t: &mut S) -> Result<()> {
     loop {
         let mut len = [0u8; 2];
         match tokio::time::timeout(Duration::from_secs(30), t.read_exact(&mut len)).await {

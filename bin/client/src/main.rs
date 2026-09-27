@@ -248,8 +248,9 @@ fn config_from_args(args: &Args) -> Result<Config> {
 fn init_logging(log_file: Option<&std::path::Path>) -> Result<()> {
     // По умолчанию — уровень info: иначе при незаданном RUST_LOG было не
     // понять, запустился ли клиент и на каком порту слушает.
-    let filter = tracing_subscriber::EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info,ipstack=error"));
+    let filter = tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| {
+        tracing_subscriber::EnvFilter::new("info,netstack_smoltcp=error,smoltcp=error")
+    });
     if let Some(path) = log_file {
         if std::fs::metadata(path).is_ok_and(|m| m.len() > 10 << 20) {
             let mut old = path.as_os_str().to_owned();

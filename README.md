@@ -552,7 +552,8 @@ core/src/
                        (direct, block, dns), vless_out.rs, access.rs,
                        dns/ (upstream.rs: UDP/TCP/DoT/DoH/DoQ, cache.rs,
                        fakeip.rs), dns_in.rs (вход DNS), tun/ (вход TUN
-                       на ipstack + tun-rs, route.rs: auto_route)
+                       на smoltcp + tun-rs, udp.rs: потоки UDP,
+                       route.rs: auto_route)
   net_protect.rs       метка исходящих сокетов (мимо TUN)
   vless/               разбор vless:// (uri.rs), протокол VLESS (protocol.rs),
                        XTLS Vision (vision.rs), UDP-пакеты (udp.rs), XUDP (xudp.rs)
