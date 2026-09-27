@@ -45,8 +45,8 @@ mod win {
         InternetSetOptionW, INTERNET_OPTION_REFRESH, INTERNET_OPTION_SETTINGS_CHANGED,
     };
     use windows_sys::Win32::System::Registry::{
-        RegCloseKey, RegDeleteValueW, RegOpenKeyExW, RegQueryValueExW, RegSetValueExW, HKEY,
-        HKEY_CURRENT_USER, KEY_READ, KEY_WRITE, REG_DWORD, REG_SZ,
+        RegCloseKey, RegCreateKeyExW, RegDeleteValueW, RegOpenKeyExW, RegQueryValueExW,
+        RegSetValueExW, HKEY, HKEY_CURRENT_USER, KEY_READ, KEY_WRITE, REG_DWORD, REG_SZ,
     };
 
     const KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Internet Settings";
@@ -71,6 +71,10 @@ mod win {
     }
 
     fn open(write: bool) -> io::Result<Key> {
+        open_key(KEY, write)
+    }
+
+    fn open_key(path: &str, write: bool) -> io::Result<Key> {
         let mut h: HKEY = std::ptr::null_mut();
         let access = if write {
             KEY_READ | KEY_WRITE
@@ -78,8 +82,29 @@ mod win {
             KEY_READ
         };
         // SAFETY: имя — строка с нулём в конце, h — место для результата.
-        check(unsafe { RegOpenKeyExW(HKEY_CURRENT_USER, wide(KEY).as_ptr(), 0, access, &mut h) })?;
+        check(unsafe { RegOpenKeyExW(HKEY_CURRENT_USER, wide(path).as_ptr(), 0, access, &mut h) })?;
         Ok(Key(h))
+    }
+
+    /// Строковое значение в разделе HKCU (`None` — удалить); раздела нет
+    /// — создаётся.
+    pub fn set_user_string(path: &str, name: &str, v: Option<&str>) -> io::Result<()> {
+        let mut h: HKEY = std::ptr::null_mut();
+        // SAFETY: имя — строка с нулём в конце, h — место для результата.
+        check(unsafe {
+            RegCreateKeyExW(
+                HKEY_CURRENT_USER,
+                wide(path).as_ptr(),
+                0,
+                std::ptr::null(),
+                0,
+                KEY_READ | KEY_WRITE,
+                std::ptr::null(),
+                &mut h,
+                std::ptr::null_mut(),
+            )
+        })?;
+        set_string(&Key(h), name, v)
     }
 
     /// Значение как байты и его тип; `None` — значения нет.
@@ -205,6 +230,12 @@ mod win {
         }
         Ok(())
     }
+}
+
+/// Строковое значение в HKCU (для автозапуска); `None` — удалить.
+#[cfg(windows)]
+pub fn set_user_string(path: &str, name: &str, v: Option<&str>) -> Result<()> {
+    win::set_user_string(path, name, v).map_err(|e| anyhow::anyhow!("реестр HKCU\\{path}: {e}"))
 }
 
 /// Включённый системный прокси; при уничтожении возвращает прежние

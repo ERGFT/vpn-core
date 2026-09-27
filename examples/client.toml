@@ -167,6 +167,7 @@ final = "proxy"                # всё остальное — через сер
 # Свой DNS: им разрешает имена выход direct, им отвечает вход type="dns"
 # и выход type="dns". Без этого раздела direct спрашивает системный DNS.
 # Адреса: 1.1.1.1 (UDP), tcp://…, tls://… (DoT), https://…/dns-query (DoH),
+# quic://… (DoQ),
 # local (системный), fakeip. detour — через какой выход ходить к серверу
 # (по умолчанию route.final, то есть через сервер VLESS).
 [dns]

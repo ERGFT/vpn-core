@@ -17,8 +17,8 @@
 //!   любой HTTP-прокси.
 //!
 //! Версия HTTP выбирается как у Xray (`decideHTTPVersion`): REALITY — h2,
-//! без TLS — HTTP/1.1, TLS — HTTP/1.1 только при `alpn=http/1.1`, иначе h2.
-//! HTTP/3 (`alpn=h3`) не поддерживается. HTTP/1.1 — только `packet-up`
+//! без TLS — HTTP/1.1, TLS — HTTP/1.1 только при `alpn=http/1.1`, HTTP/3
+//! при `alpn=h3` (QUIC, quinn + h3), иначе h2. HTTP/1.1 — только `packet-up`
 //! (как и у Xray на практике: потоковые режимы через HTTP/1.1-прокси не
 //! проходят).
 //!
@@ -145,8 +145,10 @@ impl Range {
 #[derive(Debug, Clone)]
 pub struct XhttpSettings {
     pub mode: Mode,
-    /// HTTP/1.1 (иначе h2).
+    /// HTTP/1.1 (иначе h2 или h3).
     pub http11: bool,
+    /// HTTP/3 поверх QUIC (`alpn=h3`, только `security=tls`).
+    pub h3: bool,
     /// `https` в `Referer` и в URI запросов h2.
     pub https: bool,
     /// Заголовок `Host` / `:authority` (без порта — как у Xray).
@@ -380,18 +382,22 @@ impl XhttpSettings {
 
         let https = cfg.security != Security::None;
         let alpn = cfg.alpn();
+        let wants_h3 = alpn
+            .as_deref()
+            .is_some_and(|a| matches!(a, [one] if one.as_slice() == b"h3"));
+        if wants_h3 && cfg.security != Security::Tls {
+            return Err(Error::InvalidUri(
+                "xhttp: HTTP/3 (alpn=h3) — только с security=tls (REALITY работает поверх TCP)"
+                    .into(),
+            ));
+        }
+        let h3 = wants_h3;
         let http11 = match cfg.security {
             Security::None => true,
             Security::Reality => false,
-            Security::Tls => match alpn.as_deref() {
-                Some([one]) if one.as_slice() == b"http/1.1" => true,
-                Some([one]) if one.as_slice() == b"h3" => {
-                    return Err(Error::InvalidUri(
-                        "xhttp поверх HTTP/3 (alpn=h3) не поддерживается".into(),
-                    ))
-                }
-                _ => false,
-            },
+            Security::Tls => {
+                matches!(alpn.as_deref(), Some([one]) if one.as_slice() == b"http/1.1")
+            }
         };
 
         let mode = match cfg.raw_params.get("mode").map(|s| s.as_str()).unwrap_or("") {
@@ -467,6 +473,7 @@ impl XhttpSettings {
         Ok(XhttpSettings {
             mode,
             http11,
+            h3,
             https,
             host,
             path,
@@ -555,6 +562,8 @@ struct Shared {
     cancel: CancellationToken,
     /// Место в общем HTTP/2-соединении (xmux) — на всю сессию.
     lease: std::sync::OnceLock<h2pool::Lease>,
+    /// То же для HTTP/3.
+    lease3: std::sync::OnceLock<h2pool::Lease<h3c::Send3>>,
 }
 
 impl Shared {
@@ -644,7 +653,7 @@ pub async fn connect_xhttp(cfg: &VlessConfig) -> Result<XhttpStream> {
     let shared = Arc::new(Shared::default());
     tracing::debug!(
         mode = ?st.mode,
-        http = if st.http11 { "1.1" } else { "2" },
+        http = if st.http11 { "1.1" } else if st.h3 { "3" } else { "2" },
         host = %st.host,
         "xhttp: соединение"
     );
@@ -654,6 +663,8 @@ pub async fn connect_xhttp(cfg: &VlessConfig) -> Result<XhttpStream> {
     let guard = CancelOnDrop(Some(shared.clone()));
     if st.http11 {
         h1::start(cfg, st, int_down, int_up, shared.clone()).await?;
+    } else if st.h3 {
+        h3c::start(cfg, st, int_down, int_up, shared.clone()).await?;
     } else {
         h2c::start(cfg, st, int_down, int_up, shared.clone()).await?;
     }
@@ -753,7 +764,7 @@ mod h2c {
         b
     }
 
-    fn request(
+    pub(super) fn request(
         st: &XhttpSettings,
         method: &str,
         path: &str,
@@ -1015,6 +1026,257 @@ mod h2c {
     }
 }
 
+/// HTTP/3 поверх QUIC (`security=tls&alpn=h3`), все три режима; соединения
+/// делятся по тем же правилам `xmux`, что и HTTP/2.
+mod h3c {
+    use super::*;
+    use crate::transport::quic;
+    use crate::transport::tcp_tls::resolve_server;
+
+    pub(crate) type Send3 = h3::client::SendRequest<h3_quinn::OpenStreams, Bytes>;
+    type Stream3 = h3::client::RequestStream<h3_quinn::BidiStream<Bytes>, Bytes>;
+    type SendHalf = h3::client::RequestStream<h3_quinn::SendStream<Bytes>, Bytes>;
+    type RecvHalf = h3::client::RequestStream<h3_quinn::RecvStream, Bytes>;
+
+    const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+
+    impl h2pool::Sender for Send3 {
+        fn ready(
+            self,
+        ) -> futures_util::future::BoxFuture<'static, std::result::Result<Self, String>> {
+            // У h3 нет ожидания места: закрытое соединение даст ошибку
+            // на самом запросе.
+            Box::pin(async move { Ok(self) })
+        }
+    }
+
+    async fn connect(c: VlessConfig) -> Result<h2pool::Connected<Send3>> {
+        let addrs = resolve_server(&c.host, c.port).await?;
+        let roots = c.ca_roots.as_ref().map(|r| (**r).clone());
+        let mut last = None;
+        for addr in addrs {
+            let ep = quic::direct_endpoint(addr.is_ipv6())?;
+            let cfg = quic::client_config(roots.clone(), vec![b"h3".to_vec()])?;
+            let conn = match ep.connect_with(cfg, addr, c.effective_sni()) {
+                Ok(connecting) => tokio::time::timeout(CONNECT_TIMEOUT, connecting).await,
+                Err(e) => {
+                    last = Some(quic::connect_error("xhttp", e));
+                    continue;
+                }
+            };
+            let conn = match conn {
+                Ok(Ok(conn)) => conn,
+                Ok(Err(e)) => {
+                    last = Some(quic::connect_error("xhttp", e));
+                    continue;
+                }
+                Err(_) => {
+                    last = Some(Error::Protocol(format!(
+                        "xhttp: QUIC-соединение с {addr} не установилось за {} с \
+                         (UDP к серверу заблокирован?)",
+                        CONNECT_TIMEOUT.as_secs()
+                    )));
+                    continue;
+                }
+            };
+            let (mut driver, send) = h3::client::new(h3_quinn::Connection::new(conn))
+                .await
+                .map_err(|e| Error::Protocol(format!("xhttp: HTTP/3: {e}")))?;
+            let fut: futures_util::future::BoxFuture<'static, ()> = Box::pin(async move {
+                let e = std::future::poll_fn(|cx| driver.poll_close(cx)).await;
+                tracing::debug!(error = %e, "xhttp: HTTP/3-соединение завершилось");
+                drop(ep);
+            });
+            return Ok((send, fut));
+        }
+        Err(last.unwrap_or_else(|| Error::Protocol("xhttp: нет адресов сервера".into())))
+    }
+
+    pub(super) async fn start(
+        cfg: &VlessConfig,
+        st: Arc<XhttpSettings>,
+        down: DuplexStream,
+        up: DuplexStream,
+        shared: Arc<Shared>,
+    ) -> Result<()> {
+        let c = cfg.clone();
+        let lease = h2pool::acquire(&format!("xhttp3|{}", cfg.pool_key()), &st.xmux, move || {
+            Box::pin(connect(c.clone()))
+        })
+        .await?;
+        let mut send = lease.request();
+        let _ = shared.lease3.set(lease);
+        let h3err = |e: h3::error::StreamError| Error::Protocol(format!("xhttp: HTTP/3: {e}"));
+
+        match st.mode {
+            Mode::StreamOne => {
+                let req = h2c::request(&st, &st.method, &st.url_path(None, None), true, None)?;
+                let stream: Stream3 = send.send_request(req).await.map_err(h3err)?;
+                let (tx, rx) = stream.split();
+                tokio::spawn(download(rx, down, shared.clone(), "POST (stream-one)"));
+                tokio::spawn(upload_stream(tx, up, shared));
+            }
+            Mode::StreamUp | Mode::PacketUp => {
+                let session = Uuid::new_v4().to_string();
+                let get =
+                    h2c::request(&st, "GET", &st.url_path(Some(&session), None), false, None)?;
+                let mut stream: Stream3 = send.send_request(get).await.map_err(h3err)?;
+                stream.finish().await.map_err(h3err)?;
+                let (_, rx) = stream.split();
+                tokio::spawn(download(rx, down, shared.clone(), "GET"));
+                if st.mode == Mode::StreamUp {
+                    if let Some(l) = shared.lease3.get() {
+                        l.note_request();
+                    }
+                    let req = h2c::request(
+                        &st,
+                        &st.method,
+                        &st.url_path(Some(&session), None),
+                        true,
+                        None,
+                    )?;
+                    let stream: Stream3 = send.send_request(req).await.map_err(h3err)?;
+                    let (tx, rx) = stream.split();
+                    tokio::spawn(discard_response(rx, shared.clone(), "POST (stream-up)"));
+                    tokio::spawn(upload_stream(tx, up, shared));
+                } else {
+                    tokio::spawn(packet_uploader(send, st, session, up, shared));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    async fn download(mut rx: RecvHalf, mut w: DuplexStream, shared: Arc<Shared>, what: &str) {
+        let work = async {
+            let r = rx
+                .recv_response()
+                .await
+                .map_err(|e| format!("xhttp: сервер не ответил на {what}: {e}"))?;
+            let status = r.status().as_u16();
+            if status != 200 {
+                return Err(format!(
+                    "xhttp: сервер ответил {status} на {what}{}",
+                    status_hint(status)
+                ));
+            }
+            loop {
+                match rx.recv_data().await {
+                    Ok(Some(mut chunk)) => {
+                        let n = bytes::Buf::remaining(&chunk);
+                        let data = bytes::Buf::copy_to_bytes(&mut chunk, n);
+                        if w.write_all(&data).await.is_err() {
+                            break; // приложение закрыло поток
+                        }
+                    }
+                    Ok(None) => break,
+                    Err(e) => return Err(format!("xhttp: поток вниз оборвался: {e}")),
+                }
+            }
+            Ok(())
+        };
+        tokio::select! {
+            _ = shared.cancel.cancelled() => {}
+            r = work => if let Err(e) = r { shared.fail(e) },
+        }
+    }
+
+    async fn discard_response(mut rx: RecvHalf, shared: Arc<Shared>, what: &'static str) {
+        let work = async {
+            let r = rx
+                .recv_response()
+                .await
+                .map_err(|e| format!("xhttp: сервер не ответил на {what}: {e}"))?;
+            let status = r.status().as_u16();
+            if status != 200 {
+                return Err(format!(
+                    "xhttp: сервер ответил {status} на {what}{}",
+                    status_hint(status)
+                ));
+            }
+            while let Ok(Some(_)) = rx.recv_data().await {}
+            Ok(())
+        };
+        tokio::select! {
+            _ = shared.cancel.cancelled() => {}
+            r = work => if let Err(e) = r { shared.fail(e) },
+        }
+    }
+
+    async fn upload_stream(mut tx: SendHalf, mut r: DuplexStream, shared: Arc<Shared>) {
+        let work = async {
+            let mut buf = vec![0u8; READ_CHUNK];
+            loop {
+                let n = match r.read(&mut buf).await {
+                    Ok(0) | Err(_) => break,
+                    Ok(n) => n,
+                };
+                tx.send_data(Bytes::copy_from_slice(&buf[..n]))
+                    .await
+                    .map_err(|e| format!("xhttp: отправка оборвалась: {e}"))?;
+            }
+            let _ = tx.finish().await;
+            Ok::<(), String>(())
+        };
+        tokio::select! {
+            _ = shared.cancel.cancelled() => {}
+            r = work => if let Err(e) = r { shared.fail(e) },
+        }
+    }
+
+    async fn packet_uploader(
+        mut send: Send3,
+        st: Arc<XhttpSettings>,
+        session: String,
+        mut r: DuplexStream,
+        shared: Arc<Shared>,
+    ) {
+        let max = st.max_post.rand().max(1) as usize;
+        let inflight = Arc::new(Semaphore::new(MAX_INFLIGHT_POSTS));
+        let work = async {
+            let mut seq = 0u64;
+            let mut last = None;
+            while let Some(body) = next_packet(&mut r, max, &mut last, st.min_interval_ms)
+                .await
+                .ok()
+                .flatten()
+            {
+                let permit = inflight.clone().acquire_owned().await.unwrap();
+                if let Some(l) = shared.lease3.get() {
+                    l.note_request();
+                }
+                let path = st.url_path(Some(&session), Some(seq));
+                seq += 1;
+                let req = h2c::request(&st, &st.method, &path, false, Some(body.len()))
+                    .map_err(|e| e.to_string())?;
+                let mut stream: Stream3 = send
+                    .send_request(req)
+                    .await
+                    .map_err(|e| format!("xhttp: POST не отправлен: {e}"))?;
+                stream
+                    .send_data(body)
+                    .await
+                    .map_err(|e| format!("xhttp: POST оборвался: {e}"))?;
+                stream
+                    .finish()
+                    .await
+                    .map_err(|e| format!("xhttp: POST оборвался: {e}"))?;
+                let (_, rx) = stream.split();
+                let shared2 = shared.clone();
+                tokio::spawn(async move {
+                    let _permit = permit;
+                    discard_response(rx, shared2, "POST (packet-up)").await;
+                });
+            }
+            Ok::<(), String>(())
+        };
+        tokio::select! {
+            _ = shared.cancel.cancelled() => {}
+            r = work => if let Err(e) = r { shared.fail(e) },
+        }
+    }
+}
+
 /// HTTP/1.1 (без TLS или TLS с `alpn=http/1.1`), только packet-up.
 mod h1 {
     use super::*;
@@ -1231,7 +1493,9 @@ mod tests {
         assert_eq!((s.mode, s.http11), (Mode::StreamOne, false));
         assert_eq!(s.host, "cdn.test");
         assert!(XhttpSettings::from_config(&cfg("security=none&mode=stream-one")).is_err());
-        assert!(XhttpSettings::from_config(&cfg("security=tls&alpn=h3")).is_err());
+        let s = XhttpSettings::from_config(&cfg("security=tls&alpn=h3")).unwrap();
+        assert_eq!((s.mode, s.http11, s.h3), (Mode::PacketUp, false, true));
+        assert!(XhttpSettings::from_config(&cfg("security=reality&alpn=h3&pbk=AAAA")).is_err());
         assert!(XhttpSettings::from_config(&cfg("mode=weird")).is_err());
     }
 

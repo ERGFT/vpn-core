@@ -29,6 +29,8 @@ use std::path::PathBuf;
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 mod sysproxy;
+#[cfg(windows)]
+mod winservice;
 
 use anyhow::{Context, Result};
 use clap::Parser;
@@ -74,6 +76,39 @@ struct Args {
     /// оставшиеся после аварийного завершения, и выйти
     #[arg(long, exclusive = true)]
     tun_cleanup: bool,
+
+    /// Писать журнал в файл (дописывая; больше 10 МБ — старый уходит в
+    /// .old), а не в консоль
+    #[arg(long, value_name = "ФАЙЛ")]
+    log_file: Option<PathBuf>,
+
+    /// Windows: установить (или обновить) службу с этим --config: она
+    /// запускается при старте системы, до входа пользователя (для TUN).
+    /// Настройки копируются в %ProgramData%\RealityClient, закрытую от
+    /// записи обычным пользователям. Нужны права администратора
+    #[arg(long, requires = "config")]
+    service_install: bool,
+
+    /// Windows: остановить и удалить службу
+    #[arg(long, exclusive = true)]
+    service_uninstall: bool,
+
+    /// Windows: запускать при входе в систему (без окна, журнал — рядом с
+    /// файлом настроек); с --system-proxy — и включать системный прокси
+    #[arg(long, requires = "config")]
+    autostart_install: bool,
+
+    /// Windows: убрать запуск при входе в систему
+    #[arg(long, exclusive = true)]
+    autostart_uninstall: bool,
+
+    /// Запуск диспетчером служб Windows (ставит --service-install)
+    #[arg(long, hide = true, requires = "config")]
+    service: bool,
+
+    /// Windows: закрыть окно консоли (для автозапуска)
+    #[arg(long, hide = true)]
+    hide_console: bool,
 
     /// vless:// ссылка сервера. В командной строке она видна другим
     /// пользователям машины (список процессов) — надёжнее
@@ -201,12 +236,30 @@ fn config_from_args(args: &Args) -> Result<Config> {
     })
 }
 
-#[tokio::main]
-async fn main() -> Result<()> {
+/// Журнал: в stderr или в файл (`--log-file`).
+fn init_logging(log_file: Option<&std::path::Path>) -> Result<()> {
     // По умолчанию — уровень info: иначе при незаданном RUST_LOG было не
     // понять, запустился ли клиент и на каком порту слушает.
     let filter = tracing_subscriber::EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info,ipstack=error"));
+    if let Some(path) = log_file {
+        if std::fs::metadata(path).is_ok_and(|m| m.len() > 10 << 20) {
+            let mut old = path.as_os_str().to_owned();
+            old.push(".old");
+            let _ = std::fs::rename(path, old);
+        }
+        let f = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)
+            .with_context(|| format!("журнал {}", path.display()))?;
+        tracing_subscriber::fmt()
+            .with_env_filter(filter)
+            .with_writer(std::sync::Mutex::new(f))
+            .with_ansi(false)
+            .init();
+        return Ok(());
+    }
     // Цвета — только в настоящем терминале и не на Windows: в старой
     // консоли cmd.exe escape-последовательности печатаются как мусор.
     let ansi = cfg!(not(windows)) && std::io::IsTerminal::is_terminal(&std::io::stderr());
@@ -215,7 +268,62 @@ async fn main() -> Result<()> {
         .with_writer(std::io::stderr)
         .with_ansi(ansi)
         .init();
+    Ok(())
+}
+
+fn runtime() -> Result<tokio::runtime::Runtime> {
+    Ok(tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?)
+}
+
+fn main() -> Result<()> {
     let args = Args::parse();
+    init_logging(args.log_file.as_deref())?;
+    #[cfg(windows)]
+    {
+        if args.hide_console {
+            winservice::hide_console();
+        }
+        if args.service_install {
+            return winservice::install(args.config.as_deref().expect("requires"));
+        }
+        if args.service_uninstall {
+            return winservice::uninstall();
+        }
+        if args.autostart_install {
+            return winservice::autostart_install(
+                args.config.as_deref().expect("requires"),
+                args.system_proxy,
+            );
+        }
+        if args.autostart_uninstall {
+            return winservice::autostart_uninstall();
+        }
+        if args.service {
+            return winservice::run_as_service(move |stop| {
+                runtime()?.block_on(run(args, async {
+                    let _ = stop.await;
+                }))
+            });
+        }
+    }
+    #[cfg(not(windows))]
+    if args.service_install
+        || args.service_uninstall
+        || args.autostart_install
+        || args.autostart_uninstall
+        || args.service
+    {
+        anyhow::bail!(
+            "службы и автозапуск здесь — только для Windows; на Linux — systemd \
+             (examples/reality-client.service)"
+        );
+    }
+    runtime()?.block_on(run(args, shutdown_signal()))
+}
+
+async fn run(args: Args, stop: impl std::future::Future<Output = ()>) -> Result<()> {
     if args.tun_cleanup {
         reality_core::app::tun::route::cleanup()?;
         println!("правила TUN сняты");
@@ -256,7 +364,7 @@ async fn main() -> Result<()> {
     };
     tokio::select! {
         r = running.wait() => r?,
-        _ = shutdown_signal() => tracing::info!("завершение по сигналу"),
+        _ = stop => tracing::info!("завершение по сигналу"),
     }
     // Здесь `_system_proxy` уничтожается и возвращает прежние настройки.
     Ok(())

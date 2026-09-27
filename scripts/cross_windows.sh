@@ -104,4 +104,40 @@ grep -q 'прежние настройки возвращены' "$SP_LOG" \
 [[ "$(reg_val ProxyEnable)" == "$BEFORE" ]] || { echo "ProxyEnable не вернулся"; exit 1; }
 rm -f "$SP_LOG"
 echo "OK: системный прокси включён и возвращён при Ctrl+C"
+
+# Служба: установка копирует настройки в %ProgramData%\RealityClient и
+# запускает службу (порт слушает), удаление — останавливает её штатно.
+echo "== служба Windows под Wine"
+"$(dirname "$WINE")/wineserver" -p >/dev/null 2>&1 || wineserver -p >/dev/null 2>&1 || true
+SV_DIR="$(mktemp -d)"
+SV_PORT="$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1])')"
+echo "$SP_LINK" > "$SV_DIR/server.txt"
+printf '[[inbounds]]\ntype = "mixed"\nlisten = "127.0.0.1:%s"\n\n[[outbounds]]\ntag = "proxy"\ntype = "vless"\nlink_file = "server.txt"\n' "$SV_PORT" > "$SV_DIR/client.toml"
+WIN_CFG="Z:$(echo "$SV_DIR/client.toml" | tr / '\\')"
+PD="$WINEPREFIX/drive_c/ProgramData/RealityClient"
+"$WINE" "$EXE" --service-uninstall >/dev/null 2>&1 || true
+# Wine не хранит владельца папки (всегда пользователь), а повторная
+# установка в папку не администратора отказывает — начинаем с чистой.
+rm -rf "$PD"
+"$WINE" "$EXE" --service-install --config "$WIN_CFG" 2>&1 | grep -E "служба|скопирован"
+[[ -f "$PD/client.toml" && -f "$PD/server.txt" && -f "$PD/reality-client.exe" ]] \
+    || { echo "настройки или exe не скопированы в $PD"; exit 1; }
+port_open() { python3 -c "import socket,sys; socket.create_connection(('127.0.0.1',$SV_PORT),2)" 2>/dev/null; }
+for _ in $(seq 1 100); do port_open && break; sleep 0.1; done
+port_open || { echo "служба не открыла порт"; cat "$PD/reality-client.log"; exit 1; }
+"$WINE" "$EXE" --service-uninstall 2>&1 | grep "удалена"
+for _ in $(seq 1 50); do port_open || break; sleep 0.1; done
+port_open && { echo "после удаления служба ещё слушает"; exit 1; }
+grep -q 'завершение по сигналу' "$PD/reality-client.log" || { echo "служба остановлена не штатно"; cat "$PD/reality-client.log"; exit 1; }
+rm -rf "$PD"
+echo "OK: служба установлена (настройки и exe в ProgramData), запущена и штатно удалена"
+
+RUN='HKCU\Software\Microsoft\Windows\CurrentVersion\Run'
+"$WINE" "$EXE" --autostart-install --config "$WIN_CFG" --system-proxy >/dev/null
+"$WINE" reg query "$RUN" /v RealityClient 2>/dev/null | tr -d '\r' | grep -q -- '--hide-console --system-proxy' \
+    || { echo "автозапуск не записан"; exit 1; }
+"$WINE" "$EXE" --autostart-uninstall >/dev/null
+if "$WINE" reg query "$RUN" /v RealityClient >/dev/null 2>&1; then echo "автозапуск не удалён"; exit 1; fi
+rm -rf "$SV_DIR"
+echo "OK: автозапуск при входе записан и удалён"
 echo "WINDOWS CROSS-BUILD PASSED"

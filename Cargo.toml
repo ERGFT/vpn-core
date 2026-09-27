@@ -51,6 +51,11 @@ ws_stream_tungstenite = { version = "0.15", features = ["tokio_io"] }
 tokio-util = { version = "0.7", features = ["compat"] }
 futures-util = "0.3"
 h2 = "0.4"
+# QUIC (DNS over QUIC, xhttp через HTTP/3): quinn с той же rustls/aws-lc,
+# что и остальной TLS; HTTP/3 — h3 поверх quinn.
+quinn = { version = "0.11", default-features = false, features = ["runtime-tokio", "rustls-aws-lc-rs"] }
+h3 = "0.0.8"
+h3-quinn = "0.0.10"
 serde_json = "1"
 serde = { version = "1", features = ["derive"] }
 toml = "1"

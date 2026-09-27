@@ -1811,3 +1811,237 @@ async fn trojan_against_xray() {
         );
     }
 }
+
+/// xhttp поверх HTTP/3 (QUIC, `alpn=h3`): все три режима против входа
+/// Xray с `alpn = ["h3"]`; восемь сессий делят одно QUIC-соединение (xmux).
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "нужен Xray-core: scripts/interop_xray.sh"]
+async fn xhttp_h3_against_xray() {
+    ensure_crypto_provider();
+    init_log();
+    let echo = start_echo().await;
+    let uuid = uuid::Uuid::new_v4();
+    let dir = tempdir::Dir::new();
+    let (_, _, cert_pem, key_pem) = self_signed("h3.test");
+    let cert_path = dir.0.join("cert.pem");
+    let key_path = dir.0.join("key.pem");
+    std::fs::write(&cert_path, &cert_pem).unwrap();
+    std::fs::write(&key_path, &key_pem).unwrap();
+    let (p_h3, p_ready) = (free_port(), free_port());
+    let tls = |alpn: Vec<&str>| {
+        obj(vec![
+            (
+                "certificates",
+                arr(vec![obj(vec![
+                    ("certificateFile", s(cert_path.to_string_lossy())),
+                    ("keyFile", s(key_path.to_string_lossy())),
+                ])]),
+            ),
+            ("alpn", arr(alpn.into_iter().map(s).collect())),
+        ])
+    };
+    let _x = Xray::start(
+        vec![
+            vless_inbound(
+                p_h3,
+                &uuid,
+                "",
+                obj(vec![
+                    ("network", s("xhttp")),
+                    ("security", s("tls")),
+                    ("tlsSettings", tls(vec!["h3"])),
+                    ("xhttpSettings", obj(vec![("path", s("/h3"))])),
+                ]),
+            ),
+            // TCP-вход — только чтобы дождаться готовности Xray (вход h3
+            // слушает UDP).
+            vless_inbound(
+                p_ready,
+                &uuid,
+                "",
+                obj(vec![
+                    ("network", s("xhttp")),
+                    ("security", s("tls")),
+                    ("tlsSettings", tls(vec!["h2"])),
+                    ("xhttpSettings", obj(vec![("path", s("/r"))])),
+                ]),
+            ),
+        ],
+        &[p_ready],
+        dir,
+    )
+    .await;
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    let (a, p) = target(echo);
+    for rest in [
+        "&type=xhttp&path=%2Fh3&alpn=h3",
+        "&type=xhttp&path=%2Fh3&alpn=h3&mode=stream-up",
+        "&type=xhttp&path=%2Fh3&alpn=h3&mode=stream-one",
+    ] {
+        let cfg = tls_link(p_h3, &uuid, "h3.test", rest, &cert_pem);
+        let mut streams = Vec::new();
+        for _ in 0..8 {
+            streams.push(
+                dial(&cfg, &cfg.id, VlessCommand::Tcp, a.clone(), p)
+                    .await
+                    .unwrap_or_else(|e| panic!("{rest}: {e}")),
+            );
+        }
+        let mut tasks = Vec::new();
+        for (i, mut st) in streams.into_iter().enumerate() {
+            let n = if i == 0 { 1024 * 1024 } else { 100_000 };
+            tasks.push(tokio::spawn(
+                async move { echo_roundtrip(&mut st, n).await },
+            ));
+        }
+        for t in tasks {
+            t.await.unwrap();
+        }
+        let key = format!("xhttp3|{}", cfg.pool_key());
+        assert_eq!(
+            reality_core::transport::h2pool::connections(&key),
+            1,
+            "{rest}: сессии должны делить одно QUIC-соединение"
+        );
+    }
+    // Чужой сертификат — понятная ошибка, а не зависание.
+    let mut cfg = tls_link(
+        p_h3,
+        &uuid,
+        "h3.test",
+        "&type=xhttp&path=%2Fh3&alpn=h3",
+        &cert_pem,
+    );
+    cfg.ca_roots = None;
+    expect_xhttp_error(&cfg, a.clone(), p, "QUIC").await;
+}
+
+/// DNS over QUIC через VLESS (REALITY + Vision → XUDP к Xray): сервер DoQ
+/// на 127.0.0.1 видит запросы от Xray, провайдер — только VLESS.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "нужен Xray-core: scripts/interop_xray.sh"]
+async fn doq_through_vless_against_xray() {
+    use hickory_proto::op::{Message, MessageType, OpCode, Query};
+    use hickory_proto::rr::rdata::A;
+    use hickory_proto::rr::{Name, RData, Record, RecordType};
+    ensure_crypto_provider();
+    init_log();
+    // DoQ-сервер (RFC 9250).
+    let (der, key, cert_pem, _) = self_signed("127.0.0.1");
+    let mut tls = ServerConfig::builder_with_protocol_versions(&[&rustls::version::TLS13])
+        .with_no_client_auth()
+        .with_single_cert(vec![der], key)
+        .unwrap();
+    tls.alpn_protocols = vec![b"doq".to_vec()];
+    let qc = quinn::crypto::rustls::QuicServerConfig::try_from(Arc::new(tls)).unwrap();
+    let ep = quinn::Endpoint::server(
+        quinn::ServerConfig::with_crypto(Arc::new(qc)),
+        "127.0.0.1:0".parse().unwrap(),
+    )
+    .unwrap();
+    let doq = ep.local_addr().unwrap();
+    tokio::spawn(async move {
+        while let Some(inc) = ep.accept().await {
+            tokio::spawn(async move {
+                let Ok(conn) = inc.await else { return };
+                while let Ok((mut tx, mut rx)) = conn.accept_bi().await {
+                    tokio::spawn(async move {
+                        let mut len = [0u8; 2];
+                        rx.read_exact(&mut len).await.unwrap();
+                        let mut q = vec![0u8; u16::from_be_bytes(len) as usize];
+                        rx.read_exact(&mut q).await.unwrap();
+                        let q = Message::from_vec(&q).unwrap();
+                        let mut r = Message::response(q.metadata.id, OpCode::Query);
+                        r.add_queries(q.queries.iter().cloned());
+                        r.add_answer(Record::from_rdata(
+                            q.queries[0].name().clone(),
+                            60,
+                            RData::A(A::new(9, 9, 9, 9)),
+                        ));
+                        let a = r.to_vec().unwrap();
+                        let mut out = (a.len() as u16).to_be_bytes().to_vec();
+                        out.extend_from_slice(&a);
+                        tx.write_all(&out).await.unwrap();
+                        tx.finish().unwrap();
+                    });
+                }
+            });
+        }
+    });
+
+    let decoy = start_decoy().await;
+    let keys = reality_keys();
+    let uuid = uuid::Uuid::new_v4();
+    let port = free_port();
+    let _x = Xray::start(
+        vec![vless_inbound(
+            port,
+            &uuid,
+            "xtls-rprx-vision",
+            reality_stream("raw", decoy, &keys, vec![], None),
+        )],
+        &[port],
+        tempdir::Dir::new(),
+    )
+    .await;
+    let dir = tempdir::Dir::new();
+    let ca = dir.0.join("doq-ca.pem");
+    std::fs::write(&ca, &cert_pem).unwrap();
+    let link = format!(
+        "vless://{uuid}@127.0.0.1:{port}?encryption=none&security=reality&sni=decoy.test&fp=chrome&pbk={}&sid={SHORT_ID}&type=tcp&flow=xtls-rprx-vision",
+        b64(&keys.public)
+    );
+    let toml = format!(
+        r#"
+[[inbounds]]
+type = "dns"
+listen = "127.0.0.1:0"
+
+[[outbounds]]
+tag = "proxy"
+type = "vless"
+link = "{link}"
+
+[[outbounds]]
+tag = "direct"
+type = "direct"
+
+[dns]
+[[dns.servers]]
+tag = "doq"
+address = "quic://{doq}"
+detour = "proxy"
+ca_file = '{}'
+"#,
+        ca.display()
+    );
+    let cfg = reality_core::app::config::Config::parse(&toml).unwrap();
+    let app = reality_core::app::App::build(&cfg)
+        .unwrap()
+        .start()
+        .await
+        .unwrap();
+    let sock = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+    for i in 0..5 {
+        let mut q = Message::new(100 + i, MessageType::Query, OpCode::Query);
+        q.metadata.recursion_desired = true;
+        q.add_query(Query::query(
+            Name::from_ascii(format!("n{i}.doq.test.")).unwrap(),
+            RecordType::A,
+        ));
+        sock.send_to(&q.to_vec().unwrap(), app.listen_addrs[0])
+            .await
+            .unwrap();
+        let mut b = [0u8; 2048];
+        let (n, _) = tokio::time::timeout(Duration::from_secs(15), sock.recv_from(&mut b))
+            .await
+            .expect("ответ DoQ через VLESS")
+            .unwrap();
+        let a = Message::from_vec(&b[..n]).unwrap();
+        assert_eq!(a.metadata.id, 100 + i);
+        assert!(
+            matches!(a.answers.first().map(|r| &r.data), Some(RData::A(ip)) if ip.0 == std::net::Ipv4Addr::new(9, 9, 9, 9)),
+            "{a:?}"
+        );
+    }
+}

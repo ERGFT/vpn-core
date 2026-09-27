@@ -1,5 +1,5 @@
 //! Вышестоящие DNS-серверы: обычный UDP и TCP, DNS over TLS (DoT),
-//! DNS over HTTPS (DoH), системный резолвер. Запросы к серверу идут через
+//! DNS over HTTPS (DoH), DNS over QUIC (DoQ, RFC 9250), системный резолвер. Запросы к серверу идут через
 //! выбранный выход (`detour`): через VLESS-сервер (`proxy`) — тогда ни
 //! провайдер, ни соседи по Wi-Fi не видят, какие имена спрашиваются, —
 //! или напрямую (`direct`).
@@ -24,7 +24,7 @@ use tokio::sync::oneshot;
 use crate::app::outbound::{Outbound, UdpSession};
 use crate::app::{Metadata, Network};
 use crate::error::{Error, Result};
-use crate::transport::AsyncStream;
+use crate::transport::{quic, AsyncStream};
 use crate::vless::Address;
 
 /// Метка входа в `Metadata` для запросов самого DNS-модуля: по ней выход
@@ -43,7 +43,11 @@ pub enum Kind {
     Udp,
     Tcp,
     Tls,
-    Https { path: String },
+    Https {
+        path: String,
+    },
+    /// DNS over QUIC (RFC 9250): `quic://dns.adguard-dns.com`.
+    Quic,
     Local,
     FakeIp,
 }
@@ -71,6 +75,7 @@ pub fn parse_address(s: &str) -> Result<(Kind, Address, u16)> {
         "udp" => (Kind::Udp, 53),
         "tcp" => (Kind::Tcp, 53),
         "tls" => (Kind::Tls, 853),
+        "quic" => (Kind::Quic, 853),
         "https" => (
             Kind::Https {
                 path: if path.is_empty() {
@@ -81,7 +86,7 @@ pub fn parse_address(s: &str) -> Result<(Kind, Address, u16)> {
             },
             443,
         ),
-        _ => return Err(bad("схема должна быть udp, tcp, tls или https")),
+        _ => return Err(bad("схема должна быть udp, tcp, tls, https или quic")),
     };
     if !path.is_empty() && !matches!(kind, Kind::Https { .. }) {
         return Err(bad("путь бывает только у https://"));
@@ -187,6 +192,7 @@ pub struct Upstream {
     udp: tokio::sync::Mutex<Option<Arc<UdpClient>>>,
     tls_pool: Mutex<Vec<TlsConn>>,
     h2: tokio::sync::Mutex<Option<h2::client::SendRequest<Bytes>>>,
+    quic: tokio::sync::Mutex<Option<(quinn::Endpoint, quinn::Connection)>>,
 }
 
 impl Upstream {
@@ -213,6 +219,7 @@ impl Upstream {
             udp: tokio::sync::Mutex::new(None),
             tls_pool: Mutex::new(Vec::new()),
             h2: tokio::sync::Mutex::new(None),
+            quic: tokio::sync::Mutex::new(None),
         })
     }
 
@@ -260,9 +267,10 @@ impl Upstream {
         let orig_id = query.metadata.id;
         let mut q = query.clone();
         // Свой номер: у разных приложений номера могут совпасть. Для DoH —
-        // 0, как советует RFC 8484 (кешируется лучше).
+        // 0, как советует RFC 8484 (кешируется лучше); для DoQ 0 обязателен
+        // (RFC 9250, 4.2.1).
         q.metadata.id = match self.kind {
-            Kind::Https { .. } => 0,
+            Kind::Https { .. } | Kind::Quic => 0,
             _ => rand::random(),
         };
         let mut answer = match &self.kind {
@@ -278,6 +286,7 @@ impl Upstream {
             Kind::Tcp => self.exchange_tcp(&q).await?,
             Kind::Tls => self.exchange_tls(&q).await?,
             Kind::Https { path } => self.exchange_https(&q, path).await?,
+            Kind::Quic => self.exchange_quic(&q).await?,
             Kind::Local => local_answer(&q).await?,
             Kind::FakeIp => return Err(Error::Protocol("fakeip — не настоящий сервер".into())),
         };
@@ -507,6 +516,73 @@ impl Upstream {
     }
 }
 
+impl Upstream {
+    /// Соединение DoQ: готовое или новое (через UDP-сессию выхода).
+    async fn quic_conn(&self) -> Result<quinn::Connection> {
+        let mut g = self.quic.lock().await;
+        if let Some((_, c)) = g.as_ref() {
+            if c.close_reason().is_none() {
+                return Ok(c.clone());
+            }
+        }
+        *g = None;
+        let session = self.detour().udp(&self.meta(Network::Udp)).await?;
+        let (ep, peer) = quic::session_endpoint(session, self.host.clone(), self.port)?;
+        let cfg = quic::client_config(self.roots.clone(), vec![b"doq".to_vec()])?;
+        let what = format!("DoQ {}", self.tag);
+        let conn = ep
+            .connect_with(cfg, peer, &self.tls_name())
+            .map_err(|e| quic::connect_error(&what, e))?
+            .await
+            .map_err(|e| quic::connect_error(&what, e))?;
+        *g = Some((ep, conn.clone()));
+        Ok(conn)
+    }
+
+    /// Один запрос — один двунаправленный поток: длина (2 байта) и
+    /// сообщение в обе стороны (RFC 9250, 4.2).
+    async fn exchange_quic(&self, q: &Message) -> Result<Message> {
+        let bytes = encode(q)?;
+        let what = format!("DoQ {}", self.tag);
+        let once = || async {
+            let conn = self.quic_conn().await?;
+            let (mut send, mut recv) = conn
+                .open_bi()
+                .await
+                .map_err(|e| quic::connect_error(&what, e))?;
+            let mut framed = (bytes.len() as u16).to_be_bytes().to_vec();
+            framed.extend_from_slice(&bytes);
+            send.write_all(&framed)
+                .await
+                .map_err(|e| quic::connect_error(&what, e))?;
+            send.finish().map_err(|e| quic::connect_error(&what, e))?;
+            let mut len = [0u8; 2];
+            recv.read_exact(&mut len)
+                .await
+                .map_err(|e| quic::connect_error(&what, e))?;
+            let mut buf = vec![0u8; u16::from_be_bytes(len) as usize];
+            recv.read_exact(&mut buf)
+                .await
+                .map_err(|e| quic::connect_error(&what, e))?;
+            decode(&buf)
+        };
+        tokio::time::timeout(STREAM_TIMEOUT, async {
+            match once().await {
+                Ok(m) => Ok(m),
+                Err(e) => {
+                    tracing::debug!(dns = %self.tag, error = %e, "DoQ: повтор с новым соединением");
+                    if let Some((_, c)) = self.quic.lock().await.take() {
+                        c.close(0u32.into(), b"");
+                    }
+                    once().await
+                }
+            }
+        })
+        .await
+        .map_err(|_| Error::Protocol(format!("DNS {}: сервер не ответил по QUIC", self.tag)))?
+    }
+}
+
 /// Ответ системного резолвера (только A и AAAA).
 async fn local_answer(q: &Message) -> Result<Message> {
     let mut resp = Message::response(q.metadata.id, q.metadata.op_code);
@@ -576,8 +652,17 @@ mod tests {
         );
         assert_eq!(p("local").0, Kind::Local);
         assert_eq!(p("fakeip").0, Kind::FakeIp);
+        assert_eq!(
+            p("quic://dns.adguard-dns.com"),
+            (
+                Kind::Quic,
+                Address::Domain("dns.adguard-dns.com".into()),
+                853
+            )
+        );
         for bad in [
-            "quic://1.1.1.1",
+            "ftp://1.1.1.1",
+            "quic://1.1.1.1/x",
             "udp://dns.google",
             "tls://",
             "1.1.1.1/x",

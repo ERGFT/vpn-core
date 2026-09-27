@@ -205,6 +205,111 @@ async fn doh_server(ip: Ipv4Addr) -> (SocketAddr, PathBuf) {
     (addr, tls.ca_file)
 }
 
+/// DNS over QUIC (RFC 9250) на 127.0.0.1: поток на запрос, длина + сообщение.
+async fn doq_server(ip: Ipv4Addr) -> (SocketAddr, PathBuf, Arc<AtomicUsize>) {
+    reality_core::transport::tcp_tls::ensure_crypto_provider();
+    let ck = rcgen::generate_simple_self_signed(vec!["127.0.0.1".to_string()]).unwrap();
+    let dir = std::env::temp_dir().join(format!("vpn-core-doq-{}-{}", std::process::id(), ip));
+    std::fs::create_dir_all(&dir).unwrap();
+    let ca_file = dir.join("ca.pem");
+    std::fs::write(&ca_file, ck.cert.pem()).unwrap();
+    let key = PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(ck.key_pair.serialize_der()));
+    let mut tls = rustls::ServerConfig::builder_with_protocol_versions(&[&rustls::version::TLS13])
+        .with_no_client_auth()
+        .with_single_cert(vec![ck.cert.der().clone()], key)
+        .unwrap();
+    tls.alpn_protocols = vec![b"doq".to_vec()];
+    let qc = quinn::crypto::rustls::QuicServerConfig::try_from(Arc::new(tls)).unwrap();
+    // Обычный сокет tokio (как запасной путь клиента): quinn-udp под Wine
+    // не создаёт сокет (WSAEOPNOTSUPP на его параметрах).
+    let sock = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+    let ep = reality_core::transport::quic::plain_endpoint(
+        sock,
+        Some(quinn::ServerConfig::with_crypto(Arc::new(qc))),
+    )
+    .unwrap();
+    let addr = ep.local_addr().unwrap();
+    let conns = Arc::new(AtomicUsize::new(0));
+    let c2 = conns.clone();
+    tokio::spawn(async move {
+        while let Some(inc) = ep.accept().await {
+            let c2 = c2.clone();
+            tokio::spawn(async move {
+                let Ok(conn) = inc.await else { return };
+                c2.fetch_add(1, Ordering::SeqCst);
+                while let Ok((mut send, mut recv)) = conn.accept_bi().await {
+                    tokio::spawn(async move {
+                        let mut len = [0u8; 2];
+                        recv.read_exact(&mut len).await.unwrap();
+                        let mut q = vec![0u8; u16::from_be_bytes(len) as usize];
+                        recv.read_exact(&mut q).await.unwrap();
+                        let msg = Message::from_vec(&q).unwrap();
+                        assert_eq!(msg.metadata.id, 0, "DoQ: номер запроса 0 (RFC 9250)");
+                        let a = answer_for(&msg, ip).to_vec().unwrap();
+                        let mut out = (a.len() as u16).to_be_bytes().to_vec();
+                        out.extend_from_slice(&a);
+                        send.write_all(&out).await.unwrap();
+                        send.finish().unwrap();
+                    });
+                }
+            });
+        }
+    });
+    (addr, ca_file, conns)
+}
+
+#[tokio::test]
+async fn doq_server_works_and_reuses_connection() {
+    let (doq, ca, conns) = doq_server(Ipv4Addr::new(4, 4, 4, 4)).await;
+    let app = start(&format!(
+        r#"
+[[inbounds]]
+type = "dns"
+listen = "127.0.0.1:0"
+{OUTS}
+[dns]
+[[dns.servers]]
+tag = "doq"
+address = "quic://{doq}"
+detour = "direct"
+ca_file = '{}'
+"#,
+        ca.display()
+    ))
+    .await;
+    let dns = app.listen_addrs[0];
+    for i in 0..20 {
+        assert_eq!(
+            ips(&ask_udp(dns, &format!("q{i}.example.net."), RecordType::A).await),
+            [Ipv4Addr::new(4, 4, 4, 4)],
+            "DoQ"
+        );
+    }
+    assert_eq!(
+        conns.load(Ordering::SeqCst),
+        1,
+        "одно QUIC-соединение на все запросы"
+    );
+
+    // Чужой сертификат — SERVFAIL, без ответа.
+    let app = start(&format!(
+        r#"
+[[inbounds]]
+type = "dns"
+listen = "127.0.0.1:0"
+{OUTS}
+[dns]
+[[dns.servers]]
+tag = "doq"
+address = "quic://{doq}"
+detour = "direct"
+"#
+    ))
+    .await;
+    let a = ask_udp(app.listen_addrs[0], "x.test.", RecordType::A).await;
+    assert_eq!(a.metadata.response_code, ResponseCode::ServFail);
+}
+
 async fn start(toml: &str) -> Running {
     let _ = tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())

@@ -5,6 +5,7 @@ pub mod grpc;
 pub mod h2pool;
 pub mod httpupgrade;
 pub mod noise;
+pub mod quic;
 pub mod raw;
 pub mod tcp_tls;
 pub mod ws;

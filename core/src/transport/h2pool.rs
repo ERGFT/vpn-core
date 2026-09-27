@@ -16,6 +16,7 @@
 //! создании (ровные числа — признак). Соединение без сессий закрывается
 //! через [`IDLE`].
 
+use std::any::Any;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicI64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, Weak};
@@ -54,8 +55,21 @@ impl Limits {
     };
 }
 
-struct Entry {
-    send: OnceCell<SendRequest<Bytes>>,
+/// Отправитель запросов соединения: h2 (`SendRequest`) или h3.
+pub trait Sender: Clone + Send + Sync + 'static {
+    /// Дождаться готовности к новому запросу (у h2 — место в
+    /// `max_concurrent_streams`); ошибка — соединение закрыто.
+    fn ready(self) -> BoxFuture<'static, std::result::Result<Self, String>>;
+}
+
+impl Sender for SendRequest<Bytes> {
+    fn ready(self) -> BoxFuture<'static, std::result::Result<Self, String>> {
+        Box::pin(async move { SendRequest::ready(self).await.map_err(|e| e.to_string()) })
+    }
+}
+
+struct Entry<S> {
+    send: OnceCell<S>,
     /// Открытые сессии.
     open: AtomicUsize,
     /// Сколько ещё сессий можно начать (−1 — без предела).
@@ -67,7 +81,7 @@ struct Entry {
     idle_since: Mutex<Instant>,
 }
 
-impl Entry {
+impl<S> Entry<S> {
     fn usable(&self) -> bool {
         !self.dead.load(Ordering::Relaxed)
             && self.left_reuse.load(Ordering::Relaxed) != 0
@@ -83,25 +97,61 @@ fn pick_limit(r: Range) -> i64 {
     }
 }
 
-struct Pool {
-    entries: Mutex<Vec<Arc<Entry>>>,
+struct Pool<S> {
+    entries: Mutex<Vec<Arc<Entry<S>>>>,
 }
 
-fn pools() -> &'static Mutex<HashMap<String, Arc<Pool>>> {
-    static P: std::sync::OnceLock<Mutex<HashMap<String, Arc<Pool>>>> = std::sync::OnceLock::new();
+/// Пул любого типа отправителя (ключи у h2 и h3 разные).
+trait AnyPool: Send + Sync {
+    fn live(&self) -> usize;
+    fn as_any(self: Arc<Self>) -> Arc<dyn Any + Send + Sync>;
+}
+
+impl<S: Send + Sync + 'static> AnyPool for Pool<S> {
+    fn live(&self) -> usize {
+        self.entries
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|e| !e.dead.load(Ordering::Relaxed))
+            .count()
+    }
+
+    fn as_any(self: Arc<Self>) -> Arc<dyn Any + Send + Sync> {
+        self
+    }
+}
+
+fn pools() -> &'static Mutex<HashMap<String, Arc<dyn AnyPool>>> {
+    static P: std::sync::OnceLock<Mutex<HashMap<String, Arc<dyn AnyPool>>>> =
+        std::sync::OnceLock::new();
     P.get_or_init(Default::default)
 }
 
-/// Место в соединении на одну сессию; сброс освобождает его.
-pub struct Lease {
-    entry: Arc<Entry>,
-    send: SendRequest<Bytes>,
+fn pool_for<S: Send + Sync + 'static>(key: &str) -> Arc<Pool<S>> {
+    let mut all = pools().lock().unwrap();
+    if let Some(p) = all.get(key) {
+        if let Ok(p) = p.clone().as_any().downcast::<Pool<S>>() {
+            return p;
+        }
+    }
+    let p = Arc::new(Pool {
+        entries: Mutex::new(Vec::new()),
+    });
+    all.insert(key.to_string(), p.clone());
+    p
 }
 
-impl Lease {
+/// Место в соединении на одну сессию; сброс освобождает его.
+pub struct Lease<S = SendRequest<Bytes>> {
+    entry: Arc<Entry<S>>,
+    send: S,
+}
+
+impl<S: Clone> Lease<S> {
     /// Отправитель запросов этого соединения; каждый запрос уменьшает
     /// остаток `hMaxRequestTimes`.
-    pub fn request(&self) -> SendRequest<Bytes> {
+    pub fn request(&self) -> S {
         self.note_request();
         self.send.clone()
     }
@@ -122,7 +172,7 @@ impl Lease {
     }
 }
 
-impl Drop for Lease {
+impl<S> Drop for Lease<S> {
     fn drop(&mut self) {
         if self.entry.open.fetch_sub(1, Ordering::Relaxed) == 1 {
             *self.entry.idle_since.lock().unwrap() = Instant::now();
@@ -130,14 +180,15 @@ impl Drop for Lease {
     }
 }
 
-/// Готовое HTTP/2-соединение: отправитель и задача, которая его ведёт.
-pub type Connected = (SendRequest<Bytes>, BoxFuture<'static, ()>);
+/// Готовое соединение: отправитель и задача, которая его ведёт.
+pub type Connected<S = SendRequest<Bytes>> = (S, BoxFuture<'static, ()>);
 
 /// Взять место в соединении для `key` или открыть новое (`connect`).
 /// Соединение из пула оказалось закрытым — одна попытка на новом.
-pub async fn acquire<F>(key: &str, limits: &Limits, connect: F) -> Result<Lease>
+pub async fn acquire<S, F>(key: &str, limits: &Limits, connect: F) -> Result<Lease<S>>
 where
-    F: Fn() -> BoxFuture<'static, Result<Connected>>,
+    S: Sender,
+    F: Fn() -> BoxFuture<'static, Result<Connected<S>>>,
 {
     match acquire_once(key, limits, &connect).await {
         Err(Fail::Retry(e)) => {
@@ -164,29 +215,21 @@ impl Fail {
     }
 }
 
-async fn acquire_once<F>(
+async fn acquire_once<S, F>(
     key: &str,
     limits: &Limits,
     connect: &F,
-) -> std::result::Result<Lease, Fail>
+) -> std::result::Result<Lease<S>, Fail>
 where
-    F: Fn() -> BoxFuture<'static, Result<Connected>>,
+    S: Sender,
+    F: Fn() -> BoxFuture<'static, Result<Connected<S>>>,
 {
-    let pool = pools()
-        .lock()
-        .unwrap()
-        .entry(key.to_string())
-        .or_insert_with(|| {
-            Arc::new(Pool {
-                entries: Mutex::new(Vec::new()),
-            })
-        })
-        .clone();
+    let pool = pool_for::<S>(key);
     let entry = {
         let mut entries = pool.entries.lock().unwrap();
         entries.retain(|e| e.usable() && !(e.send.initialized() && idle_expired(e)));
         let conc = limits.max_concurrency;
-        let candidates: Vec<&Arc<Entry>> = entries
+        let candidates: Vec<&Arc<Entry<S>>> = entries
             .iter()
             .filter(|e| conc.to == 0 || e.open.load(Ordering::Relaxed) < conc.to as usize)
             .collect();
@@ -195,7 +238,7 @@ where
             || candidates.is_empty();
         let e = if need_new {
             let age = limits.max_age_secs.rand();
-            let e = Arc::new(Entry {
+            let e = Arc::new(Entry::<S> {
                 send: OnceCell::new(),
                 open: AtomicUsize::new(0),
                 left_reuse: AtomicI64::new(pick_limit(limits.max_reuse)),
@@ -245,9 +288,9 @@ where
         .await
         .map_err(Fail::Fatal)?
         .clone();
-    let send = send.ready().await.map_err(|e| {
+    let send = Sender::ready(send).await.map_err(|e| {
         entry.dead.store(true, Ordering::Relaxed);
-        let e = Error::Protocol(format!("HTTP/2-соединение не готово: {e}"));
+        let e = Error::Protocol(format!("HTTP-соединение не готово: {e}"));
         if reused {
             Fail::Retry(e)
         } else {
@@ -258,13 +301,13 @@ where
     Ok(Lease { entry, send })
 }
 
-fn idle_expired(e: &Entry) -> bool {
+fn idle_expired<S>(e: &Entry<S>) -> bool {
     e.open.load(Ordering::Relaxed) == 0 && e.idle_since.lock().unwrap().elapsed() >= IDLE
 }
 
 /// Убрать из пула соединение, простоявшее без сессий [`IDLE`]: последний
 /// отправитель пропадает, и h2 закрывает соединение.
-async fn reaper(pool: Weak<Pool>, entry: Weak<Entry>) {
+async fn reaper<S>(pool: Weak<Pool<S>>, entry: Weak<Entry<S>>) {
     loop {
         tokio::time::sleep(IDLE / 3).await;
         let (Some(p), Some(e)) = (pool.upgrade(), entry.upgrade()) else {
@@ -279,15 +322,15 @@ async fn reaper(pool: Weak<Pool>, entry: Weak<Entry>) {
     }
 }
 
-struct OpenGuard(Option<Arc<Entry>>);
+struct OpenGuard<S>(Option<Arc<Entry<S>>>);
 
-impl OpenGuard {
+impl<S> OpenGuard<S> {
     fn disarm(mut self) {
         self.0 = None;
     }
 }
 
-impl Drop for OpenGuard {
+impl<S> Drop for OpenGuard<S> {
     fn drop(&mut self) {
         if let Some(e) = self.0.take() {
             e.open.fetch_sub(1, Ordering::Relaxed);
@@ -301,13 +344,6 @@ pub fn connections(key: &str) -> usize {
         .lock()
         .unwrap()
         .get(key)
-        .map(|p| {
-            p.entries
-                .lock()
-                .unwrap()
-                .iter()
-                .filter(|e| !e.dead.load(Ordering::Relaxed))
-                .count()
-        })
+        .map(|p| p.live())
         .unwrap_or(0)
 }

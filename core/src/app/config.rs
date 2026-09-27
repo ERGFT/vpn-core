@@ -354,6 +354,49 @@ impl Config {
         })
     }
 
+    /// Файлы, на которые ссылаются настройки (после [`Config::load`] —
+    /// с полными путями), и которые уже есть на диске: ссылки на серверы,
+    /// пароли, сертификаты, базы и наборы правил, кеши подписок и fake-IP.
+    /// Нужен, чтобы перенести настройки целиком (служба Windows).
+    pub fn input_files(&self) -> Vec<PathBuf> {
+        let mut v: Vec<PathBuf> = Vec::new();
+        let mut add = |p: &Option<PathBuf>| {
+            if let Some(p) = p {
+                v.push(p.clone());
+            }
+        };
+        for i in &self.inbounds {
+            add(&i.auth_file);
+        }
+        for o in &self.outbounds {
+            add(&o.link_file);
+            add(&o.ca_file);
+        }
+        for s in &self.subscriptions {
+            add(&s.url_file);
+            add(&s.ca_file);
+            add(&s.cache_file);
+        }
+        if let Some(a) = &self.api {
+            add(&a.token_file);
+        }
+        add(&self.route.geosite_file);
+        add(&self.route.geoip_file);
+        if let Some(d) = &self.dns {
+            for s in &d.servers {
+                add(&s.ca_file);
+            }
+            if let Some(f) = &d.fakeip {
+                add(&f.cache_file);
+            }
+        }
+        v.extend(self.route.rule_set.iter().map(|r| r.path.clone()));
+        v.retain(|p| p.is_file());
+        v.sort();
+        v.dedup();
+        v
+    }
+
     /// Прочитать файл настроек; относительные пути внутри него
     /// становятся путями от его папки.
     pub fn load(path: &Path) -> Result<Self> {
