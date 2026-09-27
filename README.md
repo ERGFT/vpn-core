@@ -613,3 +613,10 @@ cargo run -p bench --bin memwatch -- --pid <PID> --duration-secs 30 --csv rss.cs
 - Под настоящей Windows не запускалось — только под Wine.
 - Стороннее крипто-ревью (Этап 5) и решение о публикации (Этап 8) —
   за людьми: `docs/stage5-crypto-review-and-interop.md`.
+
+## Лицензия
+
+GNU General Public License v3.0 или более поздняя версия
+(`GPL-3.0-or-later`) — полный текст в [`LICENSE`](LICENSE).
+Исходники в `vendor/rustls-reality-patch` — патч rustls, остаются под
+его лицензиями (Apache-2.0 / ISC / MIT, файлы `LICENSE-*` там же).
