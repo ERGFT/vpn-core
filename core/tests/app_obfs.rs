@@ -166,7 +166,7 @@ fn obfs_config_errors() {
     for (toml, want) in [
         (
             "[[outbounds]]\ntag='b'\ntype='block'\nfragment={packets='tlshello',length=5,interval=0}\n",
-            "только у vless и direct",
+            "только у vless, trojan и direct",
         ),
         (
             "[[outbounds]]\ntag='d'\ntype='direct'\nfragment={packets='0-1',length=5,interval=0}\n",

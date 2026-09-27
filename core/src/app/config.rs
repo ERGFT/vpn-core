@@ -161,6 +161,8 @@ impl InboundConfig {
 #[serde(rename_all = "lowercase")]
 pub enum OutboundKind {
     Vless,
+    /// Сервер Trojan (ссылка trojan://).
+    Trojan,
     Direct,
     Block,
     /// Ответить самому DNS-модулем (перехват DNS-запросов).
@@ -235,10 +237,13 @@ impl OutboundConfig {
             || self.tolerance.is_some()
             || self.default.is_some();
         if self.fragment.is_some()
-            && !matches!(self.kind, OutboundKind::Vless | OutboundKind::Direct)
+            && !matches!(
+                self.kind,
+                OutboundKind::Vless | OutboundKind::Trojan | OutboundKind::Direct
+            )
         {
             return Err(Error::Config(format!(
-                "выход {tag}: fragment — только у vless и direct"
+                "выход {tag}: fragment — только у vless, trojan и direct"
             )));
         }
         if !self.noises.is_empty() && self.kind != OutboundKind::Direct {
@@ -251,14 +256,19 @@ impl OutboundConfig {
                 "выход {tag}: outbounds, subscriptions, url, interval, tolerance, default — только у групп (selector, urltest, fallback)"
             )));
         }
-        let vless_fields = self.link.is_some()
+        let server_fields = self.link.is_some()
             || self.link_file.is_some()
             || self.ca_file.is_some()
-            || self.allow_insecure
-            || self.mux.is_some();
-        if self.kind != OutboundKind::Vless && vless_fields {
+            || self.allow_insecure;
+        let server = matches!(self.kind, OutboundKind::Vless | OutboundKind::Trojan);
+        if !server && server_fields {
             return Err(Error::Config(format!(
-                "выход {tag}: link, link_file, ca_file, allow_insecure, mux — только у type = \"vless\""
+                "выход {tag}: link, link_file, ca_file, allow_insecure — только у vless и trojan"
+            )));
+        }
+        if self.kind != OutboundKind::Vless && self.mux.is_some() {
+            return Err(Error::Config(format!(
+                "выход {tag}: mux — только у type = \"vless\""
             )));
         }
         if group {

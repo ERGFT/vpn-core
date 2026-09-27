@@ -115,7 +115,7 @@ fn parse_lines(text: &str, out: &mut Parsed) {
             continue;
         };
         let scheme = scheme.to_ascii_lowercase();
-        if scheme != "vless" {
+        if scheme != "vless" && scheme != "trojan" {
             *out.skipped.entry(scheme).or_default() += 1;
             continue;
         }
@@ -134,6 +134,9 @@ fn parse_lines(text: &str, out: &mut Parsed) {
 
 /// Собрать vless://-ссылку из полей.
 struct LinkBuilder {
+    /// `vless` или `trojan`.
+    scheme: &'static str,
+    /// UUID (vless) или пароль (trojan).
     uuid: String,
     host: String,
     port: u16,
@@ -156,15 +159,19 @@ impl LinkBuilder {
             self.host
         };
         let mut q = url::form_urlencoded::Serializer::new(String::new());
-        q.append_pair("encryption", "none");
+        if self.scheme == "vless" {
+            q.append_pair("encryption", "none");
+        }
         for (k, v) in &self.params {
             q.append_pair(k, v);
         }
         let name: String =
             url::form_urlencoded::byte_serialize(self.name.as_bytes()).collect::<String>();
+        let user: String = url::form_urlencoded::byte_serialize(self.uuid.as_bytes()).collect();
         format!(
-            "vless://{}@{}:{}?{}#{}",
-            self.uuid,
+            "{}://{}@{}:{}?{}#{}",
+            self.scheme,
+            user.replace('+', "%20"),
             host,
             self.port,
             q.finish(),
@@ -199,17 +206,23 @@ fn parse_singbox(text: &str, out: &mut Parsed) -> Result<()> {
         .unwrap_or_default();
     for o in list {
         let ty = js_str(&o, &["type"]);
-        match ty.as_str() {
-            "vless" => {}
+        let scheme = match ty.as_str() {
+            "vless" => "vless",
+            "trojan" => "trojan",
             // Служебные выходы sing-box — не серверы.
             "direct" | "block" | "dns" | "selector" | "urltest" | "" => continue,
             other => {
                 *out.skipped.entry(other.to_string()).or_default() += 1;
                 continue;
             }
-        }
+        };
         let mut b = LinkBuilder {
-            uuid: js_str(&o, &["uuid"]),
+            scheme,
+            uuid: if scheme == "trojan" {
+                js_str(&o, &["password"])
+            } else {
+                js_str(&o, &["uuid"])
+            },
             host: js_str(&o, &["server"]),
             port: js(&o, &["server_port"])
                 .and_then(|p| p.as_u64())
@@ -282,10 +295,14 @@ fn parse_clash(text: &str, out: &mut Parsed) -> Result<()> {
         .unwrap_or_default();
     for p in list {
         let ty = js_str(&p, &["type"]);
-        if ty != "vless" {
-            *out.skipped.entry(ty).or_default() += 1;
-            continue;
-        }
+        let scheme = match ty.as_str() {
+            "vless" => "vless",
+            "trojan" => "trojan",
+            _ => {
+                *out.skipped.entry(ty).or_default() += 1;
+                continue;
+            }
+        };
         let port = js(&p, &["port"])
             .and_then(|x| {
                 x.as_u64()
@@ -293,14 +310,21 @@ fn parse_clash(text: &str, out: &mut Parsed) -> Result<()> {
             })
             .unwrap_or(443) as u16;
         let mut b = LinkBuilder {
-            uuid: js_str(&p, &["uuid"]),
+            scheme,
+            uuid: if scheme == "trojan" {
+                js_str(&p, &["password"])
+            } else {
+                js_str(&p, &["uuid"])
+            },
             host: js_str(&p, &["server"]),
             port,
             params: Vec::new(),
             name: js_str(&p, &["name"]),
         };
         b.param("flow", js_str(&p, &["flow"]));
-        let tls = js(&p, &["tls"]).and_then(|x| x.as_bool()) == Some(true);
+        // У trojan в Clash TLS включён всегда; имя — `sni`.
+        let tls = scheme == "trojan" || js(&p, &["tls"]).and_then(|x| x.as_bool()) == Some(true);
+        b.param("sni", js_str(&p, &["sni"]));
         let reality = js(&p, &["reality-opts"]).is_some();
         b.param(
             "security",
@@ -690,11 +714,11 @@ mod tests {
             format!("{}\n", &b64[..b64.len()]),
         ] {
             let p = parse(body.as_bytes()).unwrap();
-            assert_eq!(p.servers.len(), 2, "{body}");
+            assert_eq!(p.servers.len(), 3, "{body}");
             assert_eq!(p.servers[0].0, "Germany 🇩🇪");
             assert_eq!(p.servers[1].0, "Finland");
+            assert_eq!(p.servers[2], ("T".into(), "trojan://p@c:443#T".into()));
             assert_eq!(p.skipped["vmess"], 1);
-            assert_eq!(p.skipped["trojan"], 1);
         }
         // Без имени — host:port; одинаковые имена — с номером.
         let p = parse(format!("vless://u@h.example:1?type=tcp\n{L2}\n{L2}").as_bytes()).unwrap();
@@ -712,10 +736,15 @@ mod tests {
                   "reality":{"enabled":true,"public_key":"PBK","short_id":"ab"}}},
           {"type":"vless","tag":"ws","server":"w.example","server_port":80,"uuid":"u",
            "transport":{"type":"ws","path":"/p","headers":{"Host":"h.example"}}},
+          {"type":"trojan","tag":"TJ","server":"tj.example","server_port":443,"password":"pw",
+           "tls":{"enabled":true,"server_name":"tj.example"},"transport":{"type":"ws","path":"/t"}},
           {"type":"shadowsocks","tag":"ss"},
           {"type":"direct","tag":"direct"}]}"#;
         let p = parse(j.as_bytes()).unwrap();
-        assert_eq!(p.servers.len(), 2);
+        assert_eq!(p.servers.len(), 3);
+        let t = crate::trojan::TrojanConfig::parse(&p.servers[2].1).unwrap();
+        assert_eq!(t.password, "pw");
+        assert_eq!(t.transport.network, crate::vless::NetworkType::Ws);
         let link = &p.servers[0].1;
         for part in [
             "@nl.example:443?",
@@ -766,11 +795,17 @@ proxies:
     type: trojan
     server: t
     port: 1
+    password: "pa ss"
 "#;
         let p = parse(y.as_bytes()).unwrap();
-        assert_eq!(p.servers.len(), 2);
+        assert_eq!(p.servers.len(), 3);
         assert!(p.servers[0].1.contains("type=grpc") && p.servers[0].1.contains("serviceName=svc"));
         assert!(p.servers[1].1.contains(":8443?") && p.servers[1].1.contains("security=reality"));
-        assert_eq!(p.skipped["trojan"], 1);
+        let t = crate::trojan::TrojanConfig::parse(&p.servers[2].1).unwrap();
+        assert_eq!(
+            (t.password.as_str(), t.transport.host.as_str()),
+            ("pa ss", "t")
+        );
+        assert_eq!(t.transport.security, crate::vless::Security::Tls);
     }
 }

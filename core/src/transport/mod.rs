@@ -51,3 +51,18 @@ pub async fn dial(
         }
     })
 }
+
+/// Поднять транспорт из ссылки (TLS/REALITY и ws, grpc, httpupgrade,
+/// xhttp) без заголовка VLESS — для других протоколов поверх тех же
+/// транспортов (Trojan).
+pub async fn open(cfg: &VlessConfig) -> Result<Box<dyn AsyncStream>> {
+    Ok(match cfg.network {
+        NetworkType::Tcp => {
+            Box::new(tcp_tls::connect_tls_by_security(cfg, tcp_tls::default_alpn(cfg)).await?)
+        }
+        NetworkType::Ws => Box::new(ws::connect_ws(cfg).await?),
+        NetworkType::Grpc => Box::new(grpc::connect_grpc(cfg).await?),
+        NetworkType::HttpUpgrade => Box::new(httpupgrade::connect_httpupgrade(cfg).await?),
+        NetworkType::Xhttp => Box::new(xhttp::connect_xhttp(cfg).await?),
+    })
+}

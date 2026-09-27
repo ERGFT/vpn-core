@@ -61,6 +61,13 @@ link_file = "server.txt"       # vless://… в первой строке (ил�
 #                              # дробить ClientHello к серверу (против DPI, ищущего
 #                              # SNI в первом пакете); по умолчанию выключено
 
+# Сервер Trojan: ссылка trojan://пароль@host:port?sni=… (TLS по умолчанию;
+# type=ws/grpc/xhttp и security=reality — как у vless).
+# [[outbounds]]
+# tag = "trojan"
+# type = "trojan"
+# link_file = "trojan.txt"
+
 [[outbounds]]
 tag = "direct"                 # напрямую, без сервера
 type = "direct"

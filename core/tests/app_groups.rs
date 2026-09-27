@@ -475,7 +475,7 @@ type = "direct"
         ),
         (
             "[[outbounds]]\ntag='g'\ntype='selector'\noutbounds=['direct']\nlink='vless://x'\n",
-            "только у type = \"vless\"",
+            "только у vless и trojan",
         ),
         (
             "[[outbounds]]\ntag='g'\ntype='selector'\nsubscriptions=['s']\n",

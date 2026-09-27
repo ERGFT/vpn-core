@@ -32,6 +32,7 @@ pub mod rules;
 pub mod sniff;
 pub mod stats;
 pub mod subscription;
+pub mod trojan_out;
 pub mod tun;
 pub mod vless_out;
 
@@ -289,6 +290,66 @@ fn build_vless(o: &config::OutboundConfig) -> Result<VlessOutbound> {
         Some(n) => v.with_mux(n),
         None => Ok(v),
     }
+}
+
+fn build_trojan(o: &config::OutboundConfig) -> Result<trojan_out::TrojanOutbound> {
+    let link = secret(&o.link, &o.link_file, &format!("выход {}", o.tag))?
+        .ok_or_else(|| Error::Config(format!("выход {}: нужна link или link_file", o.tag)))?;
+    let roots = match &o.ca_file {
+        Some(ca) => Some(Arc::new(config::load_ca(ca)?)),
+        None => None,
+    };
+    trojan_from_link(
+        &o.tag,
+        &link,
+        o.allow_insecure,
+        roots,
+        false,
+        build_fragment(o)?,
+    )
+}
+
+/// Выход Trojan из ссылки (из настроек или из подписки).
+fn trojan_from_link(
+    tag: &str,
+    link: &str,
+    allow_insecure: bool,
+    ca_roots: Option<Arc<rustls::RootCertStore>>,
+    quiet: bool,
+    fragment: Option<Arc<crate::transport::fragment::Fragment>>,
+) -> Result<trojan_out::TrojanOutbound> {
+    let mut t = crate::trojan::TrojanConfig::parse(link)?;
+    t.transport.validate()?;
+    if t.transport.security == Security::Reality {
+        t.transport.reality_params()?;
+    }
+    if t.transport.security == Security::None && !allow_insecure {
+        return Err(Error::Config(format!(
+            "выход {tag}: trojan с security=none — пароль и весь трафик идут открытым \
+             текстом; если это осознанно, разрешите явно (allow_insecure = true)"
+        )));
+    }
+    if let (Some(w), false) = (
+        crate::fingerprint::Browser::from_fp(t.transport.fingerprint.as_deref()).1,
+        quiet,
+    ) {
+        tracing::warn!(outbound = %tag, "{w}");
+    }
+    t.transport.ca_roots = ca_roots;
+    t.transport.fragment = fragment;
+    if quiet {
+        tracing::debug!(outbound = %tag, host = %t.transport.host, "сервер подписки (trojan)");
+    } else {
+        tracing::info!(
+            outbound = %tag,
+            host = %t.transport.host,
+            port = t.transport.port,
+            security = ?t.transport.security,
+            network = ?t.transport.network,
+            "сервер trojan загружен"
+        );
+    }
+    Ok(trojan_out::TrojanOutbound::new(tag, t))
 }
 
 /// Выход VLESS из ссылки (из настроек или из подписки). `quiet` — не
@@ -582,7 +643,9 @@ fn router_vless_servers(
 ) -> Vec<Option<(String, u16)>> {
     outs.iter()
         .map(|o| match o.kind {
-            OutboundKind::Vless => router.get(&o.tag).and_then(|b| b.server()),
+            OutboundKind::Vless | OutboundKind::Trojan => {
+                router.get(&o.tag).and_then(|b| b.server())
+            }
             _ => None,
         })
         .collect()
@@ -707,6 +770,7 @@ fn build_core(
     for o in &cfg.outbounds {
         let built: Arc<dyn Outbound> = match o.kind {
             OutboundKind::Vless => Arc::new(build_vless(o)?),
+            OutboundKind::Trojan => Arc::new(build_trojan(o)?),
             OutboundKind::Direct => Arc::new(build_direct(
                 o,
                 cfg.dns.is_some().then(|| dns_slot.clone()),
@@ -883,6 +947,16 @@ fn server_from_link(
     link: &str,
     o: subscription::ServerOpts,
 ) -> Result<Arc<dyn Outbound>> {
+    if link.starts_with("trojan://") {
+        return Ok(Arc::new(trojan_from_link(
+            tag,
+            link,
+            o.allow_insecure,
+            None,
+            true,
+            o.fragment.clone(),
+        )?));
+    }
     let mut v = vless_from_link(
         tag,
         link,

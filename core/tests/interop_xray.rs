@@ -1674,3 +1674,140 @@ async fn browser_fingerprints_against_xray() {
         }
     }
 }
+
+fn trojan_inbound(
+    port: u16,
+    password: &str,
+    stream: serde_json_lite::Value,
+) -> serde_json_lite::Value {
+    obj(vec![
+        ("listen", s("127.0.0.1")),
+        ("port", n(port as i64)),
+        ("protocol", s("trojan")),
+        (
+            "settings",
+            obj(vec![(
+                "clients",
+                arr(vec![obj(vec![("password", s(password))])]),
+            )]),
+        ),
+        ("streamSettings", stream),
+    ])
+}
+
+/// Trojan против Xray: TLS (tcp и ws) со своим CA, REALITY; TCP и UDP.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "нужен Xray-core: scripts/interop_xray.sh"]
+async fn trojan_against_xray() {
+    use reality_core::app::outbound::Outbound;
+    use reality_core::app::trojan_out::TrojanOutbound;
+    use reality_core::trojan::TrojanConfig;
+    ensure_crypto_provider();
+    init_log();
+    let echo = start_echo().await;
+    let udp = start_udp_echo().await;
+    let decoy = start_decoy().await;
+    let keys = reality_keys();
+    let dir = tempdir::Dir::new();
+    let (_, _, cert_pem, key_pem) = self_signed("tj.test");
+    let cert_path = dir.0.join("cert.pem");
+    let key_path = dir.0.join("key.pem");
+    std::fs::write(&cert_path, &cert_pem).unwrap();
+    std::fs::write(&key_path, &key_pem).unwrap();
+    let tls = |extra: Vec<(&str, serde_json_lite::Value)>, net: &str| {
+        let mut v = vec![
+            ("network", s(net)),
+            ("security", s("tls")),
+            (
+                "tlsSettings",
+                obj(vec![(
+                    "certificates",
+                    arr(vec![obj(vec![
+                        ("certificateFile", s(cert_path.to_string_lossy())),
+                        ("keyFile", s(key_path.to_string_lossy())),
+                    ])]),
+                )]),
+            ),
+        ];
+        v.extend(extra);
+        obj(v)
+    };
+    let pw = "correct horse battery staple";
+    let (p_tcp, p_ws, p_real) = (free_port(), free_port(), free_port());
+    let _x = Xray::start(
+        vec![
+            trojan_inbound(p_tcp, pw, tls(vec![], "raw")),
+            trojan_inbound(
+                p_ws,
+                pw,
+                tls(vec![("wsSettings", obj(vec![("path", s("/tj"))]))], "ws"),
+            ),
+            trojan_inbound(
+                p_real,
+                pw,
+                reality_stream("raw", decoy, &keys, vec![], None),
+            ),
+        ],
+        &[p_tcp, p_ws, p_real],
+        dir,
+    )
+    .await;
+    let mut roots = RootCertStore::empty();
+    for c in rustls_pki_types::pem::PemObject::pem_slice_iter(cert_pem.as_bytes()) {
+        roots.add(c.unwrap()).unwrap();
+    }
+    let roots = Arc::new(roots);
+    let pwe = "correct%20horse%20battery%20staple";
+    let links = [
+        format!("trojan://{pwe}@127.0.0.1:{p_tcp}?sni=tj.test#tcp"),
+        format!("trojan://{pwe}@127.0.0.1:{p_ws}?sni=tj.test&type=ws&path=%2Ftj#ws"),
+        format!(
+            "trojan://{pwe}@127.0.0.1:{p_real}?security=reality&sni=decoy.test&pbk={}&sid={SHORT_ID}&type=tcp#r",
+            b64(&keys.public)
+        ),
+    ];
+    for link in &links {
+        let mut cfg = TrojanConfig::parse(link).unwrap();
+        cfg.transport.ca_roots = Some(roots.clone());
+        let out = TrojanOutbound::new("tj", cfg);
+        let mut st = out
+            .connect(&meta(echo))
+            .await
+            .unwrap_or_else(|e| panic!("{link}: {e}"));
+        echo_roundtrip(&mut st, 300_000).await;
+        // UDP: пакеты туда и обратно.
+        let mut m = meta(udp);
+        m.network = reality_core::app::Network::Udp;
+        let sess = out.udp(&m).await.unwrap();
+        for i in 0..5u8 {
+            let data = vec![i; 100 + i as usize * 200];
+            sess.send(
+                Address::Ipv4("127.0.0.1".parse().unwrap()),
+                udp,
+                data.clone(),
+            )
+            .await
+            .unwrap();
+            let (_, port, got) = tokio::time::timeout(Duration::from_secs(10), sess.recv())
+                .await
+                .expect("UDP-ответ")
+                .unwrap()
+                .unwrap();
+            assert_eq!((port, got), (udp, data), "{link}");
+        }
+    }
+    // Неверный пароль — сервер не проксирует (у Xray — отдаёт как «сайт»).
+    let mut cfg =
+        TrojanConfig::parse(&format!("trojan://wrong@127.0.0.1:{p_tcp}?sni=tj.test")).unwrap();
+    cfg.transport.ca_roots = Some(roots);
+    let out = TrojanOutbound::new("bad", cfg);
+    if let Ok(mut st) = out.connect(&meta(echo)).await {
+        let _ = st.write_all(b"ping").await;
+        let mut b = [0u8; 4];
+        let r = tokio::time::timeout(Duration::from_secs(5), st.read_exact(&mut b)).await;
+        assert!(
+            !matches!(r, Ok(Ok(_)) if &b == b"ping"),
+            "с неверным паролем эха быть не должно"
+        );
+    }
+}

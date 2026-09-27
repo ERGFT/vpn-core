@@ -283,8 +283,12 @@
   список и закрытие соединений, счётчики; перечитывание не рвёт открытые
   соединения, новые идут по новым правилам, новый вход открывается,
   битые настройки отвергаются; перечитывание файла через API; пресеты.
-- Осталось по Фазе 8: Trojan, Shadowsocks 2022, служба/автозапуск
-  Windows.
+- Trojan (`trojan.rs`, `app/trojan_out.rs`): заголовок SHA-224 +
+  адрес SOCKS5, UDP-пакеты; поверх `transport::open` — те же TLS/REALITY
+  и ws/grpc/httpupgrade/xhttp, что у VLESS; `security=none` — только с
+  `allow_insecure`. Подписки понимают trojan:// и trojan из sing-box/Clash.
+  Проверено против Xray: tcp+TLS, ws+TLS, REALITY; TCP и UDP.
+- Не сделано по Фазе 8: Shadowsocks 2022, служба/автозапуск Windows.
 
 ## Доработка (2026-09-26): всё, что было открыто
 
