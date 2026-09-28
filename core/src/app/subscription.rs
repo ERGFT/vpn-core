@@ -149,7 +149,7 @@ fn js_str(v: &serde_json::Value, path: &[&str]) -> String {
         .to_string()
 }
 
-/// JSON sing-box: `outbounds` с `type = "vless"`.
+/// JSON sing-box: `outbounds` с `"type": "vless"`.
 fn parse_singbox(text: &str, out: &mut Parsed) -> Result<()> {
     let v: serde_json::Value = serde_json::from_str(text)
         .map_err(|e| Error::Config(format!("подписка: JSON sing-box: {e}")))?;

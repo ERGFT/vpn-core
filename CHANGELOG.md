@@ -44,7 +44,8 @@
   пакетов, ~200 МиБ/с; на Windows TUN и служба проверены на настоящей
   машине, без IPv6 у компьютера нет петли через TUN.
 - Документация на русском и английском; CONTRIBUTING, SECURITY,
-  CODE_OF_CONDUCT, SUPPORT, шаблоны issue и PR.
+  CODE_OF_CONDUCT, SUPPORT, шаблоны issue и PR; описание устройства ядра
+  (`docs/ARCHITECTURE.md`).
 
 [Не выпущено]: https://github.com/ERGFT/vpn-core/commits/main
 
@@ -95,6 +96,7 @@ It will include:
   packet loss, ~200 MiB/s; on Windows TUN and the service are checked on a
   real machine, no loop through TUN without IPv6 on the computer.
 - Documentation in Russian and English; CONTRIBUTING, SECURITY,
-  CODE_OF_CONDUCT, SUPPORT, issue and PR templates.
+  CODE_OF_CONDUCT, SUPPORT, issue and PR templates; a description of how the
+  core works (`docs/ARCHITECTURE.en.md`).
 
 [Unreleased]: https://github.com/ERGFT/vpn-core/commits/main

@@ -399,8 +399,8 @@ impl UdpSession for BlockUdp {
 }
 
 /// Перехват DNS: TCP-соединения и UDP-датаграммы к этому выходу — DNS-
-/// запросы, на них отвечает DNS-модуль (правило вроде `port = [53]`,
-/// `outbound = "dns-out"`).
+/// запросы, на них отвечает DNS-модуль (правило `hijack-dns`
+/// или `"port": [53]` → выход `dns`).
 pub struct DnsOutbound {
     tag: String,
     dns: DnsSlot,

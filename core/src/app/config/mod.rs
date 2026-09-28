@@ -65,7 +65,7 @@ pub struct InboundConfig {
     /// Подставлять найденный домен вместо IP (имя разрешит сервер).
     pub sniff_override_destination: bool,
 
-    // ── только для type = "tun" ──
+    // ── только для входа tun ──
     /// Имя интерфейса (по умолчанию `reality-tun`).
     pub interface_name: Option<String>,
     /// Адрес интерфейса (по умолчанию `172.19.0.1/30`).
@@ -315,10 +315,10 @@ pub struct RouteConfig {
     pub rules: Vec<RuleConfig>,
     /// Выход по умолчанию; не задан — первый из `outbounds`.
     pub final_: Option<String>,
-    /// База доменов для `geosite = [...]` (по умолчанию `geosite.dat`
+    /// База доменов для `"geosite": [...]` (по умолчанию `geosite.dat`
     /// рядом с файлом настроек).
     pub geosite_file: Option<PathBuf>,
-    /// База адресов для `geoip = [...]` (по умолчанию `geoip.dat`).
+    /// База адресов для `"geoip": [...]` (по умолчанию `geoip.dat`).
     pub geoip_file: Option<PathBuf>,
     /// `ip_if_non_match` — если ни одно правило не подошло к имени,
     /// разрешить его (DNS-модулем) и проверить правила по адресу.
@@ -327,7 +327,7 @@ pub struct RouteConfig {
     /// `cn-direct`, `ir-direct` — после своих правил.
     pub presets: Vec<String>,
     /// Наборы правил sing-box: `route.rule_set` (tag, path) — для
-    /// `rule_set = [...]` в правилах маршрутизации и DNS.
+    /// `"rule_set": [...]` в правилах маршрутизации и DNS.
     pub rule_set: Vec<super::ruleset::RuleSetConfig>,
 }
 
