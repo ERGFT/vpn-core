@@ -504,7 +504,10 @@ DNS is hijacked by an `inboundTag` rule → a `dns` outbound.
   even a reboot); the Windows service restarts itself after a crash. After
   a crash the system DNS is closed too: the server name resolves on restart
   if the server address is an IP or the `dns` section has a server by IP
-  with `"detour": "direct"`.
+  with `"detour": "direct"`. On Windows, for the first few seconds after
+  the kill switch turns on, the system is still "identifying" the TUN
+  interface and its DNS queries may fail; after a few seconds names
+  resolve through the tunnel.
 - A system DNS server (`"type": "local"`) together with TUN is a config
   error: system DNS itself goes through TUN (a loop).
 - Limitations: ICMP (ping) does not pass through TUN; on Windows

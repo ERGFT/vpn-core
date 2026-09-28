@@ -123,6 +123,27 @@ if ($LASTEXITCODE) { Fail 'HTTPS через SOCKS5-вход не прошёл' }
 Write-Host 'OK: HTTPS через вход mixed (SOCKS5)'
 
 # Kill switch: та же служба со strict_route.
+# Системный DNS через TUN: сразу после включения маршрутов Windows ещё
+# несколько секунд «опознаёт» новый интерфейс и шлёт запросы DNS
+# физического адаптера — с kill switch они закрыты. Ждём, пока имя
+# разрешится (через TUN), и печатаем, сколько на это ушло.
+function Wait-Dns {
+    $t0 = Get-Date
+    for ($i = 0; $i -lt 40; $i++) {
+        Clear-DnsClientCache
+        $r = Resolve-DnsName $site -Type A -DnsOnly -QuickTimeout -ErrorAction SilentlyContinue
+        if ($r | Where-Object { $_.IPAddress }) {
+            Write-Host ("DNS через TUN готов за {0:N1} с" -f ((Get-Date) - $t0).TotalSeconds)
+            return $true
+        }
+        Start-Sleep -Milliseconds 500
+    }
+    return $false
+}
+function Show-Net {
+    Get-NetIPInterface -AddressFamily IPv4 | Format-Table ifIndex, InterfaceAlias, InterfaceMetric, AutomaticMetric, ConnectionState -AutoSize | Out-Host
+    Get-DnsClientServerAddress -AddressFamily IPv4 | Format-Table -AutoSize | Out-Host
+}
 function Tun-Count {
     if (-not (Test-Path $log)) { return 0 }
     return @(Select-String -Path $log -Pattern 'весь трафик направлен в TUN' -Encoding utf8).Count
@@ -136,12 +157,9 @@ if ($strict -eq $cfg) { Fail 'не удалось включить strict_route 
 if ($LASTEXITCODE) { Fail '--service-install со strict_route' }
 if (-not (Wait-Tun)) { Fail 'служба со strict_route не подняла TUN за 30 с' }
 if ((Get-Content $log -Raw -Encoding utf8) -notmatch 'kill switch включён') { Fail 'kill switch не включился' }
+if (-not (Wait-Dns)) { Show-Net; Fail 'со strict_route системный DNS не заработал за 20 с' }
 curl.exe -sS --max-time 30 -o NUL "https://$site/"
-if ($LASTEXITCODE) {
-    Get-DnsClientServerAddress -AddressFamily IPv4 | Format-Table -AutoSize | Out-Host
-    Resolve-DnsName $site -ErrorAction Continue | Out-Host
-    Fail 'HTTPS через TUN со strict_route не прошёл'
-}
+if ($LASTEXITCODE) { Show-Net; Fail 'HTTPS через TUN со strict_route не прошёл' }
 Write-Host 'OK: kill switch включён, трафик идёт через TUN'
 
 # Сбой: процесс убит, интерфейс TUN исчез — мимо туннеля трафик не идёт.
@@ -158,8 +176,9 @@ for ($i = 0; $i -lt 60; $i++) {
     Start-Sleep -Milliseconds 500
 }
 if (-not $ok) { Fail 'служба не перезапустилась после сбоя за 30 с' }
+if (-not (Wait-Dns)) { Show-Net; Fail 'после перезапуска системный DNS не заработал за 20 с' }
 curl.exe -sS --max-time 30 -o NUL "https://$site/"
-if ($LASTEXITCODE) { Fail 'после перезапуска службы HTTPS через TUN не прошёл' }
+if ($LASTEXITCODE) { Show-Net; Fail 'после перезапуска службы HTTPS через TUN не прошёл' }
 Write-Host 'OK: служба перезапустилась, трафик снова через TUN'
 
 & $exePath --service-uninstall
