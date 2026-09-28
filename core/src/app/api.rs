@@ -23,6 +23,20 @@
 //! | `POST /subscriptions/{tag}/update` | обновить подписку сейчас |
 //! | `POST /reload` | перечитать файл настроек без разрыва соединений |
 //!
+//! Потоки — ответ не кончается, пока клиент не закроет соединение: по
+//! JSON-объекту на строку (`Transfer-Encoding: chunked`) или, с
+//! `Upgrade: websocket`, по текстовому кадру WebSocket на объект:
+//!
+//! | Поток | Что присылает |
+//! |---|---|
+//! | `GET /events` | события: `connection_open`, `connection_close`, `group_switch`, `group_check`, `subscription_update`, `reload`, `lagged` (см. `events.rs`) |
+//! | `GET /traffic` | раз в секунду: скорость `up`/`down` (байт/с) и `upTotal`/`downTotal` — как в Clash |
+//! | `GET /memory` | раз в секунду: `inuse` (байт) — как в Clash |
+//! | `GET /logs?level=info` | журнал: `{"type": "info", "payload": "…"}` — как в Clash |
+//!
+//! Потоков одновременно — не больше 16. Пока поток не слушают, события
+//! не собираются.
+//!
 //! Безопасность: токен обязателен всегда (`Authorization: Bearer …`,
 //! сравнение за постоянное время, после 10 неверных подряд — пауза);
 //! заголовок `Host` должен быть адресом API (защита от DNS rebinding:
@@ -37,13 +51,23 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
+use async_tungstenite::tungstenite::protocol::Role;
+use async_tungstenite::tungstenite::Message;
+use async_tungstenite::WebSocketStream;
 use futures_util::future::BoxFuture;
+use futures_util::stream::BoxStream;
+use futures_util::{SinkExt, StreamExt};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
+use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
 use tokio::net::{TcpListener, TcpStream};
+use tokio::sync::broadcast::error::RecvError;
+use tokio::sync::Semaphore;
+use tokio_util::compat::TokioAsyncReadCompatExt;
 
 use super::access::IpNet;
+use super::events::{self, Event};
 use super::stats::Tracker;
 use crate::error::{Error, Result};
 
@@ -61,6 +85,10 @@ pub struct ApiConfig {
 pub const MIN_TOKEN: usize = 16;
 const MAX_HEAD: usize = 16 * 1024;
 const MAX_BODY: usize = 64 * 1024;
+/// Сколько ждать следующего запроса и ответа на обычный запрос.
+const IDLE: Duration = Duration::from_secs(60);
+/// Потоков (`/events`, `/logs`…) одновременно.
+const MAX_STREAMS: usize = 16;
 
 /// Что API умеет делать с приложением (реализует `Running`).
 pub trait Control: Send + Sync {
@@ -78,6 +106,16 @@ pub struct Api {
     tracker: Arc<Tracker>,
     control: Arc<dyn Control>,
     failures: AtomicU32,
+    streams: Arc<Semaphore>,
+}
+
+/// Потоки API.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Feed {
+    Events,
+    Traffic,
+    Memory,
+    Logs,
 }
 
 impl Api {
@@ -106,6 +144,7 @@ impl Api {
             tracker,
             control,
             failures: AtomicU32::new(0),
+            streams: Arc::new(Semaphore::new(MAX_STREAMS)),
         }))
     }
 
@@ -123,7 +162,7 @@ impl Api {
             let me = self.clone();
             tokio::spawn(async move {
                 let _p = permit;
-                let _ = tokio::time::timeout(Duration::from_secs(60), me.handle(s, local)).await;
+                me.handle(s, local).await;
             });
         }
     }
@@ -137,20 +176,154 @@ impl Api {
         let (r, mut w) = s.into_split();
         let mut r = BufReader::new(r);
         loop {
-            let req = match read_request(&mut r).await {
-                Ok(Some(req)) => req,
-                Ok(None) => return,
-                Err(e) => {
+            let req = match tokio::time::timeout(IDLE, read_request(&mut r)).await {
+                Err(_) | Ok(Ok(None)) => return,
+                Ok(Ok(Some(req))) => req,
+                Ok(Err(e)) => {
                     let _ = respond(&mut w, 400, &json!({ "error": e.to_string() }), false).await;
                     return;
                 }
             };
+            if let Some(feed) = feed_of(&req) {
+                if let Some((code, body)) = self.gate(&req, local).await {
+                    let _ = respond(&mut w, code, &body, false).await;
+                } else {
+                    self.stream(feed, &req, r, w).await;
+                }
+                return;
+            }
             let keep = !req.close;
-            let (code, body) = self.route(&req, local).await;
+            let (code, body) = match self.gate(&req, local).await {
+                Some(denied) => denied,
+                None => tokio::time::timeout(IDLE, self.route(&req))
+                    .await
+                    .unwrap_or_else(|_| (504, json!({ "error": "не успели за 60 с" }))),
+            };
             if respond(&mut w, code, &body, keep).await.is_err() || !keep {
                 return;
             }
         }
+    }
+
+    /// Отдавать поток, пока клиент не закроет соединение.
+    async fn stream(
+        &self,
+        feed: Feed,
+        req: &Request,
+        r: BufReader<OwnedReadHalf>,
+        mut w: OwnedWriteHalf,
+    ) {
+        let Ok(_permit) = self.streams.clone().try_acquire_owned() else {
+            let body = json!({ "error": format!("потоков уже {MAX_STREAMS}") });
+            let _ = respond(&mut w, 503, &body, false).await;
+            return;
+        };
+        let src = match self.source(feed, req) {
+            Ok(s) => s,
+            Err(e) => {
+                let _ = respond(&mut w, 400, &json!({ "error": e }), false).await;
+                return;
+            }
+        };
+        let upgrade = req
+            .header("upgrade")
+            .is_some_and(|u| u.eq_ignore_ascii_case("websocket"));
+        if !upgrade {
+            let head = "HTTP/1.1 200 OK\r\nContent-Type: application/x-ndjson; charset=utf-8\r\n\
+                        Transfer-Encoding: chunked\r\nCache-Control: no-store\r\n\
+                        X-Content-Type-Options: nosniff\r\nConnection: close\r\n\r\n";
+            if w.write_all(head.as_bytes()).await.is_ok() {
+                feed_chunked(src, r, w).await;
+            }
+            return;
+        }
+        let Some(key) = req.header("sec-websocket-key") else {
+            let body = json!({ "error": "WebSocket: нет Sec-WebSocket-Key" });
+            let _ = respond(&mut w, 400, &body, false).await;
+            return;
+        };
+        let accept = async_tungstenite::tungstenite::handshake::derive_accept_key(key.as_bytes());
+        let head = format!(
+            "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\
+             Sec-WebSocket-Accept: {accept}\r\n\r\n"
+        );
+        // До ответа клиент не должен ничего слать; прислал — не WebSocket.
+        if w.write_all(head.as_bytes()).await.is_err() || !r.buffer().is_empty() {
+            return;
+        }
+        let Ok(tcp) = r.into_inner().reunite(w) else {
+            return;
+        };
+        let ws = WebSocketStream::from_raw_socket(tcp.compat(), Role::Server, None).await;
+        feed_ws(src, ws).await;
+    }
+
+    fn source(
+        &self,
+        feed: Feed,
+        req: &Request,
+    ) -> std::result::Result<BoxStream<'static, Value>, String> {
+        Ok(match feed {
+            Feed::Events => {
+                let l = self.tracker.events.subscribe();
+                futures_util::stream::unfold(l, |mut l| async move {
+                    let e = match l.rx.recv().await {
+                        Ok(e) => serde_json::to_value(&*e).unwrap_or_default(),
+                        Err(RecvError::Lagged(n)) => {
+                            serde_json::to_value(Event::Lagged { skipped: n }).unwrap_or_default()
+                        }
+                        Err(RecvError::Closed) => return None,
+                    };
+                    Some((e, l))
+                })
+                .boxed()
+            }
+            Feed::Logs => {
+                let level = req.query("level").unwrap_or_else(|| "info".into());
+                let min = events::level_rank(&level).ok_or_else(|| {
+                    format!("level: {level} — ожидалось debug, info, warning или error")
+                })?;
+                let l = events::subscribe_logs();
+                futures_util::stream::unfold(l, move |mut l| async move {
+                    loop {
+                        match l.rx.recv().await {
+                            Ok(line) if events::level_rank(line.level) >= Some(min) => {
+                                return Some((serde_json::to_value(&*line).unwrap_or_default(), l))
+                            }
+                            Ok(_) | Err(RecvError::Lagged(_)) => continue,
+                            Err(RecvError::Closed) => return None,
+                        }
+                    }
+                })
+                .boxed()
+            }
+            Feed::Traffic => {
+                let t = self.tracker.clone();
+                let (up, down) = t.totals();
+                futures_util::stream::unfold((t, up, down), |(t, up, down)| async move {
+                    tokio::time::sleep(Duration::from_secs(1)).await;
+                    let (u, d) = t.totals();
+                    let v = json!({
+                        "up": u.saturating_sub(up),
+                        "down": d.saturating_sub(down),
+                        "upTotal": u,
+                        "downTotal": d,
+                    });
+                    Some((v, (t, u, d)))
+                })
+                .boxed()
+            }
+            Feed::Memory => futures_util::stream::unfold(true, |first| async move {
+                if !first {
+                    tokio::time::sleep(Duration::from_secs(1)).await;
+                }
+                Some((
+                    json!({ "inuse": events::memory_in_use(), "oslimit": 0 }),
+                    false,
+                ))
+            })
+            .boxed(),
+        })
     }
 
     fn authorized(&self, req: &Request) -> bool {
@@ -168,7 +341,8 @@ impl Api {
         diff == 0
     }
 
-    async fn route(&self, req: &Request, local: SocketAddr) -> (u16, Value) {
+    /// Проверки до любого запроса: `Some` — отказ.
+    async fn gate(&self, req: &Request, local: SocketAddr) -> Option<(u16, Value)> {
         // DNS rebinding: Host — только адрес самого API.
         let host_ok = req.header("host").is_some_and(|h| {
             let h = h.trim();
@@ -183,10 +357,10 @@ impl Api {
             .any(|x| x.eq_ignore_ascii_case(h))
         });
         if !host_ok {
-            return (421, json!({ "error": "неверный Host" }));
+            return Some((421, json!({ "error": "неверный Host" })));
         }
         if req.header("origin").is_some() {
-            return (403, json!({ "error": "запросы из браузера запрещены" }));
+            return Some((403, json!({ "error": "запросы из браузера запрещены" })));
         }
         if !self.authorized(req) {
             let n = self.failures.fetch_add(1, Ordering::Relaxed) + 1;
@@ -195,12 +369,16 @@ impl Api {
                 tokio::time::sleep(Duration::from_millis((n as u64 * 100).min(5000))).await;
             }
             tracing::warn!("api: неверный токен");
-            return (
+            return Some((
                 401,
                 json!({ "error": "нужен токен: Authorization: Bearer …" }),
-            );
+            ));
         }
         self.failures.store(0, Ordering::Relaxed);
+        None
+    }
+
+    async fn route(&self, req: &Request) -> (u16, Value) {
         let path: Vec<&str> = req
             .path
             .split('?')
@@ -257,6 +435,80 @@ impl Api {
     }
 }
 
+/// Запрос потока: `GET /events`, `/traffic`, `/memory`, `/logs`.
+fn feed_of(req: &Request) -> Option<Feed> {
+    if req.method != "GET" {
+        return None;
+    }
+    match req
+        .path
+        .split('?')
+        .next()
+        .unwrap_or("")
+        .trim_end_matches('/')
+    {
+        "/events" => Some(Feed::Events),
+        "/traffic" => Some(Feed::Traffic),
+        "/memory" => Some(Feed::Memory),
+        "/logs" => Some(Feed::Logs),
+        _ => None,
+    }
+}
+
+/// Поток по JSON-объекту на строку, куском `chunked` на объект. Клиент
+/// закрыл соединение — поток кончается.
+async fn feed_chunked(
+    mut src: BoxStream<'static, Value>,
+    mut r: BufReader<OwnedReadHalf>,
+    mut w: OwnedWriteHalf,
+) {
+    let mut sink = [0u8; 512];
+    loop {
+        tokio::select! {
+            item = src.next() => {
+                let Some(v) = item else { break };
+                let mut line = serde_json::to_vec(&v).unwrap_or_default();
+                line.push(b'\n');
+                let mut chunk = format!("{:x}\r\n", line.len()).into_bytes();
+                chunk.extend_from_slice(&line);
+                chunk.extend_from_slice(b"\r\n");
+                if w.write_all(&chunk).await.is_err() || w.flush().await.is_err() {
+                    return;
+                }
+            }
+            n = r.read(&mut sink) => {
+                if !matches!(n, Ok(n) if n > 0) {
+                    return;
+                }
+            }
+        }
+    }
+    let _ = w.write_all(b"0\r\n\r\n").await;
+}
+
+/// Поток по текстовому кадру WebSocket на объект.
+async fn feed_ws<S>(mut src: BoxStream<'static, Value>, ws: WebSocketStream<S>)
+where
+    S: futures_util::AsyncRead + futures_util::AsyncWrite + Unpin,
+{
+    let (mut tx, mut rx) = ws.split();
+    loop {
+        tokio::select! {
+            item = src.next() => {
+                let Some(v) = item else { break };
+                if tx.send(Message::text(v.to_string())).await.is_err() {
+                    return;
+                }
+            }
+            m = rx.next() => match m {
+                None | Some(Err(_)) | Some(Ok(Message::Close(_))) => return,
+                Some(Ok(_)) => {}
+            }
+        }
+    }
+    let _ = tx.close().await;
+}
+
 fn pct_decode(s: &str) -> String {
     url::form_urlencoded::parse(format!("x={}", s.replace('+', "%2B")).as_bytes())
         .next()
@@ -273,6 +525,14 @@ struct Request {
 }
 
 impl Request {
+    /// Параметр строки запроса (`?level=debug`).
+    fn query(&self, name: &str) -> Option<String> {
+        let q = self.path.split_once('?')?.1;
+        url::form_urlencoded::parse(q.as_bytes())
+            .find(|(k, _)| k == name)
+            .map(|(_, v)| v.into_owned())
+    }
+
     fn header(&self, name: &str) -> Option<&str> {
         self.headers
             .iter()
@@ -365,6 +625,8 @@ async fn respond<W: tokio::io::AsyncWrite + Unpin>(
         404 => "Not Found",
         421 => "Misdirected Request",
         502 => "Bad Gateway",
+        503 => "Service Unavailable",
+        504 => "Gateway Timeout",
         _ => "Error",
     };
     let body = serde_json::to_vec_pretty(body).unwrap_or_default();

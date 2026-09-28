@@ -345,6 +345,26 @@ curl -H "$T" -X POST http://127.0.0.1:9090/subscriptions/my-panel/update
 curl -H "$T" -X POST http://127.0.0.1:9090/reload
 ```
 
+Потоки — клиент узнаёт о переменах сразу, без опроса. Ответ не кончается,
+пока клиент не закроет соединение: по JSON-объекту на строку или, с
+`Upgrade: websocket`, по кадру WebSocket на объект.
+
+```sh
+curl -N -H "$T" http://127.0.0.1:9090/events            # события
+curl -N -H "$T" http://127.0.0.1:9090/traffic           # скорость раз в секунду
+curl -N -H "$T" "http://127.0.0.1:9090/logs?level=warning"
+```
+
+| Поток | Что присылает |
+|---|---|
+| `/events` | `connection_open` (поля — как в `/connections`), `connection_close` (итог трафика, длительность), `group_switch` (группа сменила участника: сама или вручную), `group_check` (задержки после проверки), `subscription_update` (число серверов или ошибка), `reload`; `lagged` — клиент не успевал, часть событий пропущена (перечитайте `/connections`) |
+| `/traffic` | раз в секунду: `up`, `down` — байт за секунду, `upTotal`, `downTotal` — всего (как в Clash) |
+| `/memory` | раз в секунду: `inuse` — память процесса, байт (как в Clash) |
+| `/logs?level=info` | журнал: `{"type": "warning", "payload": "…"}` (как в Clash); `level` — `debug`, `info`, `warning`, `error`; подробнее, чем пишется в журнал (`RUST_LOG`), не бывает |
+
+Пока поток никто не слушает, события не собираются вовсе. Потоков
+одновременно — до 16.
+
 - Токен обязателен всегда; `Host` должен быть адресом API (защита от DNS
   rebinding), запросы с `Origin` (из браузера) отвергаются; слушать не
   на 127.0.0.1 — только с `allow_ip`. Адреса сайтов в `/connections` —

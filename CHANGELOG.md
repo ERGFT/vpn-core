@@ -28,6 +28,8 @@
 - Свой DNS: UDP, TCP, DoT, DoH, DoQ, кеш, fake-IP.
 - Группы `selector`/`urltest`/`fallback`, подписки (base64, sing-box,
   Clash); локальное API; перечитывание настроек без разрыва соединений.
+- Потоки API: `/events` (соединения, группы, подписки, перечитывание),
+  `/traffic`, `/memory`, `/logs` — построчный JSON или WebSocket.
 - Файл настроек в форматах sing-box и Xray-core (JSON, формат
   определяется сам); неподдерживаемое — ошибка с путём до ключа. Свой
   формат TOML убран.
@@ -77,6 +79,8 @@ It will include:
 - Own DNS: UDP, TCP, DoT, DoH, DoQ, cache, fake-IP.
 - `selector`/`urltest`/`fallback` groups, subscriptions (base64, sing-box,
   Clash); local API; config reload without dropping connections.
+- API streams: `/events` (connections, groups, subscriptions, reload),
+  `/traffic`, `/memory`, `/logs` — JSON lines or WebSocket.
 - Config file in the sing-box and Xray-core formats (JSON, detected
   automatically); anything unsupported is an error with the path to the
   key. The own TOML format has been removed.
