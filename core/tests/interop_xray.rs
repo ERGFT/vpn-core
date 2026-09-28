@@ -1992,31 +1992,24 @@ async fn doq_through_vless_against_xray() {
         "vless://{uuid}@127.0.0.1:{port}?encryption=none&security=reality&sni=decoy.test&fp=chrome&pbk={}&sid={SHORT_ID}&type=tcp&flow=xtls-rprx-vision",
         b64(&keys.public)
     );
-    let toml = format!(
-        r#"
-[[inbounds]]
-type = "dns"
-listen = "127.0.0.1:0"
-
-[[outbounds]]
-tag = "proxy"
-type = "vless"
-link = "{link}"
-
-[[outbounds]]
-tag = "direct"
-type = "direct"
-
-[dns]
-[[dns.servers]]
-tag = "doq"
-address = "quic://{doq}"
-detour = "proxy"
-ca_file = '{}'
-"#,
-        ca.display()
+    let json = format!(
+        r#"{{
+  "inbounds": [{{ "type": "direct", "tag": "dns-in", "listen": "127.0.0.1", "listen_port": 0 }}],
+  "outbounds": [
+    {{ "type": "vless", "tag": "proxy", "link": "{link}" }},
+    {{ "type": "direct", "tag": "direct" }}
+  ],
+  "route": {{ "rules": [{{ "inbound": ["dns-in"], "action": "hijack-dns" }}] }},
+  "dns": {{
+    "servers": [{{ "type": "quic", "tag": "doq", "server": "{}", "server_port": {},
+                   "detour": "proxy", "tls": {{ "certificate_path": {} }} }}]
+  }}
+}}"#,
+        doq.ip(),
+        doq.port(),
+        serde_json::to_string(&ca.display().to_string()).unwrap()
     );
-    let cfg = reality_core::app::config::Config::parse(&toml).unwrap();
+    let cfg = reality_core::app::config::Config::parse(&json).unwrap();
     let app = reality_core::app::App::build(&cfg)
         .unwrap()
         .start()

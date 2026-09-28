@@ -41,7 +41,7 @@
 | `fp=firefox` (Firefox 148), `safari`/`ios` (Safari 26.3), `edge`/`android` (как Chrome), `random`, `randomized` | ✅ cipher suites, расширения в порядке браузера, группы, доли ключа (у Firefox — настоящая P-256), подписи, сжатие сертификата (zlib, brotli, zstd — с распаковкой), GREASE — сверены с utls; HTTP-заголовки ws/httpupgrade/xhttp — того же браузера; проверено против REALITY-сервера Xray (tcp, Vision, xhttp, gRPC) |
 | UDP (SOCKS5 UDP ASSOCIATE) через XUDP — как у клиента Xray: все назначения в одном потоке, Full Cone NAT | ✅ в том числе с Vision (другого способа UDP Vision-аккаунт у Xray не принимает); `--no-xudp` — поток на каждое назначение |
 | Логин/пароль на SOCKS5 (`--auth`) | ✅ |
-| Файл настроек (`--config`, TOML): несколько входов и выходов (`vless`, `direct`, `block`) | ✅ |
+| Файл настроек (`--config`) в формате **sing-box или Xray-core** (JSON, формат определяется сам): несколько входов и выходов | ✅ неподдерживаемое — ошибка с путём до ключа, а не молчание |
 | Группы серверов `selector`, `urltest`, `fallback` (проверка по HTTP, переход к следующему при отказе); подписки: base64/текст/JSON sing-box/YAML Clash, кеш на диске | ✅ проверено с панелью на HTTPS и сервером Xray |
 | Входы SOCKS5, HTTP-прокси (CONNECT и обычные запросы) и `mixed` — оба на одном порту | ✅ |
 | Маршрутизация: домен (точно, суффикс, подстрока, regex), IP/подсеть, частные адреса, порт, сеть, вход, базы `geosite.dat`/`geoip.dat` (v2fly), наборы правил sing-box (`.srs` и `.json`) | ✅ разбор `.srs` сверен с `sing-box rule-set decompile` на настоящих наборах SagerNet и MetaCubeX; в наборах — только домены и адреса |
@@ -49,8 +49,8 @@
 | Системный прокси Windows (`--system-proxy`) | ✅ проверен под Wine |
 | Автозапуск: служба Windows (`--service-install`, настройки в закрытой папке ProgramData), запуск при входе (`--autostart-install`), systemd на Linux | ✅ служба — на настоящей Windows (CI: установка, права папки ProgramData, остановка и запуск, удаление); автозапуск при входе — под Wine |
 | TUN — весь трафик компьютера (как VPN): свой TCP/IP-стек, `auto_route`, перехват DNS, fake-IP, `route_exclude`, kill switch `strict_route` | ✅ Linux — проверен против Xray в изолированном netns (TCP, UDP, DNS, fake-IP, ~200 МиБ/с, устойчив к потерям пакетов); ✅ Windows (Wintun) — на настоящей Windows (CI: служба, `auto_route`, HTTPS через TUN); kill switch — только Linux |
-| Свой DNS: серверы UDP, TCP, DoT, DoH, DNS over QUIC (`quic://`), системный; выбор сервера по доменам и geosite; кеш; вход DNS-сервера; перехват DNS (выход `dns`); fake-IP; `domain_strategy = "ip_if_non_match"` | ✅ DoH/DoT/DoQ проверены на своих серверах, UDP-DNS и DoQ — через Xray (XUDP) |
-| Mux.Cool для TCP (`mux = 8` у выхода или подписки; не вместе с Vision) | ✅ проверен против Xray-core |
+| Свой DNS: серверы UDP, TCP, DoT, DoH, DNS over QUIC (`quic://`), системный; выбор сервера по доменам и geosite; кеш; вход DNS-сервера; перехват DNS (`hijack-dns`); fake-IP; `domain_strategy`: `ip_if_non_match` | ✅ DoH/DoT/DoQ проверены на своих серверах, UDP-DNS и DoQ — через Xray (XUDP) |
+| Mux.Cool для TCP (`"mux": 8` у выхода или подписки; не вместе с Vision) | ✅ проверен против Xray-core |
 | Общие HTTP/2-соединения: gRPC — все потоки в одном соединении (как у Xray), xhttp — `xmux` (умолчания Xray: 16–32 сессии на соединение; и для HTTP/2, и для HTTP/3) | ✅ проверено против Xray-core (счёт соединений) |
 | Против DPI: дробление ClientHello (`fragment`: TLS-рекорды и/или TCP-сегменты с паузами) у `vless` и `direct`, шум перед UDP (`noises`) у `direct` | ✅ дробление проверено против REALITY-сервера Xray (в т.ч. рекорды по 1–3 байта и Vision); по умолчанию выключено |
 | Локальное API (127.0.0.1 + токен): трафик, открытые соединения и их закрытие, группы и выбор сервера, обновление подписки; перечитывание настроек без разрыва соединений (API, SIGHUP); пресеты правил | ✅ |
@@ -119,7 +119,7 @@ reality-client --server 'vless://UUID@host:443?encryption=none&security=reality&
 TUN; от имени администратора):
 
 ```bat
-reality-client --service-install --config C:\путь\client.toml
+reality-client --service-install --config C:\путь\config.json
 reality-client --service-uninstall
 ```
 
@@ -138,7 +138,7 @@ reality-client --service-uninstall
 прокси — настройка пользователя):
 
 ```bat
-reality-client --autostart-install --config C:\путь\client.toml --system-proxy
+reality-client --autostart-install --config C:\путь\config.json --system-proxy
 reality-client --autostart-uninstall
 ```
 
@@ -159,108 +159,131 @@ curl --socks5-hostname 127.0.0.1:1080 https://example.com
 
 ### Файл настроек
 
-Для нескольких входов и выходов вместо ключей — файл TOML
-([`examples/client.toml`](examples/client.toml)):
+Для нескольких входов и выходов вместо ключей — файл настроек в формате
+**sing-box** или **Xray-core** (JSON, комментарии разрешены); формат
+определяется сам. Примеры с пояснениями:
+[`examples/sing-box.json`](examples/sing-box.json) и
+[`examples/xray.json`](examples/xray.json).
 
 ```sh
-reality-client --config client.toml --check   # только проверить
-reality-client --config client.toml
+reality-client --config config.json --check   # только проверить
+reality-client --config config.json
 ```
 
-```toml
-[[inbounds]]
-type = "mixed"             # SOCKS5 и HTTP на одном порту
-listen = "127.0.0.1:1080"
-sniff = true               # домен по SNI/Host, если приложение прислало IP
+Подходят и готовые настройки sing-box и Xray (из v2rayN, панелей и т.п.):
+всё, что умеет ядро, работает как там. Чего ядро не умеет (другие
+протоколы, цепочки выходов, мультиплексирование sing-box…), — ошибка при
+запуске с путём до ключа, например `outbounds[2].multiplex: не
+поддерживается`, а не молча пропущенная настройка. Опечатка в имени
+ключа — тоже ошибка.
 
-[[outbounds]]
-tag = "proxy"
-type = "vless"
-link_file = "server.txt"   # ссылка — в отдельном файле
-
-[[outbounds]]
-tag = "direct"             # напрямую, без сервера
-type = "direct"
-
-[[outbounds]]
-tag = "block"
-type = "block"
-
-[[route.rules]]
-geosite = ["category-ads-all"]   # реклама
-outbound = "block"
-
-[[route.rules]]
-ip_is_private = true             # локальная сеть
-outbound = "direct"
-
-[[route.rules]]
-domain_suffix = ["ru", "su"]
-geoip = ["ru"]                   # российский домен ИЛИ российский адрес
-outbound = "direct"
-
-[route]
-final = "proxy"            # куда идёт всё, что не попало под правила
+```json
+{
+  "inbounds": [
+    { "type": "mixed", "tag": "local", "listen": "127.0.0.1", "listen_port": 1080 }
+  ],
+  "outbounds": [
+    { "type": "vless", "tag": "proxy", "server": "server.example.com", "server_port": 443,
+      "uuid": "…", "flow": "xtls-rprx-vision",
+      "tls": { "enabled": true, "server_name": "www.example.com",
+               "utls": { "enabled": true, "fingerprint": "chrome" },
+               "reality": { "enabled": true, "public_key": "…", "short_id": "…" } } },
+    { "type": "direct", "tag": "direct" },
+    { "type": "block", "tag": "block" }
+  ],
+  "route": {
+    "rules": [
+      { "action": "sniff" },                              // домен по SNI/Host, если приложение прислало IP
+      { "geosite": ["category-ads-all"], "outbound": "block" },
+      { "ip_is_private": true, "outbound": "direct" },
+      { "domain_suffix": ["ru", "su"], "geoip": ["ru"], "outbound": "direct" }
+    ],
+    "final": "proxy"                                      // куда идёт всё, что не попало под правила
+  }
+}
 ```
+
+Что понимается в каждом формате:
+
+| | sing-box | Xray-core |
+|---|---|---|
+| Входы | `socks`, `http`, `mixed`, `tun`; `direct` + правило `hijack-dns` — DNS-сервер | `socks`, `http`, `mixed`, `tun`; `dokodemo-door`, отданный маршрутизацией выходу `dns`, — DNS-сервер |
+| Выходы | `vless`, `trojan`, `direct`, `block`, `dns`, `selector`, `urltest` | `vless`, `trojan`, `freedom` (с `fragment`, `noises`), `blackhole`, `dns`; `balancers` с `leastPing`/`leastLoad` — группа `urltest` (проверка — из `observatory`) |
+| Транспорт и TLS | `tls` (`reality`, `utls`, `alpn`, `certificate_path`), `transport`: `ws`, `grpc`, `httpupgrade` | `streamSettings`: `raw`/`tcp`, `ws`, `grpc`, `httpupgrade`, `xhttp`; `tls`/`reality`; `mux` (Mux.Cool) |
+| Правила | `domain`, `domain_suffix`, `domain_keyword`, `domain_regex`, `geosite`, `geoip`, `ip_cidr`, `ip_is_private`, `port`, `port_range`, `network`, `inbound`, `rule_set`, `protocol: dns`; действия `route`, `reject`, `sniff`, `hijack-dns` | `domain` (`geosite:`, `domain:`, `full:`, `regexp:`, `keyword:`, просто подстрока), `ip` (`geoip:`, адреса), `port`, `network`, `inboundTag`, `outboundTag`/`balancerTag`; `domainStrategy` `AsIs`/`IPIfNonMatch` |
+| DNS | `servers` (с `type` и старые с `address`), `rules`, `final`, `strategy`, `fakeip` | `servers` (строки и объекты с `domains`; `+local` — напрямую), `queryStrategy`, `fakedns` |
+| API | `experimental.clash_api`: `external_controller`, `secret` | то же расширение `experimental.clash_api` |
 
 Правила проверяются по порядку, срабатывает первое подошедшее. В одном
-правиле условия группы «куда» (`domain`, `domain_suffix`,
-`domain_keyword`, `domain_regex`, `geosite`, `ip_cidr`, `ip_is_private`,
-`geoip`) соединяются через «или», а с `port`, `network`, `inbound` —
-через «и» (как у sing-box). Правило по IP срабатывает, только если
-приложение прислало IP; правило по домену — если прислало имя или имя
-найдено sniffing'ом. Базы `geosite.dat` (`dlc.dat` из
+правиле условия «куда» (домены, `geosite`, адреса, `geoip`) соединяются
+через «или», а с портом, сетью и входом — через «и» (как у sing-box).
+Правило по IP срабатывает, только если приложение прислало IP; правило по
+домену — если прислало имя или имя найдено sniffing'ом. Базы
+`geosite.dat` (`dlc.dat` из
 [v2fly/domain-list-community](https://github.com/v2fly/domain-list-community/releases))
-и `geoip.dat` ([v2fly/geoip](https://github.com/v2fly/geoip/releases))
-ищутся рядом с файлом настроек; из них читаются только нужные категории
-(обе базы целиком — ~0,2 с).
+и `geoip.dat` ([v2fly/geoip](https://github.com/v2fly/geoip/releases)) —
+формат Xray, в том числе и для настроек sing-box; ищутся рядом с файлом
+настроек, из них читаются только нужные категории (обе базы целиком —
+~0,2 с).
 
 Наборы правил sing-box — `.srs` (например, из
 [SagerNet/sing-geosite](https://github.com/SagerNet/sing-geosite/tree/rule-set),
 [sing-geoip](https://github.com/SagerNet/sing-geoip/tree/rule-set) или
-MetaCubeX/meta-rules-dat) и исходный `.json`:
+MetaCubeX/meta-rules-dat) и исходный `.json`, только `type: local`:
 
-```toml
-[[route.rule_set]]
-tag = "ru"
-path = "geosite-category-ru.srs"   # формат — по расширению; format = "binary"/"source"
-
-[[route.rules]]
-rule_set = ["ru"]                  # домены и адреса набора — в условия правила
-outbound = "direct"
+```json
+"route": {
+  "rule_set": [{ "type": "local", "tag": "ru", "format": "binary", "path": "geosite-category-ru.srs" }],
+  "rules": [{ "rule_set": ["ru"], "outbound": "direct" }]
+}
 ```
 
-`rule_set` можно указывать и в `[[dns.rules]]` (берутся домены).
-Загружаются только наборы, на которые ссылаются правила, и заново — при
-перечитывании настроек. Наборы с другими условиями (порт, процесс,
-логические `and`/`or`, `invert`) отвергаются с ошибкой: упростить их молча
-значило бы маршрутизировать не так, как задумано. Скачивать наборы по URL
-клиент сам не умеет — положите файл рядом с настройками.
+`rule_set` можно указывать и в правилах DNS (берутся домены). Загружаются
+только наборы, на которые ссылаются правила, и заново — при перечитывании
+настроек. Наборы с другими условиями (порт, процесс, логические
+`and`/`or`, `invert`) отвергаются с ошибкой: упростить их молча значило бы
+маршрутизировать не так, как задумано. Скачивать наборы по URL клиент сам
+не умеет — положите файл рядом с настройками.
+
+**Расширения этого ядра** — ключи, которых нет в самих форматах (sing-box
+и Xray их не примут):
+
+- у выходов `vless`/`trojan`: `link` или `link_file` — ссылка
+  `vless://`/`trojan://` вместо полей (секрет можно держать в отдельном
+  файле); `allow_insecure` — разрешить сервер без шифрования; `mux` —
+  Mux.Cool (в sing-box: `"mux": 8`); `fragment`;
+- у `direct` (sing-box): `fragment`, `noises` — как у `freedom` в Xray;
+- выход `fallback` (первый работающий) и `subscriptions` у групп;
+- в корне: `subscriptions` — подписки с панели;
+- у входов: `allow_ip`, `max_conns`; у `transport` (sing-box): `type: xhttp`;
+- в `route` (sing-box): `presets`, `geosite_file`, `geoip_file`,
+  `domain_strategy`; у `fakeip`: `cache_file`.
 
 Ключи командной строки — сокращение для одного входа `mixed` и одного
-выхода `proxy`. Опечатка в имени поля — ошибка при запуске. Выход
-`direct` не пускает клиентов из сети к службам этого компьютера
-(`127.0.0.1`, `localhost`); выход `block` отвечает SOCKS5-кодом 0x02 или
-HTTP 403. Полный пример — [`examples/client.toml`](examples/client.toml).
+выхода `proxy`. Выход `direct` не пускает клиентов из сети к службам этого
+компьютера (`127.0.0.1`, `localhost`); выход `block` отвечает SOCKS5-кодом
+0x02 или HTTP 403.
 
 ### Группы серверов и подписки
 
 Несколько серверов — группа; группа сама выход, её tag пишут в правила и
 `route.final`:
 
-```toml
-[[outbounds]]
-tag = "auto"
-type = "urltest"                 # самый быстрый; "fallback" — первый работающий;
-outbounds = ["proxy"]            # "selector" — выбранный (default или первый)
-subscriptions = ["my-panel"]     # + серверы с панели
-# url = "https://www.gstatic.com/generate_204"   interval = 180   tolerance = 50
-
-[[subscriptions]]
-tag = "my-panel"
-url_file = "subscription.txt"    # адрес подписки — секрет, как UUID
-# update_interval = 43200   detour = "direct"   include = "Germany|Finland"
+```json
+"outbounds": [
+  { "type": "urltest", "tag": "auto",            // самый быстрый; "fallback" — первый работающий;
+    "outbounds": ["proxy"],                      // "selector" — выбранный (default или первый)
+    "subscriptions": ["my-panel"],               // + серверы с панели
+    "url": "https://www.gstatic.com/generate_204", "interval": "3m", "tolerance": 50 }
+],
+"subscriptions": [
+  { "tag": "my-panel", "url_file": "subscription.txt",   // адрес подписки — секрет, как UUID
+    "update_interval": 43200, "detour": "direct", "include": "Germany|Finland" }
+]
 ```
+
+В формате Xray то же — `routing.balancers` со стратегией `leastPing` и
+`observatory` (адрес и период проверки).
 
 - Проверка — HTTP-запрос через каждого участника раз в `interval` с
   разбросом ±20 %; `urltest` не переключается, пока текущий хуже лучшего
@@ -268,46 +291,48 @@ url_file = "subscription.txt"    # адрес подписки — секрет,
   следующий участник (до трёх), неудачник считается упавшим до проверки.
   Переключение не рвёт открытых соединений.
 - Подписка: base64-список ссылок (3x-ui, Marzban, Remnawave), обычный
-  текст, JSON sing-box, YAML Clash — берутся только VLESS, остальное в
-  журнале счётчиком. Только https с проверкой сертификата (`ca_file` —
-  для самоподписанного сертификата панели); серверы с `security=none`
-  пропускаются без `allow_insecure`. Загрузка — через группу, а пока
-  список пуст — через `direct` (или через `detour`). Последний список —
-  в `<tag>.subscription` рядом с настройками (права 600): клиент стартует
-  без панели. В журнал попадает только имя сервера панели, не адрес
-  подписки. С TUN подписка без сохранённого списка загружается до
-  включения маршрутов.
+  текст, JSON sing-box, YAML Clash — берутся только VLESS и Trojan,
+  остальное в журнале счётчиком. Только https с проверкой сертификата
+  (`ca_file` — для самоподписанного сертификата панели); серверы с
+  `security=none` пропускаются без `allow_insecure`. Загрузка — через
+  группу, а пока список пуст — через `direct` (или через `detour`).
+  Последний список — в `<tag>.subscription` рядом с настройками (права
+  600): клиент стартует без панели. В журнал попадает только имя сервера
+  панели, не адрес подписки. С TUN подписка без сохранённого списка
+  загружается до включения маршрутов.
 
 ### Против DPI: fragment и noises
 
-```toml
-[[outbounds]]
-tag = "direct"
-type = "direct"
-fragment = { packets = "tlshello", length = "100-200", interval = "10-20" }
-noises = [{ type = "rand", packet = "10-20", delay = "10-16" }]
+```json
+{ "type": "direct", "tag": "direct",
+  "fragment": { "packets": "tlshello", "length": "100-200", "interval": "10-20" },
+  "noises": [{ "type": "rand", "packet": "10-20", "delay": "10-16" }] }
 ```
 
-`fragment` (у `vless` — к серверу, у `direct` — к сайтам) режет первый
-TLS-рекорд с ClientHello на рекорды по `length` байт; с `interval > 0` —
-ещё и отдельными TCP-сегментами с паузами (мс). `packets = "1-3"` — вместо
-этого режутся 1–3-я записи в соединение. Помогает против DPI, который
-ищет имя сайта в первом пакете и не собирает поток; против DPI, который
-собирает, — нет, а необычный ClientHello сам по себе заметен. `noises` —
-пакеты-пустышки (`rand`, `str`, `base64`, `hex`) перед первой
-UDP-датаграммой к адресу; к порту 53 не шлются. Оба выключены по
-умолчанию; параметры — как у `freedom` в Xray.
+В Xray — те же поля в `settings` выхода `freedom`. `fragment` (у `vless` —
+к серверу, у `direct` — к сайтам) режет первый TLS-рекорд с ClientHello на
+рекорды по `length` байт; с `interval > 0` — ещё и отдельными
+TCP-сегментами с паузами (мс). `packets = "1-3"` — вместо этого режутся
+1–3-я записи в соединение. Помогает против DPI, который ищет имя сайта в
+первом пакете и не собирает поток; против DPI, который собирает, — нет, а
+необычный ClientHello сам по себе заметен. `noises` — пакеты-пустышки
+(`rand`, `str`, `base64`, `hex`) перед первой UDP-датаграммой к адресу; к
+порту 53 не шлются. Оба выключены по умолчанию; параметры — как у
+`freedom` в Xray.
 
 ### API и перечитывание настроек
 
-```toml
-[api]
-listen = "127.0.0.1:9090"
-token_file = "api-token.txt"     # не короче 16 символов
+Адрес и секрет — как у Clash API в sing-box:
 
-[route]
-presets = ["block-ads", "private-direct", "ru-direct"]
+```json
+"experimental": {
+  "clash_api": { "external_controller": "127.0.0.1:9090", "secret_file": "api-token.txt" }
+},
+"route": { "presets": ["block-ads", "private-direct", "ru-direct"] }
 ```
+
+`secret` — токен прямо в файле, `secret_file` (расширение) — в отдельном
+файле; не короче 16 символов.
 
 ```sh
 T="Authorization: Bearer $(cat api-token.txt)"
@@ -328,8 +353,7 @@ curl -H "$T" -X POST http://127.0.0.1:9090/reload
   работают прежние настройки. Новые выходы, правила, DNS, группы и
   подписки — сразу для новых соединений, открытые живут со старыми.
   Входы перезапускаются, только если их настройки изменились; вход TUN и
-  раздел `[api]` — после перезапуска программы. Таблица fake-IP
-  сохраняется.
+  API — после перезапуска программы. Таблица fake-IP сохраняется.
 - Пресеты (после своих правил, так что своими можно переопределить):
   `block-ads` (geosite `category-ads-all` → первый `block`),
   `private-direct` (частные адреса, `.local`, `.lan` → первый `direct`),
@@ -338,96 +362,102 @@ curl -H "$T" -X POST http://127.0.0.1:9090/reload
 
 ### TUN — весь трафик компьютера
 
-Вход `type = "tun"` создаёт виртуальный сетевой интерфейс, и через клиент
-идёт трафик всех программ, а не только настроенных на прокси:
+Вход `tun` создаёт виртуальный сетевой интерфейс, и через клиент идёт
+трафик всех программ, а не только настроенных на прокси:
 
-```toml
-[[inbounds]]
-type = "tun"
-sniff = true                     # домен по SNI/Host и по QUIC (HTTP/3)
-# strict_route = true            # kill switch (Linux)
-# route_exclude = ["192.168.0.0/16"]
+```json
+"inbounds": [
+  { "type": "tun", "tag": "tun",
+    "address": ["172.19.0.1/30"],               // по умолчанию и fdfe:dcba:9876::1/126
+    "auto_route": true,                         // весь трафик в TUN (по умолчанию)
+    "strict_route": true,                       // kill switch (Linux)
+    "route_exclude_address": ["192.168.0.0/16"] }
+],
+"route": {
+  "rules": [
+    { "action": "sniff" },                       // домен по SNI/Host и по QUIC (HTTP/3)
+    { "protocol": "dns", "action": "hijack-dns" } // DNS на порт 53 любого адреса — раздел dns
+  ]
+}
 ```
 
-- `sniff = true` в TUN находит домен и у QUIC: из первых Initial-пакетов
-  (их ключи выводятся из открытого Connection ID) собирается ClientHello —
+В Xray — вход `"protocol": "tun"` (`settings.name`, `settings.MTU`); DNS
+перехватывается правилом `inboundTag` → выход `dns`.
+
+- `sniff` в TUN находит домен и у QUIC: из первых Initial-пакетов (их
+  ключи выводятся из открытого Connection ID) собирается ClientHello —
   правила по доменам работают и для HTTP/3. Не QUIC — без задержки; QUIC
   ждёт второй пакет не дольше 300 мс.
-
 - Нужны права администратора (Windows) или root (Linux). На Windows
   рядом с `reality-client.exe` должен лежать `wintun.dll` (из
   [wintun.net](https://www.wintun.net/), архитектура amd64).
-- `auto_route` (по умолчанию включён) направляет в TUN весь трафик;
-  соединения самого клиента (к серверу, `direct`, DNS) идут мимо TUN:
-  на Linux они помечаются (`SO_MARK`), на Windows привязаны к физическому
-  интерфейсу. Петли нет, а правила `direct` работают как обычно.
-- DNS-запросы на порт 53 любого адреса отвечает раздел `[dns]`
-  (`dns_hijack`, по умолчанию включён; без `[dns]` — ошибка настроек).
-  Fake-IP с TUN работает полностью: программа получает адрес
-  198.18.x.x, а соединяется клиент уже с именем через сервер.
+- `auto_route` направляет в TUN весь трафик; соединения самого клиента
+  (к серверу, `direct`, DNS) идут мимо TUN: на Linux они помечаются
+  (`SO_MARK`), на Windows привязаны к физическому интерфейсу. Петли нет,
+  а правила `direct` работают как обычно. Без IPv6 у компьютера IPv6 в
+  TUN не направляется.
+- DNS-запросы на порт 53 любого адреса при правиле `hijack-dns` отвечает
+  раздел `dns` (без него — ошибка настроек). Fake-IP с TUN работает
+  полностью: программа получает адрес 198.18.x.x, а соединяется клиент
+  уже с именем через сервер.
 - Выход из клиента (Ctrl+C, закрытие окна) возвращает маршруты. Если
   клиент убит, интерфейс исчезает вместе со своими маршрутами — сеть
-  снова работает напрямую. С `strict_route = true` (Linux) — наоборот:
-  сеть остаётся закрытой (kill switch), пока клиент не запущен снова
-  или не выполнено `reality-client --tun-cleanup`.
-- Системный DNS-сервер (`address = "local"`) вместе с TUN — ошибка
+  снова работает напрямую. С `strict_route` (Linux) — наоборот: сеть
+  остаётся закрытой (kill switch), пока клиент не запущен снова или не
+  выполнено `reality-client --tun-cleanup`.
+- Системный DNS-сервер (`"type": "local"`) вместе с TUN — ошибка
   настроек: системный DNS сам идёт через TUN (петля).
-- Ограничения: IPv6 включается, только если он есть в системе; ICMP
-  (ping) через TUN не проходит; на Windows `route_exclude` — только
-  IPv4, kill switch нет, а при исключённой локальной сети Windows может
-  спрашивать DNS роутера напрямую.
+- Ограничения: ICMP (ping) через TUN не проходит; на Windows
+  `route_exclude_address` — только IPv4, kill switch нет, а при
+  исключённой локальной сети Windows может спрашивать DNS роутера
+  напрямую.
 
 ### DNS
 
-Раздел `[dns]` — свой DNS вместо системного (пример — в
-[`examples/client.toml`](examples/client.toml)):
+Раздел `dns` — свой DNS вместо системного:
 
-```toml
-[[inbounds]]               # DNS-сервер для системы и программ
-type = "dns"
-listen = "127.0.0.1:53"
-
-[dns]
-final = "remote"
-
-[[dns.servers]]
-tag = "remote"
-address = "https://1.1.1.1/dns-query"   # DoH
-detour = "proxy"                        # через сервер VLESS
-
-[[dns.servers]]
-tag = "local"
-address = "https://common.dot.dns.yandex.net/dns-query"
-detour = "direct"
-
-[[dns.rules]]
-geosite = ["category-ru"]
-server = "local"
+```json
+"inbounds": [
+  { "type": "direct", "tag": "dns-in", "listen": "127.0.0.1", "listen_port": 53 }   // DNS-сервер для системы
+],
+"route": { "rules": [{ "inbound": ["dns-in"], "action": "hijack-dns" }] },
+"dns": {
+  "servers": [
+    { "type": "https", "tag": "remote", "server": "1.1.1.1", "detour": "proxy" },
+    { "type": "https", "tag": "local", "server": "common.dot.dns.yandex.net", "detour": "direct" }
+  ],
+  "rules": [{ "geosite": ["category-ru"], "server": "local" }],
+  "final": "remote"
+}
 ```
 
-- Адреса серверов: `1.1.1.1` или `udp://…` (UDP), `tcp://…`,
-  `tls://…` (DNS over TLS, порт 853), `https://…/dns-query` (DNS over
-  HTTPS), `quic://…` (DNS over QUIC, RFC 9250, UDP-порт 853 — через выход
-  VLESS идёт по XUDP), `local` (системный резолвер), `fakeip`. Для `udp://`
-  и `tcp://` нужен IP: имя самого DNS-сервера разрешить нечем. Сертификаты
-  DoT/DoH/DoQ проверяются (свои корни — `ca_file`).
+В Xray: `"dns": {"servers": ["https://1.1.1.1/dns-query",
+{"address": "https+local://…", "domains": ["geosite:category-ru"]}]}` —
+`domains` становятся правилами, `+local` — запросы напрямую.
+
+- Серверы: `udp`, `tcp`, `tls` (DNS over TLS, порт 853), `https` (DNS over
+  HTTPS, `path` по умолчанию `/dns-query`), `quic` (DNS over QUIC,
+  RFC 9250, UDP-порт 853 — через выход VLESS идёт по XUDP), `local`
+  (системный резолвер), `fakeip`. Старая форма sing-box —
+  `"address": "https://1.1.1.1/dns-query"` — тоже понимается. Для `udp` и
+  `tcp` нужен IP: имя самого DNS-сервера разрешить нечем. Сертификаты
+  DoT/DoH/DoQ проверяются (свои корни — `tls.certificate_path`).
 - `detour` — через какой выход ходить к серверу; по умолчанию
   `route.final`, то есть обычно через сервер VLESS: так ни провайдер, ни
   соседи по Wi-Fi не видят, какие имена вы спрашиваете.
-- Кто пользуется модулем: вход `type = "dns"` (укажите `127.0.0.1` как
-  DNS в настройках сети — тогда через него пойдут запросы всех программ);
-  выход `type = "dns"` с правилом `port = [53]` (DNS-запросы программ,
-  идущие через прокси); выход `direct` (разрешает имена им, а не
-  системой); `route.domain_strategy = "ip_if_non_match"` (правила по IP
-  для имён).
+- Кто пользуется модулем: DNS-вход (укажите `127.0.0.1` как DNS в
+  настройках сети — тогда через него пойдут запросы всех программ);
+  правило `hijack-dns` (DNS-запросы программ, идущие через прокси или
+  TUN); выход `direct` (разрешает имена им, а не системой);
+  `route.domain_strategy` `ip_if_non_match` (правила по IP для имён).
 - Кеш: по TTL ответа (не дольше часа; отрицательные — не дольше минуты),
-  до 4096 ответов (`cache_size`).
-- Fake-IP (`address = "fakeip"`): программа сразу получает адрес из
+  до 4096 ответов (`cache_capacity`; `disable_cache` — без кеша).
+- Fake-IP (сервер `"type": "fakeip"`): программа сразу получает адрес из
   `198.18.0.0/15` (и `fc00::/18`), а соединяясь с ним через прокси,
   получает настоящий сайт — имя разрешает сервер. Имеет смысл только
   вместе с TUN или для программ, которые ходят через этот прокси: без них
   программа пойдёт на адрес 198.18.x.x напрямую и никуда не попадёт.
-  Таблицу можно сохранять между перезапусками (`[dns.fakeip] cache_file`).
+  Таблицу можно сохранять между перезапусками (`cache_file` — расширение).
 - DNS-вход, открытый в сеть, требует `allow_ip`: иначе это «открытый
   резолвер», которым пользуются для DDoS-атак.
 
@@ -492,7 +522,7 @@ server = "local"
 | Прокси открыт в сеть: SOCKS5 и HTTP-прокси **не шифруются** — пароль, адреса сайтов и данные между телефоном и компьютером видны в общей Wi-Fi | так устроены сами эти протоколы, клиент это исправить не может; клиент предупреждает при запуске. Открывайте прокси в сеть только дома, для своих устройств, с `--allow-ip` |
 | Прокси открыт в сеть, и есть правило с выходом `direct`: устройство из сети ходит «от имени» этого компьютера — в том числе в сети, куда оно само не достаёт (рабочий VPN, Docker, WSL) | к службам самого компьютера (`127.0.0.1`, `localhost`) `direct` клиентов из сети не пускает; остальное — пускайте в прокси только свои устройства (пароль, `--allow-ip`) и не направляйте в `direct` подсети, которые им не нужны |
 | Видит сам факт соединения с IP сервера, объём и время трафика | не скрывается никаким VPN; REALITY лишь маскирует его под обращение к обычному сайту |
-| DNS-запросы в локальной сети видны и подменяемы (обычный DNS не шифруется) | `[dns]` с DoH/DoT через сервер и вход `type = "dns"` как системный DNS; ответы UDP проверяются (номер, вопрос, адрес сервера) |
+| DNS-запросы в локальной сети видны и подменяемы (обычный DNS не шифруется) | раздел `dns` с DoH/DoT через сервер и DNS-вход (`direct` + правило `hijack-dns`) как системный DNS; ответы UDP проверяются (номер, вопрос, адрес сервера) |
 | Трафик программ, которым **не** указан прокси, идёт мимо него | это прокси, а не системный VPN: настраивайте программы или включите `--system-proxy` (Windows; его слушаются не все программы); в браузере с SOCKS5 включите «DNS через SOCKS v5», иначе имена сайтов уходят в DNS локальной сети (с HTTP-прокси имена и так уходят прокси) |
 
 ## Проверка проекта
@@ -545,7 +575,7 @@ bin/client/            reality-client: CLI (ключи или --config), sysprox
                        winservice.rs (служба и автозапуск Windows)
 core/src/
   app/                 приложение: входы -> маршрутизатор -> выходы;
-                       config.rs (TOML), proxy_in.rs + http_in.rs (входы
+                       config/ (sing-box, Xray → одна модель), proxy_in.rs + http_in.rs (входы
                        socks/http/mixed), sniff.rs + sniff_quic.rs, router.rs + rules.rs +
                        geo.rs (правила, geosite/geoip), ruleset.rs
                        (наборы sing-box .srs/.json), outbound.rs
@@ -577,7 +607,7 @@ bench/                 бенчмарки (criterion) и замер памяти
 scripts/               ci, интероп, smoke, сборка Xray, сверка отпечатка,
                        сборка под Windows, инструкции для Этапов 2 и 8
 docs/                  WINDOWS.md, чек-лист крипто-ревью (Этап 5)
-examples/client.toml   пример файла настроек
+examples/              примеры настроек: sing-box.json, xray.json, systemd
 PLAN.md                план по этапам, история решений, открытые риски
 ```
 

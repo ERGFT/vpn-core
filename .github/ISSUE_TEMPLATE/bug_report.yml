@@ -34,8 +34,8 @@ body:
     id: config
     attributes:
       label: Настройки / Configuration
-      description: Ключи запуска или client.toml (без секретов); security, type, flow ссылки / Command-line flags or client.toml (no secrets); the link's security, type, flow
-      render: toml
+      description: Ключи запуска или config.json (без секретов); security, type, flow ссылки / Command-line flags or config.json (no secrets); the link's security, type, flow
+      render: json
   - type: textarea
     id: log
     attributes:

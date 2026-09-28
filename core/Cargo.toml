@@ -42,7 +42,6 @@ h3.workspace = true
 h3-quinn.workspace = true
 serde_json.workspace = true
 serde.workspace = true
-toml.workspace = true
 http.workspace = true
 x25519-dalek.workspace = true
 hkdf.workspace = true

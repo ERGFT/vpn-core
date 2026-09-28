@@ -26,12 +26,12 @@ fn tmp_dir(name: &str) -> PathBuf {
     d
 }
 
-async fn start(toml: &str) -> Running {
+async fn start(json: &str) -> Running {
     let _ = tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .with_test_writer()
         .try_init();
-    let cfg = Config::parse(toml).expect("настройки");
+    let cfg = Config::parse(json).expect("настройки");
     App::build(&cfg)
         .expect("сборка")
         .start()
@@ -39,14 +39,19 @@ async fn start(toml: &str) -> Running {
         .expect("запуск")
 }
 
-fn build_err(toml: &str) -> String {
-    match Config::parse(toml) {
+fn build_err(json: &str) -> String {
+    match Config::parse(json) {
         Err(e) => e.to_string(),
         Ok(c) => match App::build(&c) {
             Err(e) => e.to_string(),
-            Ok(_) => panic!("должна быть ошибка:\n{toml}"),
+            Ok(_) => panic!("должна быть ошибка:\n{json}"),
         },
     }
+}
+
+/// Путь как строка JSON (на Windows — с экранированными «\\»).
+fn q(p: &std::path::Path) -> String {
+    serde_json::to_string(&p.display().to_string()).unwrap()
 }
 
 async fn tcp_echo() -> SocketAddr {
@@ -143,60 +148,33 @@ async fn urltest_picks_working_member_and_fallback_skips_dead() {
     let echo = tcp_echo().await;
     let (probe, hits) = probe_server().await;
     let dead = dead_port().await;
-    let toml = format!(
-        r#"
-[[inbounds]]
-type = "socks"
-listen = "127.0.0.1:0"
-
-[[outbounds]]
-tag = "auto"
-type = "urltest"
-outbounds = ["dead", "direct"]
-url = "http://{probe}/generate_204"
-interval = 10
-
-[[outbounds]]
-tag = "safe"
-type = "fallback"
-outbounds = ["dead", "direct"]
-url = "http://{probe}/generate_204"
-
-[[outbounds]]
-tag = "manual"
-type = "selector"
-outbounds = ["auto", "safe", "dead"]
-default = "dead"
-
-[[outbounds]]
-tag = "dead"
-type = "vless"
-link = "vless://11111111-1111-1111-1111-111111111111@127.0.0.1:{dead}?security=none&type=tcp"
-allow_insecure = true
-
-[[outbounds]]
-tag = "direct"
-type = "direct"
-
-[[inbounds]]
-type = "socks"
-tag = "via-safe"
-listen = "127.0.0.1:0"
-
-[[inbounds]]
-type = "socks"
-tag = "via-manual"
-listen = "127.0.0.1:0"
-
-[route]
-final = "auto"
-rules = [
-  {{ inbound = ["via-safe"], outbound = "safe" }},
-  {{ inbound = ["via-manual"], outbound = "manual" }},
-]
-"#
+    let json = format!(
+        r#"{{
+  "inbounds": [
+    {{ "type": "socks", "listen": "127.0.0.1", "listen_port": 0 }},
+    {{ "type": "socks", "tag": "via-safe", "listen": "127.0.0.1", "listen_port": 0 }},
+    {{ "type": "socks", "tag": "via-manual", "listen": "127.0.0.1", "listen_port": 0 }}
+  ],
+  "outbounds": [
+    {{ "type": "urltest", "tag": "auto", "outbounds": ["dead", "direct"],
+       "url": "http://{probe}/generate_204", "interval": "10s" }},
+    {{ "type": "fallback", "tag": "safe", "outbounds": ["dead", "direct"],
+       "url": "http://{probe}/generate_204" }},
+    {{ "type": "selector", "tag": "manual", "outbounds": ["auto", "safe", "dead"], "default": "dead" }},
+    {{ "type": "vless", "tag": "dead", "server": "127.0.0.1", "server_port": {dead},
+       "uuid": "11111111-1111-1111-1111-111111111111", "allow_insecure": true }},
+    {{ "type": "direct", "tag": "direct" }}
+  ],
+  "route": {{
+    "final": "auto",
+    "rules": [
+      {{ "inbound": ["via-safe"], "outbound": "safe" }},
+      {{ "inbound": ["via-manual"], "outbound": "manual" }}
+    ]
+  }}
+}}"#
     );
-    let r = start(&toml).await;
+    let r = start(&json).await;
     let auto = r.group("auto").unwrap().clone();
     assert!(
         wait_for(|| auto.current().as_deref() == Some("direct")).await,
@@ -317,34 +295,22 @@ async fn subscription_loads_caches_and_survives_panel_outage() {
     let url_file = dir.join("sub-url.txt");
     std::fs::write(&url_file, format!("https://{}/sub/s3cret\n", p.addr)).unwrap();
     let cache = dir.join("panel.subscription");
-    let toml = format!(
-        r#"
-[[inbounds]]
-type = "socks"
-listen = "127.0.0.1:0"
-
-[[outbounds]]
-tag = "proxy"
-type = "selector"
-outbounds = ["direct"]
-subscriptions = ["panel"]
-
-[[outbounds]]
-tag = "direct"
-type = "direct"
-
-[[subscriptions]]
-tag = "panel"
-url_file = '{}'
-ca_file = '{}'
-cache_file = '{}'
-detour = "direct"
-"#,
-        url_file.display(),
-        p.ca_file.display(),
-        cache.display()
+    let json = format!(
+        r#"{{
+  "inbounds": [{{ "type": "socks", "listen": "127.0.0.1", "listen_port": 0 }}],
+  "outbounds": [
+    {{ "type": "selector", "tag": "proxy", "outbounds": ["direct"], "subscriptions": ["panel"] }},
+    {{ "type": "direct", "tag": "direct" }}
+  ],
+  "subscriptions": [{{
+    "tag": "panel", "url_file": {}, "ca_file": {}, "cache_file": {}, "detour": "direct"
+  }}]
+}}"#,
+        q(&url_file),
+        q(&p.ca_file),
+        q(&cache)
     );
-    let r = start(&toml).await;
+    let r = start(&json).await;
     let g = r.group("proxy").unwrap().clone();
     assert!(
         wait_for(|| g.members().len() == 3).await,
@@ -369,7 +335,7 @@ detour = "direct"
     // Панель недоступна — список берётся из сохранённого сразу при старте.
     *p.body.lock().unwrap() = None;
     let before = p.hits.load(Ordering::SeqCst);
-    let r = start(&toml).await;
+    let r = start(&json).await;
     let g = r.group("proxy").unwrap();
     assert_eq!(g.members().len(), 3, "из сохранённого списка");
     // Сохранённый список свежий — панель при старте не дёргается.
@@ -380,7 +346,7 @@ detour = "direct"
     // Без сохранённого списка: панель отвечает 503 — группа работает
     // с участниками из настроек.
     std::fs::remove_file(&cache).unwrap();
-    let r = start(&toml).await;
+    let r = start(&json).await;
     assert!(wait_for(|| p.hits.load(Ordering::SeqCst) > before).await);
     let g = r.group("proxy").unwrap();
     assert_eq!(g.members().len(), 1);
@@ -395,31 +361,21 @@ async fn subscription_with_wrong_certificate_is_not_applied() {
     let p = panel().await;
     *p.body.lock().unwrap() = Some(reality_link("X", 1));
     let dir = tmp_dir("badca");
-    let toml = format!(
-        r#"
-[[inbounds]]
-type = "socks"
-listen = "127.0.0.1:0"
-
-[[outbounds]]
-tag = "proxy"
-type = "urltest"
-subscriptions = ["panel"]
-
-[[outbounds]]
-tag = "direct"
-type = "direct"
-
-[[subscriptions]]
-tag = "panel"
-url = "https://{}/sub/s3cret"
-cache_file = '{}'
-detour = "direct"
-"#,
+    let json = format!(
+        r#"{{
+  "inbounds": [{{ "type": "socks", "listen": "127.0.0.1", "listen_port": 0 }}],
+  "outbounds": [
+    {{ "type": "urltest", "tag": "proxy", "subscriptions": ["panel"] }},
+    {{ "type": "direct", "tag": "direct" }}
+  ],
+  "subscriptions": [{{
+    "tag": "panel", "url": "https://{}/sub/s3cret", "cache_file": {}, "detour": "direct"
+  }}]
+}}"#,
         p.addr,
-        dir.join("c").display()
+        q(&dir.join("c"))
     );
-    let r = start(&toml).await;
+    let r = start(&json).await;
     tokio::time::sleep(Duration::from_millis(2500)).await;
     // Сертификат не прошёл проверку — запрос не дошёл до HTTP.
     assert_eq!(p.hits.load(Ordering::SeqCst), 0);
@@ -428,105 +384,60 @@ detour = "direct"
 
 #[test]
 fn group_and_subscription_config_errors() {
-    let base = r#"
-[[inbounds]]
-type = "socks"
-listen = "127.0.0.1:0"
-
-[[outbounds]]
-tag = "direct"
-type = "direct"
-"#;
-    let cases: &[(&str, &str)] = &[
+    // (выходы после direct, подписки, ожидаемый текст ошибки)
+    let v = |extra: &str| {
+        format!(
+            r#"{{"type": "vless", "tag": "v", "server": "h.example", "server_port": 443,
+                "uuid": "11111111-1111-1111-1111-111111111111", "tls": {{"enabled": true}}{extra}}}"#
+        )
+    };
+    let sel_s = r#"{"type": "selector", "tag": "g", "subscriptions": ["s"]}"#;
+    let cases: Vec<(String, &str, &str)> = vec![
+        (r#"{"type": "selector", "tag": "g"}"#.into(), "", "нет участников"),
+        (r#"{"type": "urltest", "tag": "g", "outbounds": ["nope"]}"#.into(), "", "нет выхода «nope»"),
         (
-            "[[outbounds]]\ntag='g'\ntype='selector'\n",
-            "нет участников",
-        ),
-        (
-            "[[outbounds]]\ntag='g'\ntype='urltest'\noutbounds=['nope']\n",
-            "нет выхода «nope»",
-        ),
-        (
-            "[[outbounds]]\ntag='a'\ntype='selector'\noutbounds=['b']\n[[outbounds]]\ntag='b'\ntype='fallback'\noutbounds=['a']\n",
+            r#"{"type": "selector", "tag": "a", "outbounds": ["b"]}, {"type": "fallback", "tag": "b", "outbounds": ["a"]}"#.into(),
+            "",
             "по кругу",
         ),
+        (r#"{"type": "selector", "tag": "a", "outbounds": ["a"]}"#.into(), "", "по кругу"),
+        (r#"{"type": "selector", "tag": "g", "outbounds": ["direct"], "default": "x"}"#.into(), "", "не участник"),
+        (r#"{"type": "urltest", "tag": "g", "outbounds": ["direct"], "default": "direct"}"#.into(), "", "только у selector"),
+        (r#"{"type": "selector", "tag": "g", "outbounds": ["direct"], "interval": "1m"}"#.into(), "", "url и interval не нужны"),
+        (r#"{"type": "urltest", "tag": "g", "outbounds": ["direct"], "interval": "1s"}"#.into(), "", "interval меньше"),
+        (r#"{"type": "direct", "tag": "d2", "outbounds": ["direct"]}"#.into(), "", "ключи: outbounds"),
+        (r#"{"type": "selector", "tag": "g", "outbounds": ["direct"], "link": "vless://x"}"#.into(), "", "ключи: link"),
+        (sel_s.into(), "", "нет подписки «s»"),
+        ("".into(), r#"{"tag": "s", "url": "https://p.example/x"}"#, "не входит ни в одну группу"),
+        (sel_s.into(), r#"{"tag": "s", "url": "http://p.example/x"}"#, "должен быть https"),
         (
-            "[[outbounds]]\ntag='a'\ntype='selector'\noutbounds=['a']\n",
-            "по кругу",
-        ),
-        (
-            "[[outbounds]]\ntag='g'\ntype='selector'\noutbounds=['direct']\ndefault='x'\n",
-            "не участник",
-        ),
-        (
-            "[[outbounds]]\ntag='g'\ntype='urltest'\noutbounds=['direct']\ndefault='direct'\n",
-            "только у selector",
-        ),
-        (
-            "[[outbounds]]\ntag='g'\ntype='selector'\noutbounds=['direct']\ninterval=60\n",
-            "url и interval не нужны",
-        ),
-        (
-            "[[outbounds]]\ntag='g'\ntype='urltest'\noutbounds=['direct']\ninterval=1\n",
-            "interval меньше",
-        ),
-        (
-            "[[outbounds]]\ntag='d2'\ntype='direct'\noutbounds=['direct']\n",
-            "только у групп",
-        ),
-        (
-            "[[outbounds]]\ntag='g'\ntype='selector'\noutbounds=['direct']\nlink='vless://x'\n",
-            "только у vless и trojan",
-        ),
-        (
-            "[[outbounds]]\ntag='g'\ntype='selector'\nsubscriptions=['s']\n",
-            "нет подписки «s»",
-        ),
-        (
-            "[[subscriptions]]\ntag='s'\nurl='https://p.example/x'\n",
-            "не входит ни в одну группу",
-        ),
-        (
-            "[[outbounds]]\ntag='g'\ntype='selector'\nsubscriptions=['s']\n[[subscriptions]]\ntag='s'\nurl='http://p.example/x'\n",
-            "должен быть https",
-        ),
-        (
-            "[[outbounds]]\ntag='g'\ntype='selector'\nsubscriptions=['../s']\n[[subscriptions]]\ntag='../s'\nurl='https://p.example/x'\n",
+            r#"{"type": "selector", "tag": "g", "subscriptions": ["../s"]}"#.into(),
+            r#"{"tag": "../s", "url": "https://p.example/x"}"#,
             "латиница",
         ),
         (
-            "[[outbounds]]\ntag='g'\ntype='selector'\nsubscriptions=['direct']\n[[subscriptions]]\ntag='direct'\nurl='https://p.example/x'\n",
+            r#"{"type": "selector", "tag": "g", "subscriptions": ["direct"]}"#.into(),
+            r#"{"tag": "direct", "url": "https://p.example/x"}"#,
             "уже есть",
         ),
-        (
-            "[[outbounds]]\ntag='g'\ntype='selector'\nsubscriptions=['s']\n[[subscriptions]]\ntag='s'\n",
-            "нужен url",
-        ),
-        (
-            "[[outbounds]]\ntag='g'\ntype='selector'\nsubscriptions=['s']\n[[subscriptions]]\ntag='s'\nurl='https://p.example/x'\ninclude='('\n",
-            "include",
-        ),
-        (
-            "[[outbounds]]\ntag='g'\ntype='selector'\nsubscriptions=['s']\n[[subscriptions]]\ntag='s'\nurl='https://p.example/x'\ndetour='nope'\n",
-            "detour",
-        ),
+        (sel_s.into(), r#"{"tag": "s"}"#, "нужен url"),
+        (sel_s.into(), r#"{"tag": "s", "url": "https://p.example/x", "include": "("}"#, "include"),
+        (sel_s.into(), r#"{"tag": "s", "url": "https://p.example/x", "detour": "nope"}"#, "detour"),
+        (r#"{"type": "direct", "tag": "d2", "mux": 8}"#.into(), "", "ключи: mux"),
+        (v(r#", "mux": 8, "flow": "xtls-rprx-vision""#), "", "несовместим"),
+        (v(r#", "mux": 0"#), "", "от 1 до 128"),
     ];
-    let more: &[(&str, &str)] = &[
-        (
-            "[[outbounds]]\ntag='d2'\ntype='direct'\nmux=8\n",
-            "только у type = \"vless\"",
-        ),
-        (
-            "[[outbounds]]\ntag='v'\ntype='vless'\nmux=8\nlink='vless://11111111-1111-1111-1111-111111111111@h.example:443?security=tls&type=tcp&flow=xtls-rprx-vision'\n",
-            "несовместим",
-        ),
-        (
-            "[[outbounds]]\ntag='v'\ntype='vless'\nmux=0\nlink='vless://11111111-1111-1111-1111-111111111111@h.example:443?security=tls&type=tcp'\n",
-            "от 1 до 128",
-        ),
-    ];
-    for (extra, want) in cases.iter().chain(more) {
-        let e = build_err(&format!("{base}{extra}"));
-        assert!(e.contains(want), "{extra}\n→ {e}\nожидалось: {want}");
+    for (outs, subs, want) in &cases {
+        let outs = if outs.is_empty() {
+            String::new()
+        } else {
+            format!(", {outs}")
+        };
+        let e = build_err(&format!(
+            r#"{{"inbounds": [{{"type": "socks", "listen": "127.0.0.1", "listen_port": 0}}],
+                "outbounds": [{{"type": "direct", "tag": "direct"}}{outs}],
+                "subscriptions": [{subs}]}}"#
+        ));
+        assert!(e.contains(want), "{outs} {subs}\n→ {e}\nожидалось: {want}");
     }
 }

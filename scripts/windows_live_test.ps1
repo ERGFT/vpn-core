@@ -43,25 +43,22 @@ if ($sig.Status -ne 'Valid' -or $sig.SignerCertificate.Subject -notmatch 'WireGu
 Copy-Item $dll $work -Force
 
 $cfg = @'
-[[inbounds]]
-type = "mixed"
-listen = "127.0.0.1:18090"
-
-[[inbounds]]
-type = "tun"
-sniff = true
-
-[[outbounds]]
-tag = "direct"
-type = "direct"
-
-[dns]
-[[dns.servers]]
-tag = "doh"
-address = "https://1.1.1.1/dns-query"
-detour = "direct"
+{
+  "inbounds": [
+    { "type": "mixed", "listen": "127.0.0.1", "listen_port": 18090 },
+    { "type": "tun", "tag": "tun" }
+  ],
+  "outbounds": [{ "type": "direct", "tag": "direct" }],
+  "route": {
+    "rules": [
+      { "action": "sniff" },
+      { "protocol": "dns", "action": "hijack-dns" }
+    ]
+  },
+  "dns": { "servers": [{ "type": "https", "tag": "doh", "server": "1.1.1.1", "detour": "direct" }] }
+}
 '@
-$cfgPath = Join-Path $work 'client.toml'
+$cfgPath = Join-Path $work 'client.json'
 [IO.File]::WriteAllText($cfgPath, $cfg, [Text.UTF8Encoding]::new($false))
 
 & $exePath --config $cfgPath --check
@@ -76,7 +73,7 @@ if ($LASTEXITCODE) { Fail 'сайт недоступен ещё до запус�
 if ($LASTEXITCODE) { Fail '--service-install' }
 
 $dir = Join-Path $env:ProgramData 'RealityClient'
-foreach ($f in 'client.toml', 'reality-client.exe', 'wintun.dll') {
+foreach ($f in 'config.json', 'reality-client.exe', 'wintun.dll') {
     if (-not (Test-Path (Join-Path $dir $f))) { Fail "$f не скопирован в $dir" }
 }
 $acl = Get-Acl $dir

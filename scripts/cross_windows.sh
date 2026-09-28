@@ -113,15 +113,15 @@ echo "== служба Windows под Wine"
 SV_DIR="$(mktemp -d)"
 SV_PORT="$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1])')"
 echo "$SP_LINK" > "$SV_DIR/server.txt"
-printf '[[inbounds]]\ntype = "mixed"\nlisten = "127.0.0.1:%s"\n\n[[outbounds]]\ntag = "proxy"\ntype = "vless"\nlink_file = "server.txt"\n' "$SV_PORT" > "$SV_DIR/client.toml"
-WIN_CFG="Z:$(echo "$SV_DIR/client.toml" | tr / '\\')"
+printf '{"inbounds": [{"type": "mixed", "listen": "127.0.0.1", "listen_port": %s}],\n "outbounds": [{"type": "vless", "tag": "proxy", "link_file": "server.txt"}]}\n' "$SV_PORT" > "$SV_DIR/client.json"
+WIN_CFG="Z:$(echo "$SV_DIR/client.json" | tr / '\\')"
 PD="$WINEPREFIX/drive_c/ProgramData/RealityClient"
 "$WINE" "$EXE" --service-uninstall >/dev/null 2>&1 || true
 # Wine не хранит владельца папки (всегда пользователь), а повторная
 # установка в папку не администратора отказывает — начинаем с чистой.
 rm -rf "$PD"
 "$WINE" "$EXE" --service-install --config "$WIN_CFG" 2>&1 | grep -E "служба|скопирован"
-[[ -f "$PD/client.toml" && -f "$PD/server.txt" && -f "$PD/reality-client.exe" ]] \
+[[ -f "$PD/config.json" && -f "$PD/server.txt" && -f "$PD/reality-client.exe" ]] \
     || { echo "настройки или exe не скопированы в $PD"; exit 1; }
 port_open() { python3 -c "import socket,sys; socket.create_connection(('127.0.0.1',$SV_PORT),2)" 2>/dev/null; }
 for _ in $(seq 1 100); do port_open && break; sleep 0.1; done

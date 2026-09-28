@@ -133,57 +133,45 @@ JSON
 PIDS+=($!)
 sleep 1
 
-LINK="vless://$UUID@$HOST_IP:$SRV?encryption=none&security=reality&sni=decoy.test&fp=chrome&pbk=$PBK&sid=$SID&type=tcp&flow=xtls-rprx-vision"
-cat > "$TMP/client.toml" <<TOML
-[[inbounds]]
-type = "tun"
-tag = "tun"
-interface_name = "rtun0"
-route_exclude = ["10.99.0.3/32"]
-sniff = true
-
-[[outbounds]]
-tag = "proxy"
-type = "vless"
-link = "$LINK"
-
-[[outbounds]]
-tag = "direct"
-type = "direct"
-
-[[route.rules]]
-port = [$DIRECT_ECHO]
-outbound = "direct"
-
-[[route.rules]]                # QUIC к www.example.test — найден по ClientHello
-domain = ["www.example.test"]
-network = "udp"
-outbound = "direct"
-
-[route]
-final = "proxy"
-
-[dns]
-final = "fake"
-
-[[dns.servers]]
-tag = "fake"
-address = "fakeip"
-
-[[dns.servers]]
-tag = "remote"
-address = "udp://$HOST_IP:$DNSUP"
-detour = "proxy"
-
-[[dns.rules]]
-domain_suffix = ["real.test"]
-server = "remote"
-TOML
+cat > "$TMP/client.json" <<JSON
+{
+  "inbounds": [{
+    "type": "tun", "tag": "tun", "interface_name": "rtun0",
+    "route_exclude_address": ["10.99.0.3/32"]
+  }],
+  "outbounds": [
+    { "type": "vless", "tag": "proxy", "server": "$HOST_IP", "server_port": $SRV,
+      "uuid": "$UUID", "flow": "xtls-rprx-vision",
+      "tls": { "enabled": true, "server_name": "decoy.test",
+               "utls": { "enabled": true, "fingerprint": "chrome" },
+               "reality": { "enabled": true, "public_key": "$PBK", "short_id": "$SID" } } },
+    { "type": "direct", "tag": "direct" }
+  ],
+  "route": {
+    "rules": [
+      { "action": "sniff" },
+      { "protocol": "dns", "action": "hijack-dns" },
+      { "port": $DIRECT_ECHO, "outbound": "direct" },
+      // QUIC к www.example.test — найден по ClientHello
+      { "domain": ["www.example.test"], "network": "udp", "outbound": "direct" }
+    ],
+    "final": "proxy"
+  },
+  "dns": {
+    "final": "fake",
+    "servers": [
+      { "type": "fakeip", "tag": "fake" },
+      { "type": "udp", "tag": "remote", "server": "$HOST_IP", "server_port": $DNSUP, "detour": "proxy" }
+    ],
+    "rules": [{ "domain_suffix": ["real.test"], "server": "remote" }]
+  }
+}
+JSON
 
 start_client() {
     # Без функции-обёртки: $! должен быть самим клиентом (ip netns exec
     # заменяет себя им), иначе сигнал уйдёт подоболочке.
-    ip netns exec "$NS" "$CLIENT_BIN" --config "$TMP/client.toml" > "$TMP/client.log" 2>&1 &
+    ip netns exec "$NS" "$CLIENT_BIN" --config "$TMP/client.json" > "$TMP/client.log" 2>&1 &
     CLIENT_PID=$!
     PIDS+=($CLIENT_PID)
     for _ in $(seq 1 100); do grep -q 'весь трафик направлен в TUN' "$TMP/client.log" && return; sleep 0.1; done
@@ -283,7 +271,7 @@ if nsx ip rule | grep -q 'lookup 2022'; then echo "остатки правил �
 echo "OK: остатки прошлого запуска убраны"
 
 # 9. strict_route: kill switch.
-sed -i 's/^route_exclude = .*/strict_route = true/' "$TMP/client.toml"
+sed -i 's/"route_exclude_address": \[[^]]*\]/"strict_route": true/' "$TMP/client.json"
 start_client
 nsx python3 -c "import socket; s=socket.create_connection(('$HOST_IP',$ECHO),5); assert s.recv(64).startswith(b'PEER $HOST_IP')"
 kill -9 "$CLIENT_PID"; wait "$CLIENT_PID" 2>/dev/null || true; sleep 0.3

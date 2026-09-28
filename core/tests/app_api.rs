@@ -15,8 +15,8 @@ use reality_core::app::{App, Running};
 const T: Duration = Duration::from_secs(10);
 const TOKEN: &str = "test-token-0123456789abcdef";
 
-async fn start(toml: &str) -> Running {
-    let cfg = Config::parse(toml).expect("настройки");
+async fn start(json: &str) -> Running {
+    let cfg = Config::parse(json).expect("настройки");
     App::build(&cfg)
         .expect("сборка")
         .start()
@@ -105,33 +105,22 @@ async fn authed(addr: SocketAddr, method: &str, path: &str, body: Option<&str>) 
 }
 
 fn base(final_: &str, extra: &str) -> String {
+    base_with(final_, extra, "", "127.0.0.1")
+}
+
+/// extra — дополнительные ключи route; inbound — ещё вход; api_ip — адрес API.
+fn base_with(final_: &str, extra: &str, inbound: &str, api_ip: &str) -> String {
     format!(
-        r#"
-[[inbounds]]
-type = "socks"
-listen = "127.0.0.1:0"
-
-[[outbounds]]
-tag = "sel"
-type = "selector"
-outbounds = ["block", "direct"]
-
-[[outbounds]]
-tag = "direct"
-type = "direct"
-
-[[outbounds]]
-tag = "block"
-type = "block"
-
-[api]
-listen = "127.0.0.1:0"
-token = "{TOKEN}"
-
-[route]
-final = "{final_}"
-{extra}
-"#
+        r#"{{
+  "inbounds": [{{ "type": "socks", "listen": "127.0.0.1", "listen_port": 0 }}{inbound}],
+  "outbounds": [
+    {{ "type": "selector", "tag": "sel", "outbounds": ["block", "direct"] }},
+    {{ "type": "direct", "tag": "direct" }},
+    {{ "type": "block", "tag": "block" }}
+  ],
+  "experimental": {{ "clash_api": {{ "external_controller": "{api_ip}:0", "secret": "{TOKEN}" }} }},
+  "route": {{ "final": "{final_}"{extra} }}
+}}"#
     )
 }
 
@@ -255,9 +244,12 @@ async fn reload_keeps_open_connections_and_applies_new_rules() {
     assert!(echo_ok(&mut s, b"still direct").await);
 
     // Новые правила: всё в block; плюс ещё один вход.
-    let mut text = base("block", "");
-    text.push_str("\n[[inbounds]]\ntype = \"http\"\ntag = \"extra\"\nlisten = \"127.0.0.1:0\"\n");
-    // [[inbounds]] после [route] в TOML — продолжение массива входов.
+    let text = base_with(
+        "block",
+        "",
+        r#", {"type": "http", "tag": "extra", "listen": "127.0.0.1", "listen_port": 0}"#,
+        "127.0.0.1",
+    );
     let new = Config::parse(&text).unwrap();
     let notes = r.reload(new).await.unwrap();
     assert!(notes.is_empty(), "{notes:?}");
@@ -277,7 +269,7 @@ async fn reload_via_api_from_file() {
     let echo = tcp_echo().await;
     let dir = std::env::temp_dir().join(format!("vpn-core-api-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
-    let path = dir.join("client.toml");
+    let path = dir.join("client.json");
     std::fs::write(&path, base("block", "")).unwrap();
     let cfg = Config::load(&path).unwrap();
     let r = App::build(&cfg).unwrap().start().await.unwrap();
@@ -292,7 +284,7 @@ async fn reload_via_api_from_file() {
     assert_eq!(rep, 0);
     assert!(echo_ok(&mut s, b"x").await);
     // Битый файл — 400, старые настройки остаются.
-    std::fs::write(&path, "[[inbounds]]\ntype='carrier-pigeon'\n").unwrap();
+    std::fs::write(&path, r#"{"inbounds": [{"type": "carrier-pigeon"}]}"#).unwrap();
     assert_eq!(authed(a, "POST", "/reload", None).await.0, 400);
     let (mut s, rep) = socks_connect(r.listen_addrs[0], echo).await;
     assert_eq!(rep, 0);
@@ -303,7 +295,7 @@ async fn reload_via_api_from_file() {
 async fn presets_expand_to_rules() {
     let echo = tcp_echo().await;
     // final = block, но private-direct пускает к 127.0.0.1 напрямую.
-    let r = start(&base("block", "presets = [\"private-direct\"]")).await;
+    let r = start(&base("block", r#", "presets": ["private-direct"]"#)).await;
     let (mut s, rep) = socks_connect(r.listen_addrs[0], echo).await;
     assert_eq!(rep, 0);
     assert!(echo_ok(&mut s, b"preset").await);
@@ -315,17 +307,16 @@ fn api_and_preset_config_errors() {
         Err(e) => e.to_string(),
         Ok(c) => App::build(&c).err().expect("ошибка").to_string(),
     };
-    let e = err(&base("direct", "presets = [\"mars-direct\"]"));
+    let e = err(&base("direct", r#", "presets": ["mars-direct"]"#));
     assert!(e.contains("mars-direct"), "{e}");
     let e = err(&base("direct", "").replace(TOKEN, "short"));
     assert!(e.contains("короче"), "{e}");
-    let e = err(&base("direct", "").replace(
-        "[api]\nlisten = \"127.0.0.1:0\"",
-        "[api]\nlisten = \"0.0.0.0:0\"",
-    ));
+    let e = err(&base_with("direct", "", "", "0.0.0.0"));
     assert!(e.contains("allow_ip"), "{e}");
     let e = err(
-        "[[inbounds]]\ntype='socks'\nlisten='127.0.0.1:0'\n[[outbounds]]\ntag='d'\ntype='direct'\n[route]\npresets=['block-ads']\n",
+        r#"{"inbounds": [{"type": "socks", "listen": "127.0.0.1", "listen_port": 0}],
+            "outbounds": [{"type": "direct", "tag": "d"}],
+            "route": {"presets": ["block-ads"]}}"#,
     );
     assert!(e.contains("block"), "{e}");
 }

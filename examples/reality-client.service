@@ -2,7 +2,7 @@
 #
 #   sudo install -m 755 target/release/reality-client /usr/local/bin/
 #   sudo install -d -m 700 /etc/reality-client
-#   sudo cp client.toml server.txt /etc/reality-client/     # и остальные файлы настроек
+#   sudo cp config.json /etc/reality-client/     # и файлы, на которые он ссылается
 #   sudo chmod 600 /etc/reality-client/*
 #   sudo cp examples/reality-client.service /etc/systemd/system/
 #   sudo systemctl daemon-reload && sudo systemctl enable --now reality-client
@@ -19,7 +19,7 @@ Wants=network-online.target
 After=network-online.target
 
 [Service]
-ExecStart=/usr/local/bin/reality-client --config /etc/reality-client/client.toml
+ExecStart=/usr/local/bin/reality-client --config /etc/reality-client/config.json
 ExecReload=/bin/kill -HUP $MAINPID
 # Снять правила TUN, если прошлый запуск завершился аварийно.
 ExecStartPre=-/usr/local/bin/reality-client --tun-cleanup

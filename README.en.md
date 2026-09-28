@@ -40,7 +40,7 @@ works and what does not is listed honestly below.
 | `fp=firefox` (Firefox 148), `safari`/`ios` (Safari 26.3), `edge`/`android` (same as Chrome), `random`, `randomized` | ✅ cipher suites, extensions in browser order, groups, key shares (real P-256 for Firefox), signature algorithms, certificate compression (zlib, brotli, zstd — with decompression), GREASE — checked against utls; ws/httpupgrade/xhttp HTTP headers of the same browser; tested against an Xray REALITY server (tcp, Vision, xhttp, gRPC) |
 | UDP (SOCKS5 UDP ASSOCIATE) over XUDP — like the Xray client: all destinations in one stream, Full Cone NAT | ✅ including with Vision (the only way an Xray Vision account accepts UDP); `--no-xudp` — one stream per destination |
 | SOCKS5 username/password (`--auth`) | ✅ |
-| Config file (`--config`, TOML): multiple inbounds and outbounds (`vless`, `direct`, `block`) | ✅ |
+| Config file (`--config`) in the **sing-box or Xray-core** format (JSON, detected automatically): multiple inbounds and outbounds | ✅ anything unsupported is an error with the path to the key, not silence |
 | Server groups `selector`, `urltest`, `fallback` (HTTP health checks, failover to the next one); subscriptions: base64/plain text/sing-box JSON/Clash YAML, on-disk cache | ✅ tested with an HTTPS panel and an Xray server |
 | SOCKS5, HTTP proxy (CONNECT and plain requests) and `mixed` inbounds — both on one port | ✅ |
 | Routing: domain (exact, suffix, keyword, regex), IP/subnet, private addresses, port, network, inbound, `geosite.dat`/`geoip.dat` databases (v2fly), sing-box rule sets (`.srs` and `.json`) | ✅ `.srs` parsing checked against `sing-box rule-set decompile` on real SagerNet and MetaCubeX sets; only domains and addresses in rule sets |
@@ -48,8 +48,8 @@ works and what does not is listed honestly below.
 | Windows system proxy (`--system-proxy`) | ✅ tested under Wine |
 | Autostart: Windows service (`--service-install`, config in a locked-down ProgramData folder), start at logon (`--autostart-install`), systemd on Linux | ✅ service — on real Windows (CI: install, ProgramData folder permissions, stop and start, removal); autostart at logon — under Wine |
 | TUN — all of the computer's traffic (like a VPN): own TCP/IP stack, `auto_route`, DNS hijacking, fake-IP, `route_exclude`, `strict_route` kill switch | ✅ Linux — tested against Xray in an isolated netns (TCP, UDP, DNS, fake-IP, ~200 MiB/s, resilient to packet loss); ✅ Windows (Wintun) — on real Windows (CI: service, `auto_route`, HTTPS through TUN); kill switch — Linux only |
-| Own DNS: UDP, TCP, DoT, DoH, DNS over QUIC (`quic://`) and system servers; server selection by domain and geosite; cache; DNS server inbound; DNS hijacking (`dns` outbound); fake-IP; `domain_strategy = "ip_if_non_match"` | ✅ DoH/DoT/DoQ tested on own servers, UDP DNS and DoQ — through Xray (XUDP) |
-| Mux.Cool for TCP (`mux = 8` on an outbound or subscription; not together with Vision) | ✅ tested against Xray-core |
+| Own DNS: UDP, TCP, DoT, DoH, DNS over QUIC (`quic://`) and system servers; server selection by domain and geosite; cache; DNS server inbound; DNS hijacking (`hijack-dns`); fake-IP; `domain_strategy`: `ip_if_non_match` | ✅ DoH/DoT/DoQ tested on own servers, UDP DNS and DoQ — through Xray (XUDP) |
+| Mux.Cool for TCP (`"mux": 8` on an outbound or subscription; not together with Vision) | ✅ tested against Xray-core |
 | Shared HTTP/2 connections: gRPC — all streams in one connection (as in Xray), xhttp — `xmux` (Xray defaults: 16–32 sessions per connection; for both HTTP/2 and HTTP/3) | ✅ tested against Xray-core (connection count) |
 | Anti-DPI: ClientHello fragmentation (`fragment`: TLS records and/or TCP segments with delays) on `vless` and `direct`, noise before UDP (`noises`) on `direct` | ✅ fragmentation tested against an Xray REALITY server (including 1–3 byte records and Vision); off by default |
 | Local API (127.0.0.1 + token): traffic, open connections and closing them, groups and server selection, subscription updates; config reload without dropping connections (API, SIGHUP); rule presets | ✅ |
@@ -118,7 +118,7 @@ reality-client --server 'vless://UUID@host:443?encryption=none&security=reality&
 administrator):
 
 ```bat
-reality-client --service-install --config C:\path\client.toml
+reality-client --service-install --config C:\path\config.json
 reality-client --service-uninstall
 ```
 
@@ -136,7 +136,7 @@ crash the service restarts itself (after 5 s, 30 s, 2 min).
 per-user setting):
 
 ```bat
-reality-client --autostart-install --config C:\path\client.toml --system-proxy
+reality-client --autostart-install --config C:\path\config.json --system-proxy
 reality-client --autostart-uninstall
 ```
 
@@ -157,156 +157,181 @@ In a browser — set the SOCKS5 proxy to `127.0.0.1:1080` (in Firefox —
 
 ### Config file
 
-For multiple inbounds and outbounds, use a TOML file instead of flags
-([`examples/client.toml`](examples/client.toml)):
+For multiple inbounds and outbounds, use a config file instead of flags, in
+the **sing-box** or **Xray-core** format (JSON, comments allowed); the format
+is detected automatically. Annotated examples:
+[`examples/sing-box.json`](examples/sing-box.json) and
+[`examples/xray.json`](examples/xray.json).
 
 ```sh
-reality-client --config client.toml --check   # validate only
-reality-client --config client.toml
+reality-client --config config.json --check   # validate only
+reality-client --config config.json
 ```
 
-```toml
-[[inbounds]]
-type = "mixed"             # SOCKS5 and HTTP on one port
-listen = "127.0.0.1:1080"
-sniff = true               # domain from SNI/Host if the app sent an IP
+Existing sing-box and Xray configs (from v2rayN, panels, etc.) work too:
+everything the core supports behaves as it does there. Whatever the core does
+not support (other protocols, outbound chains, sing-box multiplexing…) is an
+error at startup with the path to the key, e.g. `outbounds[2].multiplex: не
+поддерживается` (not supported), rather than a silently ignored setting. A
+typo in a key name is an error too.
 
-[[outbounds]]
-tag = "proxy"
-type = "vless"
-link_file = "server.txt"   # the link is in a separate file
-
-[[outbounds]]
-tag = "direct"             # direct, without the server
-type = "direct"
-
-[[outbounds]]
-tag = "block"
-type = "block"
-
-[[route.rules]]
-geosite = ["category-ads-all"]   # ads
-outbound = "block"
-
-[[route.rules]]
-ip_is_private = true             # local network
-outbound = "direct"
-
-[[route.rules]]
-domain_suffix = ["ru", "su"]
-geoip = ["ru"]                   # Russian domain OR Russian address
-outbound = "direct"
-
-[route]
-final = "proxy"            # where everything not matched by the rules goes
+```json
+{
+  "inbounds": [
+    { "type": "mixed", "tag": "local", "listen": "127.0.0.1", "listen_port": 1080 }
+  ],
+  "outbounds": [
+    { "type": "vless", "tag": "proxy", "server": "server.example.com", "server_port": 443,
+      "uuid": "…", "flow": "xtls-rprx-vision",
+      "tls": { "enabled": true, "server_name": "www.example.com",
+               "utls": { "enabled": true, "fingerprint": "chrome" },
+               "reality": { "enabled": true, "public_key": "…", "short_id": "…" } } },
+    { "type": "direct", "tag": "direct" },
+    { "type": "block", "tag": "block" }
+  ],
+  "route": {
+    "rules": [
+      { "action": "sniff" },                              // domain from SNI/Host if the app sent an IP
+      { "geosite": ["category-ads-all"], "outbound": "block" },
+      { "ip_is_private": true, "outbound": "direct" },
+      { "domain_suffix": ["ru", "su"], "geoip": ["ru"], "outbound": "direct" }
+    ],
+    "final": "proxy"                                      // where everything not matched by rules goes
+  }
+}
 ```
+
+What each format supports:
+
+| | sing-box | Xray-core |
+|---|---|---|
+| Inbounds | `socks`, `http`, `mixed`, `tun`; `direct` + a `hijack-dns` rule — DNS server | `socks`, `http`, `mixed`, `tun`; `dokodemo-door` routed to a `dns` outbound — DNS server |
+| Outbounds | `vless`, `trojan`, `direct`, `block`, `dns`, `selector`, `urltest` | `vless`, `trojan`, `freedom` (with `fragment`, `noises`), `blackhole`, `dns`; `balancers` with `leastPing`/`leastLoad` — a `urltest` group (checks from `observatory`) |
+| Transport and TLS | `tls` (`reality`, `utls`, `alpn`, `certificate_path`), `transport`: `ws`, `grpc`, `httpupgrade` | `streamSettings`: `raw`/`tcp`, `ws`, `grpc`, `httpupgrade`, `xhttp`; `tls`/`reality`; `mux` (Mux.Cool) |
+| Rules | `domain`, `domain_suffix`, `domain_keyword`, `domain_regex`, `geosite`, `geoip`, `ip_cidr`, `ip_is_private`, `port`, `port_range`, `network`, `inbound`, `rule_set`, `protocol: dns`; actions `route`, `reject`, `sniff`, `hijack-dns` | `domain` (`geosite:`, `domain:`, `full:`, `regexp:`, `keyword:`, plain substring), `ip` (`geoip:`, addresses), `port`, `network`, `inboundTag`, `outboundTag`/`balancerTag`; `domainStrategy` `AsIs`/`IPIfNonMatch` |
+| DNS | `servers` (with `type`, and the legacy form with `address`), `rules`, `final`, `strategy`, `fakeip` | `servers` (strings and objects with `domains`; `+local` — direct), `queryStrategy`, `fakedns` |
+| API | `experimental.clash_api`: `external_controller`, `secret` | the same `experimental.clash_api` extension |
 
 Rules are checked in order; the first match wins. Within one rule the
-"destination" conditions (`domain`, `domain_suffix`, `domain_keyword`,
-`domain_regex`, `geosite`, `ip_cidr`, `ip_is_private`, `geoip`) are combined
-with "or", and with `port`, `network`, `inbound` — with "and" (as in
-sing-box). An IP rule matches only if the app sent an IP; a domain rule — if
-it sent a name or the name was found by sniffing. The `geosite.dat`
-(`dlc.dat` from
+"where" conditions (domains, `geosite`, addresses, `geoip`) are combined with
+"or", and with port, network and inbound — with "and" (as in sing-box). An IP
+rule only matches if the app sent an IP; a domain rule — if it sent a name or
+the name was found by sniffing. The `geosite.dat` (`dlc.dat` from
 [v2fly/domain-list-community](https://github.com/v2fly/domain-list-community/releases))
 and `geoip.dat` ([v2fly/geoip](https://github.com/v2fly/geoip/releases))
-databases are looked up next to the config file; only the needed categories
-are read (both databases in full — ~0.2 s).
+databases are in the Xray format, sing-box configs included; they are looked
+up next to the config file, and only the needed categories are read (both
+full databases — ~0.2 s).
 
-sing-box rule sets — `.srs` (for example, from
+sing-box rule sets — `.srs` (e.g. from
 [SagerNet/sing-geosite](https://github.com/SagerNet/sing-geosite/tree/rule-set),
 [sing-geoip](https://github.com/SagerNet/sing-geoip/tree/rule-set) or
-MetaCubeX/meta-rules-dat) and source `.json`:
+MetaCubeX/meta-rules-dat) and source `.json`, `type: local` only:
 
-```toml
-[[route.rule_set]]
-tag = "ru"
-path = "geosite-category-ru.srs"   # format from the extension; format = "binary"/"source"
-
-[[route.rules]]
-rule_set = ["ru"]                  # the set's domains and addresses become rule conditions
-outbound = "direct"
+```json
+"route": {
+  "rule_set": [{ "type": "local", "tag": "ru", "format": "binary", "path": "geosite-category-ru.srs" }],
+  "rules": [{ "rule_set": ["ru"], "outbound": "direct" }]
+}
 ```
 
-`rule_set` can also be used in `[[dns.rules]]` (domains are used). Only rule
-sets referenced by rules are loaded, and they are reloaded when the config is
-reread. Rule sets with other conditions (port, process, logical `and`/`or`,
-`invert`) are rejected with an error: silently simplifying them would route
-differently from what was intended. The client cannot download rule sets by
-URL — put the file next to the config.
+`rule_set` can also be used in DNS rules (domains are taken). Only rule sets
+referenced by rules are loaded, and they are reloaded on config reload. Rule
+sets with other conditions (port, process, logical `and`/`or`, `invert`) are
+rejected with an error: silently simplifying them would route differently
+from what was intended. The client does not download rule sets by URL — put
+the file next to the config.
 
-Command-line flags are a shorthand for one `mixed` inbound and one `proxy`
-outbound. A typo in a field name is an error at startup. The `direct`
-outbound does not let network clients reach this computer's own services
-(`127.0.0.1`, `localhost`); the `block` outbound replies with SOCKS5 code 0x02
-or HTTP 403. Full example — [`examples/client.toml`](examples/client.toml).
+**Extensions of this core** — keys that are not part of the formats
+themselves (sing-box and Xray will not accept them):
+
+- on `vless`/`trojan` outbounds: `link` or `link_file` — a
+  `vless://`/`trojan://` link instead of fields (the secret can live in a
+  separate file); `allow_insecure` — allow an unencrypted server; `mux` —
+  Mux.Cool (in sing-box: `"mux": 8`); `fragment`;
+- on `direct` (sing-box): `fragment`, `noises` — as on `freedom` in Xray;
+- the `fallback` outbound (first working) and `subscriptions` on groups;
+- at the root: `subscriptions` — panel subscriptions;
+- on inbounds: `allow_ip`, `max_conns`; on `transport` (sing-box): `type: xhttp`;
+- in `route` (sing-box): `presets`, `geosite_file`, `geoip_file`,
+  `domain_strategy`; on `fakeip`: `cache_file`.
+
+Command-line flags are a shortcut for one `mixed` inbound and one `proxy`
+outbound. The `direct` outbound does not let network clients reach services
+of this computer (`127.0.0.1`, `localhost`); the `block` outbound replies with
+SOCKS5 code 0x02 or HTTP 403.
 
 ### Server groups and subscriptions
 
 Several servers make a group; a group is itself an outbound, and its tag is
 used in rules and `route.final`:
 
-```toml
-[[outbounds]]
-tag = "auto"
-type = "urltest"                 # fastest; "fallback" — first working one;
-outbounds = ["proxy"]            # "selector" — the chosen one (default or first)
-subscriptions = ["my-panel"]     # + servers from the panel
-# url = "https://www.gstatic.com/generate_204"   interval = 180   tolerance = 50
-
-[[subscriptions]]
-tag = "my-panel"
-url_file = "subscription.txt"    # the subscription URL is a secret, like the UUID
-# update_interval = 43200   detour = "direct"   include = "Germany|Finland"
+```json
+"outbounds": [
+  { "type": "urltest", "tag": "auto",            // fastest; "fallback" — first working;
+    "outbounds": ["proxy"],                      // "selector" — selected (default or first)
+    "subscriptions": ["my-panel"],               // + servers from the panel
+    "url": "https://www.gstatic.com/generate_204", "interval": "3m", "tolerance": 50 }
+],
+"subscriptions": [
+  { "tag": "my-panel", "url_file": "subscription.txt",   // the subscription URL is a secret, like a UUID
+    "update_interval": 43200, "detour": "direct", "include": "Germany|Finland" }
+]
 ```
 
+In the Xray format — the same via `routing.balancers` with the `leastPing`
+strategy and `observatory` (check URL and interval).
+
 - Health check — an HTTP request through each member every `interval` with
-  ±20 % jitter; `urltest` does not switch while the current member is no more
-  than `tolerance` ms worse than the best one. If a connection fails, the
-  next member is tried (up to three), and the failed one is considered down
-  until the next check. Switching does not drop open connections.
+  ±20 % jitter; `urltest` does not switch while the current member is worse
+  than the best by no more than `tolerance` ms. If a connection fails to
+  open, the next member is tried (up to three), and the failed one is
+  considered down until the next check. Switching does not drop open
+  connections.
 - Subscription: a base64 list of links (3x-ui, Marzban, Remnawave), plain
-  text, sing-box JSON, Clash YAML — only VLESS is taken, the rest is counted
-  in the log. HTTPS only, with certificate verification (`ca_file` — for a
-  panel with a self-signed certificate); servers with `security=none` are
-  skipped without `allow_insecure`. Downloads go through the group, and while
-  the list is empty — through `direct` (or through `detour`). The last list
-  is kept in `<tag>.subscription` next to the config (mode 600): the client
-  starts without the panel. Only the panel's host name goes to the log, not
-  the subscription URL. With TUN, a subscription without a saved list is
-  downloaded before routes are turned on.
+  text, sing-box JSON, Clash YAML — only VLESS and Trojan are taken, the rest
+  is counted in the log. HTTPS only, with certificate verification
+  (`ca_file` — for a panel's self-signed certificate); `security=none`
+  servers are skipped without `allow_insecure`. Downloads go through the
+  group, and while the list is empty — through `direct` (or `detour`). The
+  last list is saved to `<tag>.subscription` next to the config (mode 600):
+  the client starts without the panel. Only the panel's host name is logged,
+  not the subscription URL. With TUN, a subscription without a saved list is
+  downloaded before routes are enabled.
 
 ### Anti-DPI: fragment and noises
 
-```toml
-[[outbounds]]
-tag = "direct"
-type = "direct"
-fragment = { packets = "tlshello", length = "100-200", interval = "10-20" }
-noises = [{ type = "rand", packet = "10-20", delay = "10-16" }]
+```json
+{ "type": "direct", "tag": "direct",
+  "fragment": { "packets": "tlshello", "length": "100-200", "interval": "10-20" },
+  "noises": [{ "type": "rand", "packet": "10-20", "delay": "10-16" }] }
 ```
 
+In Xray — the same fields in the `settings` of a `freedom` outbound.
 `fragment` (on `vless` — towards the server, on `direct` — towards sites)
 splits the first TLS record with the ClientHello into records of `length`
 bytes; with `interval > 0` — also into separate TCP segments with delays
-(ms). `packets = "1-3"` splits the 1st–3rd writes of the connection instead.
+(ms). `packets = "1-3"` splits the 1st–3rd records of the connection instead.
 It helps against DPI that looks for the site name in the first packet and
-does not reassemble the stream; against DPI that does reassemble — it does
-not, and an unusual ClientHello is noticeable by itself. `noises` — dummy
-packets (`rand`, `str`, `base64`, `hex`) before the first UDP datagram to an
-address; not sent to port 53. Both are off by default; parameters are the
-same as Xray's `freedom`.
+does not reassemble the stream; against DPI that reassembles, it does not,
+and an unusual ClientHello is noticeable in itself. `noises` — dummy packets
+(`rand`, `str`, `base64`, `hex`) before the first UDP datagram to an address;
+not sent to port 53. Both are off by default; parameters are as in Xray's
+`freedom`.
 
 ### API and config reload
 
-```toml
-[api]
-listen = "127.0.0.1:9090"
-token_file = "api-token.txt"     # at least 16 characters
+Address and secret — as in sing-box's Clash API:
 
-[route]
-presets = ["block-ads", "private-direct", "ru-direct"]
+```json
+"experimental": {
+  "clash_api": { "external_controller": "127.0.0.1:9090", "secret_file": "api-token.txt" }
+},
+"route": { "presets": ["block-ads", "private-direct", "ru-direct"] }
 ```
+
+`secret` — the token right in the config, `secret_file` (extension) — in a
+separate file; at least 16 characters.
 
 ```sh
 T="Authorization: Bearer $(cat api-token.txt)"
@@ -320,117 +345,122 @@ curl -H "$T" -X POST http://127.0.0.1:9090/reload
 ```
 
 - The token is always required; `Host` must be the API address (DNS
-  rebinding protection); requests with `Origin` (from a browser) are
-  rejected; listening on anything other than 127.0.0.1 requires `allow_ip`.
-  Site addresses in `/connections` are browsing history, so they are only in
-  the API, not in the log.
+  rebinding protection), requests with `Origin` (from a browser) are
+  rejected; listening on anything but 127.0.0.1 requires `allow_ip`. Site
+  addresses in `/connections` are browsing history, so they are only in the
+  API, not in the log.
 - Reload (`POST /reload`, on Linux also `kill -HUP`): if the file has an
   error, the previous config keeps working. New outbounds, rules, DNS, groups
-  and subscriptions apply to new connections immediately; open ones live on
-  with the old config. Inbounds restart only if their settings changed; the
-  TUN inbound and the `[api]` section — after a program restart. The fake-IP
-  table is kept.
-- Presets (applied after your own rules, so your rules can override them):
-  `block-ads` (geosite `category-ads-all` → first `block`),
-  `private-direct` (private addresses, `.local`, `.lan` → first `direct`),
-  `ru-direct`, `cn-direct`, `ir-direct` (the country's domains, geosite,
+  and subscriptions apply immediately to new connections, open ones keep the
+  old ones. Inbounds are restarted only if their settings changed; the TUN
+  inbound and the API — after a program restart. The fake-IP table is kept.
+- Presets (after your own rules, so your rules can override them):
+  `block-ads` (geosite `category-ads-all` → the first `block`),
+  `private-direct` (private addresses, `.local`, `.lan` → the first
+  `direct`), `ru-direct`, `cn-direct`, `ir-direct` (country domains, geosite,
   geoip → `direct`).
 
 ### TUN — all of the computer's traffic
 
-The `type = "tun"` inbound creates a virtual network interface, and traffic
-from all programs goes through the client, not only from those configured to
-use the proxy:
+The `tun` inbound creates a virtual network interface, and the traffic of all
+programs goes through the client, not only of those configured to use the
+proxy:
 
-```toml
-[[inbounds]]
-type = "tun"
-sniff = true                     # domain from SNI/Host and from QUIC (HTTP/3)
-# strict_route = true            # kill switch (Linux)
-# route_exclude = ["192.168.0.0/16"]
+```json
+"inbounds": [
+  { "type": "tun", "tag": "tun",
+    "address": ["172.19.0.1/30"],               // default, plus fdfe:dcba:9876::1/126
+    "auto_route": true,                         // all traffic into TUN (default)
+    "strict_route": true,                       // kill switch (Linux)
+    "route_exclude_address": ["192.168.0.0/16"] }
+],
+"route": {
+  "rules": [
+    { "action": "sniff" },                       // domain from SNI/Host and from QUIC (HTTP/3)
+    { "protocol": "dns", "action": "hijack-dns" } // DNS to port 53 of any address — dns section
+  ]
+}
 ```
 
-- `sniff = true` in TUN finds the domain for QUIC too: the ClientHello is
-  reassembled from the first Initial packets (their keys are derived from the
-  cleartext Connection ID), so domain rules work for HTTP/3 as well.
-  Non-QUIC traffic is not delayed; QUIC waits for the second packet for at
-  most 300 ms.
-- Requires administrator rights (Windows) or root (Linux). On Windows,
-  `wintun.dll` must be next to `reality-client.exe` (from
-  [wintun.net](https://www.wintun.net/), amd64 architecture).
-- `auto_route` (on by default) sends all traffic into TUN; the client's own
-  connections (to the server, `direct`, DNS) bypass TUN: on Linux they are
-  marked (`SO_MARK`), on Windows they are bound to the physical interface.
-  There is no loop, and `direct` rules work as usual.
-- DNS queries to port 53 of any address are answered by the `[dns]` section
-  (`dns_hijack`, on by default; without `[dns]` — a config error). Fake-IP
-  works fully with TUN: the program gets a 198.18.x.x address, and the client
+In Xray — the `"protocol": "tun"` inbound (`settings.name`, `settings.MTU`);
+DNS is hijacked by an `inboundTag` rule → a `dns` outbound.
+
+- `sniff` in TUN also finds the domain of QUIC: the ClientHello is assembled
+  from the first Initial packets (their keys are derived from the plaintext
+  Connection ID), so domain rules work for HTTP/3 too. Non-QUIC — no delay;
+  QUIC waits for the second packet for at most 300 ms.
+- Requires administrator (Windows) or root (Linux) rights. On Windows,
+  `wintun.dll` (from [wintun.net](https://www.wintun.net/), amd64) must be
+  next to `reality-client.exe`.
+- `auto_route` sends all traffic into TUN; the client's own connections (to
+  the server, `direct`, DNS) bypass TUN: on Linux they are marked
+  (`SO_MARK`), on Windows they are bound to the physical interface. There is
+  no loop, and `direct` rules work as usual. If the computer has no IPv6,
+  IPv6 is not routed into TUN.
+- With a `hijack-dns` rule, DNS queries to port 53 of any address are
+  answered by the `dns` section (without it — a config error). Fake-IP works
+  fully with TUN: the program gets a 198.18.x.x address, and the client
   connects by name through the server.
-- Exiting the client (Ctrl+C, closing the window) restores routes. If the
-  client is killed, the interface disappears together with its routes — the
-  network works directly again. With `strict_route = true` (Linux) it is the
+- Exiting the client (Ctrl+C, closing the window) restores the routes. If
+  the client is killed, the interface disappears together with its routes —
+  the network works directly again. With `strict_route` (Linux) — the
   opposite: the network stays closed (kill switch) until the client is
   started again or `reality-client --tun-cleanup` is run.
-- The system DNS server (`address = "local"`) together with TUN is a config
-  error: the system DNS itself goes through TUN (a loop).
-- Limitations: IPv6 is enabled only if the system has it; ICMP (ping) does
-  not go through TUN; on Windows `route_exclude` is IPv4 only, there is no
-  kill switch, and with the local network excluded Windows may ask the
-  router's DNS directly.
+- A system DNS server (`"type": "local"`) together with TUN is a config
+  error: system DNS itself goes through TUN (a loop).
+- Limitations: ICMP (ping) does not pass through TUN; on Windows
+  `route_exclude_address` is IPv4 only, there is no kill switch, and with
+  the local network excluded Windows may query the router's DNS directly.
 
 ### DNS
 
-The `[dns]` section — own DNS instead of the system one (example in
-[`examples/client.toml`](examples/client.toml)):
+The `dns` section — own DNS instead of the system one:
 
-```toml
-[[inbounds]]               # DNS server for the system and programs
-type = "dns"
-listen = "127.0.0.1:53"
-
-[dns]
-final = "remote"
-
-[[dns.servers]]
-tag = "remote"
-address = "https://1.1.1.1/dns-query"   # DoH
-detour = "proxy"                        # through the VLESS server
-
-[[dns.servers]]
-tag = "local"
-address = "https://common.dot.dns.yandex.net/dns-query"
-detour = "direct"
-
-[[dns.rules]]
-geosite = ["category-ru"]
-server = "local"
+```json
+"inbounds": [
+  { "type": "direct", "tag": "dns-in", "listen": "127.0.0.1", "listen_port": 53 }   // DNS server for the system
+],
+"route": { "rules": [{ "inbound": ["dns-in"], "action": "hijack-dns" }] },
+"dns": {
+  "servers": [
+    { "type": "https", "tag": "remote", "server": "1.1.1.1", "detour": "proxy" },
+    { "type": "https", "tag": "local", "server": "common.dot.dns.yandex.net", "detour": "direct" }
+  ],
+  "rules": [{ "geosite": ["category-ru"], "server": "local" }],
+  "final": "remote"
+}
 ```
 
-- Server addresses: `1.1.1.1` or `udp://…` (UDP), `tcp://…`, `tls://…` (DNS
-  over TLS, port 853), `https://…/dns-query` (DNS over HTTPS), `quic://…`
-  (DNS over QUIC, RFC 9250, UDP port 853 — over XUDP through a VLESS
-  outbound), `local` (system resolver), `fakeip`. `udp://` and `tcp://` need
-  an IP: there is nothing to resolve the DNS server's own name with.
-  DoT/DoH/DoQ certificates are verified (custom roots — `ca_file`).
-- `detour` — which outbound to reach the server through; by default
-  `route.final`, i.e. usually through the VLESS server: that way neither the
-  ISP nor Wi-Fi neighbours see which names you look up.
-- Who uses the module: the `type = "dns"` inbound (set `127.0.0.1` as the DNS
-  server in network settings — then all programs' queries go through it);
-  the `type = "dns"` outbound with a `port = [53]` rule (programs' DNS
-  queries going through the proxy); the `direct` outbound (resolves names
-  with it rather than the system); `route.domain_strategy = "ip_if_non_match"`
-  (IP rules for names).
-- Cache: by the answer's TTL (at most an hour; negative answers — at most a
-  minute), up to 4096 answers (`cache_size`).
-- Fake-IP (`address = "fakeip"`): the program immediately gets an address from
-  `198.18.0.0/15` (and `fc00::/18`), and when it connects to it through the
-  proxy it reaches the real site — the server resolves the name. Only makes
-  sense with TUN or for programs that go through this proxy: without them the
-  program would go to 198.18.x.x directly and reach nothing. The table can be
-  kept across restarts (`[dns.fakeip] cache_file`).
+In Xray: `"dns": {"servers": ["https://1.1.1.1/dns-query",
+{"address": "https+local://…", "domains": ["geosite:category-ru"]}]}` —
+`domains` become rules, `+local` — queries go directly.
+
+- Servers: `udp`, `tcp`, `tls` (DNS over TLS, port 853), `https` (DNS over
+  HTTPS, `path` defaults to `/dns-query`), `quic` (DNS over QUIC, RFC 9250,
+  UDP port 853 — goes over XUDP through a VLESS outbound), `local` (system
+  resolver), `fakeip`. The legacy sing-box form —
+  `"address": "https://1.1.1.1/dns-query"` — is understood too. `udp` and
+  `tcp` need an IP: there is nothing to resolve the DNS server's own name
+  with. DoT/DoH/DoQ certificates are verified (own roots —
+  `tls.certificate_path`).
+- `detour` — which outbound to use to reach the server; defaults to
+  `route.final`, i.e. usually through the VLESS server: this way neither
+  your ISP nor your Wi-Fi neighbours see which names you look up.
+- Who uses the module: the DNS inbound (set `127.0.0.1` as DNS in the network
+  settings — then all programs' queries go through it); the `hijack-dns`
+  rule (programs' DNS queries going through the proxy or TUN); the `direct`
+  outbound (resolves names with it rather than with the system);
+  `route.domain_strategy` `ip_if_non_match` (IP rules for names).
+- Cache: by answer TTL (at most an hour; negative — at most a minute), up to
+  4096 answers (`cache_capacity`; `disable_cache` — no cache).
+- Fake-IP (a `"type": "fakeip"` server): the program immediately gets an
+  address from `198.18.0.0/15` (and `fc00::/18`), and when connecting to it
+  through the proxy it reaches the real site — the server resolves the name.
+  Only makes sense with TUN or for programs that use this proxy: otherwise
+  the program goes to 198.18.x.x directly and gets nowhere. The table can be
+  kept across restarts (`cache_file` — extension).
 - A DNS inbound open to the network requires `allow_ip`: otherwise it is an
-  "open resolver" of the kind used for DDoS attacks.
+  "open resolver" used for DDoS attacks.
 
 ### Supported link parameters
 
@@ -492,7 +522,7 @@ What they **can** do, and how it is mitigated:
 | The proxy is open to the network: SOCKS5 and HTTP proxy are **not encrypted** — the password, site addresses and data between the phone and the computer are visible on shared Wi-Fi | that is how these protocols work, the client cannot fix it; it warns at startup. Open the proxy to the network only at home, for your own devices, with `--allow-ip` |
 | The proxy is open to the network and there is a rule with the `direct` outbound: a device on the network acts "on behalf of" this computer — including on networks it cannot reach itself (work VPN, Docker, WSL) | `direct` does not let network clients reach the computer's own services (`127.0.0.1`, `localhost`); otherwise — let only your own devices use the proxy (password, `--allow-ip`) and do not route subnets they do not need to `direct` |
 | Sees the very fact of a connection to the server's IP, and the volume and timing of traffic | no VPN hides this; REALITY only disguises it as a visit to an ordinary site |
-| DNS queries on the local network are visible and can be spoofed (plain DNS is not encrypted) | `[dns]` with DoH/DoT through the server and the `type = "dns"` inbound as the system DNS; UDP answers are checked (ID, question, server address) |
+| DNS queries on the local network are visible and can be spoofed (plain DNS is not encrypted) | the `dns` section with DoH/DoT through the server and a DNS inbound (`direct` + a `hijack-dns` rule) as the system DNS; UDP answers are checked (ID, question, server address) |
 | Traffic of programs **not** configured to use the proxy bypasses it | this is a proxy, not a system-wide VPN: configure programs or turn on `--system-proxy` (Windows; not all programs honour it); in a browser with SOCKS5, turn on "Proxy DNS when using SOCKS v5", otherwise site names go to the local network's DNS (with an HTTP proxy names go to the proxy anyway) |
 
 ## Testing
@@ -545,8 +575,8 @@ bin/client/            reality-client: CLI (flags or --config), sysproxy.rs,
                        winservice.rs (Windows service and autostart)
 core/src/
   app/                 application: inbounds -> router -> outbounds;
-                       config.rs (TOML), proxy_in.rs + http_in.rs (socks/http/mixed
-                       inbounds), sniff.rs + sniff_quic.rs, router.rs + rules.rs +
+                       config/ (sing-box, Xray → one model), proxy_in.rs + http_in.rs
+                       (socks/http/mixed inbounds), sniff.rs + sniff_quic.rs, router.rs + rules.rs +
                        geo.rs (rules, geosite/geoip), ruleset.rs
                        (sing-box .srs/.json rule sets), outbound.rs
                        (direct, block, dns), vless_out.rs, access.rs,
@@ -577,7 +607,7 @@ bench/                 benchmarks (criterion) and memory measurement (memwatch, 
 scripts/               ci, interop, smoke, Xray build, fingerprint check,
                        Windows build, instructions for Stages 2 and 8
 docs/                  WINDOWS.md, crypto review checklist (Stage 5)
-examples/client.toml   example config file
+examples/              example configs: sing-box.json, xray.json, systemd
 PLAN.md                stage plan, decision history, open risks (in Russian)
 ```
 

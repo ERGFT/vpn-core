@@ -25,6 +25,7 @@ use std::time::Duration;
 use base64::Engine;
 use serde::Deserialize;
 
+use super::config::link::LinkBuilder;
 use super::group::Group;
 use super::http_client;
 use super::outbound::Outbound;
@@ -130,54 +131,6 @@ fn parse_lines(text: &str, out: &mut Parsed) {
                 .unwrap_or_else(|| "server".into()),
         };
         out.servers.push((name, line.to_string()));
-    }
-}
-
-/// Собрать vless://-ссылку из полей.
-struct LinkBuilder {
-    /// `vless` или `trojan`.
-    scheme: &'static str,
-    /// UUID (vless) или пароль (trojan).
-    uuid: String,
-    host: String,
-    port: u16,
-    params: Vec<(&'static str, String)>,
-    name: String,
-}
-
-impl LinkBuilder {
-    fn param(&mut self, k: &'static str, v: impl Into<String>) {
-        let v = v.into();
-        if !v.is_empty() {
-            self.params.push((k, v));
-        }
-    }
-
-    fn build(self) -> String {
-        let host = if self.host.contains(':') {
-            format!("[{}]", self.host)
-        } else {
-            self.host
-        };
-        let mut q = url::form_urlencoded::Serializer::new(String::new());
-        if self.scheme == "vless" {
-            q.append_pair("encryption", "none");
-        }
-        for (k, v) in &self.params {
-            q.append_pair(k, v);
-        }
-        let name: String =
-            url::form_urlencoded::byte_serialize(self.name.as_bytes()).collect::<String>();
-        let user: String = url::form_urlencoded::byte_serialize(self.uuid.as_bytes()).collect();
-        format!(
-            "{}://{}@{}:{}?{}#{}",
-            self.scheme,
-            user.replace('+', "%20"),
-            host,
-            self.port,
-            q.finish(),
-            name.replace('+', "%20")
-        )
     }
 }
 

@@ -50,7 +50,7 @@ impl PortSpec {
     }
 }
 
-/// Правило в файле настроек (`[[route.rules]]`).
+/// Правило в файле настроек (`route.rules`).
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RuleConfig {
@@ -70,7 +70,7 @@ pub struct RuleConfig {
     /// Категории из geosite.dat: `category-ads-all`, `google@cn`.
     #[serde(default)]
     pub geosite: Vec<String>,
-    /// tag наборов из `[[route.rule_set]]` (sing-box `.srs`/`.json`):
+    /// tag наборов из `route.rule_set` (sing-box `.srs`/`.json`):
     /// их домены и адреса добавляются к условиям правила.
     #[serde(default)]
     pub rule_set: Vec<String>,

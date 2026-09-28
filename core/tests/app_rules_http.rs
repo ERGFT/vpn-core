@@ -13,8 +13,8 @@ use reality_core::app::{App, Running};
 
 const T: Duration = Duration::from_secs(10);
 
-async fn start(toml: &str) -> Running {
-    let cfg = Config::parse(toml).expect("настройки");
+async fn start(json: &str) -> Running {
+    let cfg = Config::parse(json).expect("настройки");
     App::build(&cfg)
         .expect("сборка")
         .start()
@@ -22,15 +22,8 @@ async fn start(toml: &str) -> Running {
         .expect("запуск")
 }
 
-const OUTBOUNDS: &str = r#"
-[[outbounds]]
-tag = "direct"
-type = "direct"
-
-[[outbounds]]
-tag = "block"
-type = "block"
-"#;
+const OUTBOUNDS: &str =
+    r#""outbounds": [{"type": "direct", "tag": "direct"}, {"type": "block", "tag": "block"}]"#;
 
 async fn tcp_echo() -> SocketAddr {
     let l = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -86,34 +79,20 @@ async fn echo_works(s: &mut TcpStream, data: &[u8]) -> bool {
 #[tokio::test]
 async fn rules_pick_outbounds_by_domain_ip_port_network() {
     let app = start(&format!(
-        r#"
-[[inbounds]]
-type = "socks"
-listen = "127.0.0.1:0"
-{OUTBOUNDS}
-[[route.rules]]
-domain_suffix = ["blocked.test"]
-outbound = "block"
-
-[[route.rules]]
-ip_cidr = ["127.0.0.2/32"]
-outbound = "block"
-
-[[route.rules]]
-port = ["1-1023"]
-outbound = "block"
-
-[[route.rules]]
-network = "udp"
-outbound = "block"
-
-[[route.rules]]
-domain = ["localhost"]
-outbound = "direct"
-
-[route]
-final = "direct"
-"#
+        r#"{{
+  "inbounds": [{{ "type": "socks", "listen": "127.0.0.1", "listen_port": 0 }}],
+  {OUTBOUNDS},
+  "route": {{
+    "rules": [
+      {{ "domain_suffix": ["blocked.test"], "outbound": "block" }},
+      {{ "ip_cidr": ["127.0.0.2/32"], "outbound": "block" }},
+      {{ "port_range": ["1:1023"], "outbound": "block" }},
+      {{ "network": "udp", "outbound": "block" }},
+      {{ "domain": ["localhost"], "outbound": "direct" }}
+    ],
+    "final": "direct"
+  }}
+}}"#
     ))
     .await;
     let proxy = app.listen_addrs[0];
@@ -176,21 +155,14 @@ final = "direct"
 #[tokio::test]
 async fn rules_by_inbound() {
     let app = start(&format!(
-        r#"
-[[inbounds]]
-type = "socks"
-tag = "open"
-listen = "127.0.0.1:0"
-
-[[inbounds]]
-type = "socks"
-tag = "closed"
-listen = "127.0.0.1:0"
-{OUTBOUNDS}
-[[route.rules]]
-inbound = ["closed"]
-outbound = "block"
-"#
+        r#"{{
+  "inbounds": [
+    {{ "type": "socks", "tag": "open", "listen": "127.0.0.1", "listen_port": 0 }},
+    {{ "type": "socks", "tag": "closed", "listen": "127.0.0.1", "listen_port": 0 }}
+  ],
+  {OUTBOUNDS},
+  "route": {{ "rules": [{{ "inbound": ["closed"], "outbound": "block" }}] }}
+}}"#
     ))
     .await;
     let echo = tcp_echo().await;
@@ -217,16 +189,14 @@ async fn read_response_head(s: &mut TcpStream) -> String {
 #[tokio::test]
 async fn mixed_serves_socks_and_http_with_auth() {
     let app = start(&format!(
-        r#"
-[[inbounds]]
-type = "mixed"
-listen = "127.0.0.1:0"
-auth = "user:correct-horse-battery"
-{OUTBOUNDS}
-[[route.rules]]
-domain = ["forbidden.test"]
-outbound = "block"
-"#
+        r#"{{
+  "inbounds": [{{
+    "type": "mixed", "listen": "127.0.0.1", "listen_port": 0,
+    "users": [{{ "username": "user", "password": "correct-horse-battery" }}]
+  }}],
+  {OUTBOUNDS},
+  "route": {{ "rules": [{{ "domain": ["forbidden.test"], "outbound": "block" }}] }}
+}}"#
     ))
     .await;
     let proxy = app.listen_addrs[0];
@@ -329,7 +299,7 @@ async fn http_plain_request_is_forwarded_rewritten() {
         }
     });
     let app = start(&format!(
-        "[[inbounds]]\ntype = \"http\"\nlisten = \"127.0.0.1:0\"\n{OUTBOUNDS}\n[route]\nfinal = \"direct\"\n"
+        r#"{{"inbounds": [{{"type": "http", "listen": "127.0.0.1", "listen_port": 0}}], {OUTBOUNDS}, "route": {{"final": "direct"}}}}"#
     ))
     .await;
     let mut s = TcpStream::connect(app.listen_addrs[0]).await.unwrap();
@@ -396,29 +366,21 @@ fn client_hello(host: &str) -> Vec<u8> {
 async fn sniffed_sni_drives_routing_for_ip_targets() {
     let echo = tcp_echo().await;
     let app = start(&format!(
-        r#"
-[[inbounds]]
-type = "socks"
-tag = "sniffing"
-listen = "127.0.0.1:0"
-sniff = true
-
-[[inbounds]]
-type = "socks"
-tag = "override"
-listen = "127.0.0.1:0"
-sniff = true
-sniff_override_destination = true
-
-[[inbounds]]
-type = "socks"
-tag = "plain"
-listen = "127.0.0.1:0"
-{OUTBOUNDS}
-[[route.rules]]
-domain_suffix = ["ads.test"]
-outbound = "block"
-"#
+        r#"{{
+  "inbounds": [
+    {{ "type": "socks", "tag": "sniffing", "listen": "127.0.0.1", "listen_port": 0 }},
+    {{ "type": "socks", "tag": "override", "listen": "127.0.0.1", "listen_port": 0,
+       "sniff_override_destination": true }},
+    {{ "type": "socks", "tag": "plain", "listen": "127.0.0.1", "listen_port": 0 }}
+  ],
+  {OUTBOUNDS},
+  "route": {{
+    "rules": [
+      {{ "inbound": ["sniffing", "override"], "action": "sniff" }},
+      {{ "domain_suffix": ["ads.test"], "outbound": "block" }}
+    ]
+  }}
+}}"#
     ))
     .await;
     let (sniffing, overriding, plain) = (
@@ -456,35 +418,43 @@ outbound = "block"
 
 #[test]
 fn rule_config_errors() {
-    let base = "[[inbounds]]\ntype='socks'\nlisten='127.0.0.1:1080'\n[[outbounds]]\ntag='direct'\ntype='direct'\n";
-    let err = |extra: &str| match App::build(&Config::parse(&format!("{base}{extra}")).unwrap()) {
-        Ok(_) => panic!("должна быть ошибка: {extra}"),
-        Err(e) => e.to_string(),
+    let cfg = |rules: &str, route: &str| {
+        format!(
+            r#"{{"inbounds": [{{"type": "socks", "listen": "127.0.0.1", "listen_port": 1080}}],
+                 "outbounds": [{{"type": "direct", "tag": "direct"}}],
+                 "route": {{"rules": [{rules}]{route}}}}}"#
+        )
     };
-    assert!(err("[[route.rules]]\ndomain=['a']\noutbound='nope'\n").contains("nope"));
-    assert!(err("[[route.rules]]\noutbound='direct'\n").contains("без условий"));
-    assert!(err("[[route.rules]]\ninbound=['typo']\noutbound='direct'\n").contains("typo"));
-    assert!(
-        err("[[route.rules]]\ndomain_regex=['(']\noutbound='direct'\n").contains("domain_regex")
+    let err =
+        |rules: &str, route: &str| match App::build(&Config::parse(&cfg(rules, route)).unwrap()) {
+            Ok(_) => panic!("должна быть ошибка: {rules}"),
+            Err(e) => e.to_string(),
+        };
+    assert!(err(r#"{"domain": ["a"], "outbound": "nope"}"#, "").contains("nope"));
+    assert!(err(r#"{"outbound": "direct"}"#, "").contains("без условий"));
+    assert!(err(r#"{"inbound": ["typo"], "outbound": "direct"}"#, "").contains("typo"));
+    assert!(err(r#"{"domain_regex": ["("], "outbound": "direct"}"#, "").contains("domain_regex"));
+    assert!(err(r#"{"port": [99999], "outbound": "direct"}"#, "").contains("порт"));
+    let e = err(
+        r#"{"geosite": ["cn"], "outbound": "direct"}"#,
+        r#", "geosite_file": "/nonexistent/geosite.dat""#,
     );
-    assert!(err("[[route.rules]]\nport=['99999']\noutbound='direct'\n").contains("порт"));
-    let e = err("[[route.rules]]\ngeosite=['cn']\noutbound='direct'\n[route]\ngeosite_file='/nonexistent/geosite.dat'\n");
     assert!(e.contains("geosite.dat"), "{e}");
-    assert!(Config::parse(&format!(
-        "{base}[[route.rules]]\ndomian=['a']\noutbound='direct'\n"
-    ))
-    .is_err());
-    assert!(Config::parse(&format!(
-        "{base}[[route.rules]]\nnetwork='icmp'\noutbound='direct'\n"
-    ))
-    .is_err());
+    // Опечатка и неизвестная сеть — ошибка разбора.
+    assert!(Config::parse(&cfg(r#"{"domian": ["a"], "outbound": "direct"}"#, "")).is_err());
+    assert!(Config::parse(&cfg(r#"{"network": "icmp", "outbound": "direct"}"#, "")).is_err());
     let e = match App::build(
-        &Config::parse("[[inbounds]]\ntype='socks'\nlisten='127.0.0.1:1'\nsniff_override_destination=true\n[[outbounds]]\ntag='d'\ntype='direct'\n").unwrap(),
+        &Config::parse(
+            r#"{"inbounds": [{"type": "socks", "listen": "127.0.0.1", "listen_port": 1,
+                              "sniff_override_destination": true}],
+                "outbounds": [{"type": "direct", "tag": "d"}]}"#,
+        )
+        .unwrap(),
     ) {
         Ok(_) => panic!(),
         Err(e) => e.to_string(),
     };
-    assert!(e.contains("sniff = true"), "{e}");
+    assert!(e.contains("sniff"), "{e}");
 }
 
 /// Настоящие базы v2fly (не в репозитории): GEO_DIR=папка с geosite.dat
@@ -495,25 +465,19 @@ fn real_geo_files() {
     let dir = std::env::var("GEO_DIR").expect("GEO_DIR");
     let t = std::time::Instant::now();
     let cfg = Config::parse(&format!(
-        r#"
-[[inbounds]]
-type = "socks"
-listen = "127.0.0.1:0"
-{OUTBOUNDS}
-[[route.rules]]
-geosite = ["category-ads-all"]
-outbound = "block"
-
-[[route.rules]]
-geosite = ["category-ru"]
-geoip = ["ru", "private"]
-outbound = "direct"
-
-[route]
-geosite_file = '{dir}/geosite.dat'
-geoip_file = '{dir}/geoip.dat'
-final = "block"
-"#
+        r#"{{
+  "inbounds": [{{ "type": "socks", "listen": "127.0.0.1", "listen_port": 0 }}],
+  {OUTBOUNDS},
+  "route": {{
+    "rules": [
+      {{ "geosite": ["category-ads-all"], "outbound": "block" }},
+      {{ "geosite": ["category-ru"], "geoip": ["ru", "private"], "outbound": "direct" }}
+    ],
+    "geosite_file": "{dir}/geosite.dat",
+    "geoip_file": "{dir}/geoip.dat",
+    "final": "block"
+  }}
+}}"#
     ))
     .unwrap();
     App::build(&cfg).expect("базы читаются");

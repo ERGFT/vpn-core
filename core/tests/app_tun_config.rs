@@ -5,66 +5,96 @@
 use reality_core::app::config::Config;
 use reality_core::app::App;
 
-const OUT: &str = "[[outbounds]]\ntag='direct'\ntype='direct'\n";
-const DNS: &str = "[dns]\n[[dns.servers]]\ntag='up'\naddress='1.1.1.1'\ndetour='direct'\n";
+/// Настройки: входы, правила route и раздел dns — фрагментами JSON.
+fn cfg(inbounds: &str, rules: &str, dns: &str) -> String {
+    format!(
+        r#"{{"inbounds": [{inbounds}], "outbounds": [{{"type": "direct", "tag": "direct"}}],
+            "route": {{"rules": [{rules}]}}{dns}}}"#
+    )
+}
+const DNS: &str =
+    r#", "dns": {"servers": [{"tag": "up", "address": "1.1.1.1", "detour": "direct"}]}"#;
+const HIJACK: &str = r#"{"protocol": "dns", "action": "hijack-dns"}"#;
+const TUN: &str = r#"{"type": "tun", "tag": "tun"}"#;
 
-fn err(toml: &str) -> String {
-    let cfg = match Config::parse(toml) {
+fn err(json: &str) -> String {
+    let cfg = match Config::parse(json) {
         Ok(c) => c,
         Err(e) => return e.to_string(),
     };
     match App::build(&cfg) {
-        Ok(_) => panic!("должна быть ошибка:\n{toml}"),
+        Ok(_) => panic!("должна быть ошибка:\n{json}"),
         Err(e) => e.to_string(),
     }
 }
 
-fn ok(toml: &str) {
-    App::build(&Config::parse(toml).unwrap()).unwrap_or_else(|e| panic!("{e}\n{toml}"));
+fn ok(json: &str) {
+    App::build(&Config::parse(json).unwrap()).unwrap_or_else(|e| panic!("{e}\n{json}"));
 }
 
 #[test]
 fn tun_config_checks() {
-    // Перехват DNS по умолчанию включён — нужен [dns].
-    let e = err(&format!("[[inbounds]]\ntype='tun'\n{OUT}"));
-    assert!(e.contains("[dns]"), "{e}");
-    ok(&format!(
-        "[[inbounds]]\ntype='tun'\ndns_hijack=false\n{OUT}"
-    ));
-    ok(&format!("[[inbounds]]\ntype='tun'\n{OUT}{DNS}"));
+    // Перехват DNS (правило hijack-dns) — нужен раздел dns.
+    let e = err(&cfg(TUN, HIJACK, ""));
+    assert!(e.contains("раздела dns"), "{e}");
+    // Без правила hijack-dns DNS не перехватывается — раздел не нужен.
+    ok(&cfg(TUN, "", ""));
+    ok(&cfg(TUN, HIJACK, DNS));
 
     // Системный DNS вместе с TUN — петля.
-    let e = err(&format!(
-        "[[inbounds]]\ntype='tun'\n{OUT}[dns]\n[[dns.servers]]\ntag='l'\naddress='local'\n"
+    let e = err(&cfg(
+        TUN,
+        HIJACK,
+        r#", "dns": {"servers": [{"type": "local", "tag": "l"}]}"#,
     ));
     assert!(e.contains("петля"), "{e}");
 
-    let e = err(&format!(
-        "[[inbounds]]\ntype='tun'\nlisten='127.0.0.1:1'\n{OUT}{DNS}"
+    let e = err(&cfg(
+        r#"{"type": "tun", "listen": "127.0.0.1", "listen_port": 1}"#,
+        "",
+        DNS,
     ));
     assert!(e.contains("listen"), "{e}");
-    let e = err(&format!(
-        "[[inbounds]]\ntype='socks'\nlisten='127.0.0.1:1'\nauto_route=true\n{OUT}"
+    let e = err(&cfg(
+        r#"{"type": "socks", "listen": "127.0.0.1", "listen_port": 1, "auto_route": true}"#,
+        "",
+        "",
     ));
-    assert!(e.contains("tun"), "{e}");
-    let e = err(&format!("[[inbounds]]\ntype='socks'\n{OUT}"));
+    assert!(e.contains("auto_route"), "{e}");
+    let e = err(&cfg(r#"{"type": "socks"}"#, "", ""));
     assert!(e.contains("listen"), "{e}");
-    let e = err(&format!(
-        "[[inbounds]]\ntype='tun'\n[[inbounds]]\ntype='tun'\ntag='t2'\n{OUT}{DNS}"
+    let e = err(&cfg(
+        &format!(r#"{TUN}, {{"type": "tun", "tag": "t2"}}"#),
+        "",
+        DNS,
     ));
     assert!(e.contains("только один"), "{e}");
-    let e = err(&format!(
-        "[[inbounds]]\ntype='tun'\ninet4_address='fd00::1/64'\n{OUT}{DNS}"
-    ));
-    assert!(e.contains("inet4_address"), "{e}");
-    let e = err(&format!(
-        "[[inbounds]]\ntype='tun'\ninet4_address='10.0.0.1/31'\n{OUT}{DNS}"
+    let e = err(&cfg(
+        r#"{"type": "tun", "address": ["10.0.0.1/31"]}"#,
+        "",
+        DNS,
     ));
     assert!(e.contains("/30"), "{e}");
-    let e = err(&format!("[[inbounds]]\ntype='tun'\nmtu=500\n{OUT}{DNS}"));
+    let e = err(&cfg(r#"{"type": "tun", "mtu": 500}"#, "", DNS));
     assert!(e.contains("mtu"), "{e}");
-    ok(&format!(
-        "[[inbounds]]\ntype='tun'\ninterface_name='t0'\ninet4_address='10.7.0.1/24'\nmtu=9000\n\
-         route_exclude=['192.168.0.0/16','fd00::/8']\nsniff=true\n{OUT}{DNS}"
+    ok(&cfg(
+        r#"{"type": "tun", "interface_name": "t0", "address": ["10.7.0.1/24", "fdfe::1/126"], "mtu": 9000,
+            "route_exclude_address": ["192.168.0.0/16", "fd00::/8"], "stack": "system"}"#,
+        r#"{"action": "sniff"}"#,
+        DNS,
     ));
+    // Старые поля sing-box (до 1.10) тоже понимаются.
+    ok(&cfg(
+        r#"{"type": "tun", "inet4_address": "10.7.0.1/24", "inet4_route_exclude_address": ["192.168.0.0/16"],
+            "sniff": true}"#,
+        "",
+        DNS,
+    ));
+    // Возможности, которых нет, — ошибка, а не молчаливый пропуск.
+    let e = err(&cfg(
+        r#"{"type": "tun", "include_package": ["com.example"]}"#,
+        "",
+        DNS,
+    ));
+    assert!(e.contains("include_package"), "{e}");
 }

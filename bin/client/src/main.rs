@@ -6,9 +6,10 @@
 //!    reality-client --server 'vless://UUID@host:443?security=reality&sni=site&pbk=KEY&sid=ID'
 //!    reality-client --server-file server.txt --listen 127.0.0.1:1080
 //!
-//! 2. Файл настроек (TOML) — несколько входов и выходов, маршрутизация:
-//!    reality-client --config client.toml
-//!    Пример и описание полей — README.md и `examples/client.toml`.
+//! 2. Файл настроек в формате sing-box или Xray-core (JSON, формат
+//!    определяется сам) — несколько входов и выходов, маршрутизация:
+//!    reality-client --config config.json
+//!    Примеры — `examples/sing-box.json`, `examples/xray.json`, описание — README.md.
 //!
 //! Что поддерживается (подробно — README.md):
 //!   security=none / tls / reality;
@@ -56,8 +57,8 @@ use reality_core::app::App;
     about ="VLESS core — локальный SOCKS5/HTTP-прокси -> VLESS (tcp/ws/grpc/httpupgrade/xhttp, tls/reality, XTLS Vision)"
 )]
 struct Args {
-    /// Файл настроек (TOML): входы, выходы, маршрутизация. Вместо
-    /// ключей --server, --listen и остальных
+    /// Файл настроек в формате sing-box или Xray-core (JSON): входы,
+    /// выходы, маршрутизация. Вместо ключей --server, --listen и остальных
     #[arg(
         long,
         short = 'c',

@@ -1,14 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Наборы правил sing-box (`rule_set`): бинарный `.srs` и исходный JSON.
 //!
-//! ```toml
-//! [[route.rule_set]]
-//! tag = "geosite-ru"
-//! path = "geosite-ru.srs"          # формат — по расширению (.srs / .json)
-//!
-//! [[route.rules]]
-//! rule_set = ["geosite-ru"]
-//! outbound = "direct"
+//! ```json
+//! "route": {
+//!   "rule_set": [{ "type": "local", "tag": "geosite-ru", "format": "binary", "path": "geosite-ru.srs" }],
+//!   "rules": [{ "rule_set": ["geosite-ru"], "outbound": "direct" }]
+//! }
 //! ```
 //!
 //! Поддерживаются наборы из доменов (точно, суффикс, подстрока, regex) и
@@ -99,7 +96,7 @@ pub fn expand(
     for t in used {
         if !sets.contains_key(t.as_str()) {
             return Err(Error::Config(format!(
-                "rule_set = [\"{t}\"]: нет такого набора в [[route.rule_set]]"
+                "rule_set «{t}»: нет такого набора в route.rule_set"
             )));
         }
         if !wanted.contains(&t.as_str()) {
