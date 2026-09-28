@@ -267,6 +267,9 @@ fn windows(
         super::wfp::enable(idx, exclude)?;
         guard.wfp = true;
     }
+    // Кеш DNS-клиента Windows мог запомнить неудачи, пока интерфейс
+    // поднимался; теперь все запросы идут через TUN — начать с чистого.
+    let _ = run(&args("ipconfig /flushdns"), true);
     tracing::info!(interface = ifname, "tun: весь трафик направлен в TUN");
     Ok(guard)
 }

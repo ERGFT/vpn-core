@@ -1199,6 +1199,13 @@ impl App {
             if let InboundSvc::Tun(t) = &i.svc {
                 let dev = t.create_device()?;
                 tracing::info!(inbound = %t.tag, interface = %dev.name, "TUN создан");
+                let (dev_name, dev_index, dev_v6) = (dev.name.clone(), dev.if_index, dev.has_v6);
+                // Стек TUN — сразу, до маршрутов: DNS-сервер интерфейса
+                // (адрес в подсети TUN) уже назначен, и системные запросы к
+                // нему должны получать ответ, а не таймаут, пока грузятся
+                // подписки и ставятся маршруты (иначе Windows запоминает
+                // неудачу, а с kill switch обойти её ей нечем).
+                let task = spawn_task(&errors_tx, t.clone().serve(dev, routers.clone()));
                 if t.settings.auto_route {
                     // Пока системный DNS ещё работает напрямую: загрузить
                     // подписки без сохранённого списка и узнать адреса
@@ -1220,13 +1227,17 @@ impl App {
                     hosts.sort();
                     hosts.dedup();
                     pre_resolve(hosts).await;
-                    routes.push(tun::route::setup(
-                        &dev.name,
-                        dev.if_index,
-                        dev.has_v6,
+                    let guard = tun::route::setup(
+                        &dev_name,
+                        dev_index,
+                        dev_v6,
                         &t.settings.route_exclude,
                         t.settings.strict_route,
-                    )?);
+                    );
+                    if guard.is_err() {
+                        task.abort();
+                    }
+                    routes.push(guard?);
                     if dns.is_some() {
                         // Новые имена (серверы из обновлённой подписки) —
                         // у своего DNS, а не у системы: её запросы теперь
@@ -1250,7 +1261,6 @@ impl App {
                         tun_resolver = true;
                     }
                 }
-                let task = spawn_task(&errors_tx, t.clone().serve(dev, routers.clone()));
                 inbounds.push((i.tag.clone(), i.kind, SocketAddr::from(([0, 0, 0, 0], 0))));
                 live.push(Live {
                     key: i.key,

@@ -137,7 +137,11 @@ if ($LASTEXITCODE) { Fail '--service-install со strict_route' }
 if (-not (Wait-Tun)) { Fail 'служба со strict_route не подняла TUN за 30 с' }
 if ((Get-Content $log -Raw -Encoding utf8) -notmatch 'kill switch включён') { Fail 'kill switch не включился' }
 curl.exe -sS --max-time 30 -o NUL "https://$site/"
-if ($LASTEXITCODE) { Fail 'HTTPS через TUN со strict_route не прошёл' }
+if ($LASTEXITCODE) {
+    Get-DnsClientServerAddress -AddressFamily IPv4 | Format-Table -AutoSize | Out-Host
+    Resolve-DnsName $site -ErrorAction Continue | Out-Host
+    Fail 'HTTPS через TUN со strict_route не прошёл'
+}
 Write-Host 'OK: kill switch включён, трафик идёт через TUN'
 
 # Сбой: процесс убит, интерфейс TUN исчез — мимо туннеля трафик не идёт.
