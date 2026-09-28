@@ -22,6 +22,7 @@ pub mod api;
 pub mod config;
 pub mod dns;
 pub mod dns_in;
+pub mod events;
 pub mod geo;
 pub mod group;
 pub mod http_client;
@@ -791,7 +792,12 @@ fn build_core(
                 Arc::new(DnsOutbound::new(o.tag.clone(), dns_slot.clone()))
             }
             OutboundKind::Selector | OutboundKind::Urltest | OutboundKind::Fallback => {
-                let g = Group::new(o.tag.clone(), group_settings(o)?, o.default.clone());
+                let g = Group::new(
+                    o.tag.clone(),
+                    group_settings(o)?,
+                    o.default.clone(),
+                    tracker.events.clone(),
+                );
                 groups.push((o, g.clone()));
                 g
             }
@@ -853,7 +859,7 @@ fn build_core(
             .collect();
         if members.is_empty() {
             return Err(Error::Config(format!(
-                "подписка {t} не входит ни в одну группу: добавьте subscriptions = [\"{t}\"] \
+                "подписка {t} не входит ни в одну группу: добавьте \"subscriptions\": [\"{t}\"] \
                  в selector, urltest или fallback"
             )));
         }
@@ -873,6 +879,7 @@ fn build_core(
             detour,
             direct,
             factory,
+            tracker.events.clone(),
         )?);
         let loaded = sub.load_cache().is_some();
         subs.push((sub, loaded));
@@ -1376,6 +1383,9 @@ impl Controller {
             tokio::spawn(pre_resolve(hosts));
         }
         tracing::info!(notes = notes.len(), "настройки перечитаны");
+        self.tracker.events.emit(|| events::Event::Reload {
+            notes: notes.clone(),
+        });
         Ok(notes)
     }
 }

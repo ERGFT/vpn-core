@@ -28,6 +28,8 @@
 - Свой DNS: UDP, TCP, DoT, DoH, DoQ, кеш, fake-IP.
 - Группы `selector`/`urltest`/`fallback`, подписки (base64, sing-box,
   Clash); локальное API; перечитывание настроек без разрыва соединений.
+- Потоки API: `/events` (соединения, группы, подписки, перечитывание),
+  `/traffic`, `/memory`, `/logs` — построчный JSON или WebSocket.
 - Файл настроек в форматах sing-box и Xray-core (JSON, формат
   определяется сам); неподдерживаемое — ошибка с путём до ключа. Свой
   формат TOML убран.
@@ -42,7 +44,8 @@
   пакетов, ~200 МиБ/с; на Windows TUN и служба проверены на настоящей
   машине, без IPv6 у компьютера нет петли через TUN.
 - Документация на русском и английском; CONTRIBUTING, SECURITY,
-  CODE_OF_CONDUCT, SUPPORT, шаблоны issue и PR.
+  CODE_OF_CONDUCT, SUPPORT, шаблоны issue и PR; описание устройства ядра
+  (`docs/ARCHITECTURE.md`).
 
 [Не выпущено]: https://github.com/ERGFT/vpn-core/commits/main
 
@@ -77,6 +80,8 @@ It will include:
 - Own DNS: UDP, TCP, DoT, DoH, DoQ, cache, fake-IP.
 - `selector`/`urltest`/`fallback` groups, subscriptions (base64, sing-box,
   Clash); local API; config reload without dropping connections.
+- API streams: `/events` (connections, groups, subscriptions, reload),
+  `/traffic`, `/memory`, `/logs` — JSON lines or WebSocket.
 - Config file in the sing-box and Xray-core formats (JSON, detected
   automatically); anything unsupported is an error with the path to the
   key. The own TOML format has been removed.
@@ -91,6 +96,7 @@ It will include:
   packet loss, ~200 MiB/s; on Windows TUN and the service are checked on a
   real machine, no loop through TUN without IPv6 on the computer.
 - Documentation in Russian and English; CONTRIBUTING, SECURITY,
-  CODE_OF_CONDUCT, SUPPORT, issue and PR templates.
+  CODE_OF_CONDUCT, SUPPORT, issue and PR templates; a description of how the
+  core works (`docs/ARCHITECTURE.en.md`).
 
 [Unreleased]: https://github.com/ERGFT/vpn-core/commits/main

@@ -4,9 +4,9 @@
 //! (`route.final`).
 //!
 //! Перед правилами адрес fake-IP заменяется исходным именем. Если ни одно
-//! правило не подошло, а `domain_strategy = "ip_if_non_match"`, имя
+//! правило не подошло, а `domain_strategy` — `ip_if_non_match`, имя
 //! разрешается DNS-модулем и правила проверяются ещё раз — по адресу
-//! (например, `geoip = ["ru"]` для сайта, которого нет в geosite).
+//! (например, `"geoip": ["ru"]` для сайта, которого нет в geosite).
 
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};

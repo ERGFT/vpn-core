@@ -37,7 +37,9 @@ scripts/ci.sh           # плюс release-сборка, интероп с Xray-
   (`scripts/interop_xray.sh`).
 - Меняется то, что видит пользователь, — обновите `README.md` и
   `README.en.md` и допишите строку в `CHANGELOG.md` (раздел «Не выпущено»);
-  меняется решение или открывается риск — `PLAN.md`.
+  меняется решение или открывается риск — `PLAN.md`; меняется устройство
+  ядра (новый модуль, путь соединения, предел) — `docs/ARCHITECTURE.md` и
+  `docs/ARCHITECTURE.en.md`. С него же удобно начинать знакомство с кодом.
 - Комментарии в коде, `PLAN.md` и сообщения коммитов — на русском, как в
   остальном проекте; документация для пользователя — на двух языках
   (`*.md` и `*.en.md`); issue и pull request — на русском или английском.
@@ -86,7 +88,10 @@ CI on GitHub runs the same — on Linux and on real Windows.
   possible with a check against real Xray-core (`scripts/interop_xray.sh`).
 - If what the user sees changes, update both `README.md` and `README.en.md`
   and add a line to `CHANGELOG.md` (the "Unreleased" section);
-  if a decision changes or a risk appears — `PLAN.md`.
+  if a decision changes or a risk appears — `PLAN.md`; if the core's
+  structure changes (a new module, connection path, limit) —
+  `docs/ARCHITECTURE.md` and `docs/ARCHITECTURE.en.md`. It is also the best
+  place to start reading the code.
 - Code comments, `PLAN.md` and commit messages are in Russian, like the rest
   of the project; issues and pull requests may be in English or Russian.
 

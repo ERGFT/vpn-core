@@ -14,9 +14,10 @@ local **SOCKS5 proxy** (TCP and UDP). Traffic from programs pointed at this
 proxy goes to a VLESS server (Xray-core and compatible servers).
 
 The project was written from scratch in stages — the history, decisions and
-risks of every stage are in [`PLAN.md`](PLAN.md) (in Russian). It is a
-learning and research project, not a replacement for mature clients: what
-works and what does not is listed honestly below.
+risks of every stage are in [`PLAN.md`](PLAN.md) (in Russian); how the core
+works inside is in [`docs/ARCHITECTURE.en.md`](docs/ARCHITECTURE.en.md). It
+is a learning and research project, not a replacement for mature clients:
+what works and what does not is listed honestly below.
 
 **Contents:** [Features](#features) · [Building](#building) ·
 [Running](#running) · [Config file](#config-file) ·
@@ -344,6 +345,27 @@ curl -H "$T" -X POST http://127.0.0.1:9090/subscriptions/my-panel/update
 curl -H "$T" -X POST http://127.0.0.1:9090/reload
 ```
 
+Streams — the client learns about changes immediately, without polling. The
+response does not end until the client closes the connection: one JSON
+object per line or, with `Upgrade: websocket`, one WebSocket frame per
+object.
+
+```sh
+curl -N -H "$T" http://127.0.0.1:9090/events            # events
+curl -N -H "$T" http://127.0.0.1:9090/traffic           # speed every second
+curl -N -H "$T" "http://127.0.0.1:9090/logs?level=warning"
+```
+
+| Stream | What it sends |
+|---|---|
+| `/events` | `connection_open` (fields as in `/connections`), `connection_close` (traffic totals, duration), `group_switch` (a group changed its member: by itself or manually), `group_check` (delays after a check), `subscription_update` (server count or error), `reload`; `lagged` — the client was too slow and some events were skipped (re-read `/connections`) |
+| `/traffic` | every second: `up`, `down` — bytes per second, `upTotal`, `downTotal` — totals (as in Clash) |
+| `/memory` | every second: `inuse` — process memory, bytes (as in Clash) |
+| `/logs?level=info` | the log: `{"type": "warning", "payload": "…"}` (as in Clash); `level` — `debug`, `info`, `warning`, `error`; never more detailed than what is logged (`RUST_LOG`) |
+
+While nobody listens to a stream, events are not even assembled. Up to 16
+streams at a time.
+
 - The token is always required; `Host` must be the API address (DNS
   rebinding protection), requests with `Origin` (from a browser) are
   rejected; listening on anything but 127.0.0.1 requires `allow_ip`. Site
@@ -606,7 +628,8 @@ bin/fpcheck/           JA3/JA4 capture
 bench/                 benchmarks (criterion) and memory measurement (memwatch, Linux)
 scripts/               ci, interop, smoke, Xray build, fingerprint check,
                        Windows build, instructions for Stages 2 and 8
-docs/                  WINDOWS.md, crypto review checklist (Stage 5)
+docs/                  ARCHITECTURE.md (how the core works), WINDOWS.md,
+                       crypto review checklist (Stage 5)
 examples/              example configs: sing-box.json, xray.json, systemd
 PLAN.md                stage plan, decision history, open risks (in Russian)
 ```

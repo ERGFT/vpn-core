@@ -245,8 +245,13 @@ fn config_from_args(args: &Args) -> Result<Config> {
     })
 }
 
-/// Журнал: в stderr или в файл (`--log-file`).
+/// Журнал: в stderr или в файл (`--log-file`); он же — поток `GET /logs`
+/// в API.
 fn init_logging(log_file: Option<&std::path::Path>) -> Result<()> {
+    use reality_core::app::events::LogLayer;
+    use tracing_subscriber::layer::SubscriberExt;
+    use tracing_subscriber::util::SubscriberInitExt;
+
     // По умолчанию — уровень info: иначе при незаданном RUST_LOG было не
     // понять, запустился ли клиент и на каком порту слушает.
     let filter = tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| {
@@ -267,6 +272,8 @@ fn init_logging(log_file: Option<&std::path::Path>) -> Result<()> {
             .with_env_filter(filter)
             .with_writer(std::sync::Mutex::new(f))
             .with_ansi(false)
+            .finish()
+            .with(LogLayer)
             .init();
         return Ok(());
     }
@@ -277,6 +284,8 @@ fn init_logging(log_file: Option<&std::path::Path>) -> Result<()> {
         .with_env_filter(filter)
         .with_writer(std::io::stderr)
         .with_ansi(ansi)
+        .finish()
+        .with(LogLayer)
         .init();
     Ok(())
 }

@@ -149,7 +149,7 @@ fn js_str(v: &serde_json::Value, path: &[&str]) -> String {
         .to_string()
 }
 
-/// JSON sing-box: `outbounds` с `type = "vless"`.
+/// JSON sing-box: `outbounds` с `"type": "vless"`.
 fn parse_singbox(text: &str, out: &mut Parsed) -> Result<()> {
     let v: serde_json::Value = serde_json::from_str(text)
         .map_err(|e| Error::Config(format!("подписка: JSON sing-box: {e}")))?;
@@ -381,6 +381,7 @@ pub struct Subscription {
     factory: Arc<ServerFactory>,
     roots: Option<rustls::RootCertStore>,
     fragment: Option<Arc<crate::transport::fragment::Fragment>>,
+    events: super::events::Bus,
 }
 
 impl Subscription {
@@ -391,6 +392,7 @@ impl Subscription {
         detour: Option<Arc<dyn Outbound>>,
         direct: Arc<dyn Outbound>,
         factory: Arc<ServerFactory>,
+        events: super::events::Bus,
     ) -> Result<Self> {
         let rx = |r: &Option<String>, what: &str| -> Result<Option<regex::Regex>> {
             r.as_deref()
@@ -432,6 +434,7 @@ impl Subscription {
             detour,
             direct,
             factory,
+            events,
         })
     }
 
@@ -551,6 +554,17 @@ impl Subscription {
 
     /// Загрузить и применить; `first_time` — сохранённого списка нет.
     pub async fn update(&self, first_time: bool) -> Result<usize> {
+        let r = self.fetch_apply(first_time).await;
+        self.events
+            .emit(|| super::events::Event::SubscriptionUpdate {
+                subscription: self.cfg.tag.clone(),
+                servers: r.as_ref().ok().copied(),
+                error: r.as_ref().err().map(|e| e.to_string()),
+            });
+        r
+    }
+
+    async fn fetch_apply(&self, first_time: bool) -> Result<usize> {
         let ua = self
             .cfg
             .user_agent

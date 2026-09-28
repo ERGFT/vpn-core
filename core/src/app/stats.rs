@@ -17,6 +17,7 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio_util::sync::CancellationToken;
 
+use super::events::{Bus, Event};
 use super::{Metadata, Network};
 
 /// Потолок на число одновременно учитываемых соединений (больше — не
@@ -35,6 +36,8 @@ pub struct Tracker {
     conns: Mutex<HashMap<u64, Arc<ConnInfo>>>,
     total: Traffic,
     per_outbound: Mutex<HashMap<String, Arc<Traffic>>>,
+    /// События для `GET /events`.
+    pub events: Bus,
 }
 
 pub struct ConnInfo {
@@ -53,9 +56,27 @@ pub struct ConnInfo {
     down: AtomicU64,
     cancel: CancellationToken,
     outbound_traffic: Arc<Traffic>,
+    opened: Instant,
 }
 
 impl ConnInfo {
+    pub fn view(&self) -> ConnView {
+        ConnView {
+            id: self.id,
+            inbound: self.inbound.to_string(),
+            network: match self.network {
+                Network::Tcp => "tcp",
+                Network::Udp => "udp",
+            },
+            target: self.target.clone(),
+            port: self.port,
+            outbound: self.outbound.clone(),
+            member: self.member.clone(),
+            start: self.start,
+            up: self.up(),
+            down: self.down(),
+        }
+    }
     pub fn up(&self) -> u64 {
         self.up.load(Ordering::Relaxed)
     }
@@ -89,6 +110,13 @@ impl Drop for ConnGuard {
         if self.registered {
             self.tracker.conns.lock().unwrap().remove(&self.info.id);
         }
+        let c = &self.info;
+        self.tracker.events.emit(|| Event::ConnectionClose {
+            id: c.id,
+            up: c.up(),
+            down: c.down(),
+            duration_ms: c.opened.elapsed().as_millis() as u64,
+        });
     }
 }
 
@@ -119,7 +147,7 @@ pub struct OutboundTraffic {
     pub down: u64,
 }
 
-#[derive(Debug, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct ConnView {
     pub id: u64,
     pub inbound: String,
@@ -141,6 +169,7 @@ impl Default for Tracker {
             conns: Mutex::new(HashMap::new()),
             total: Traffic::default(),
             per_outbound: Mutex::new(HashMap::new()),
+            events: Bus::default(),
         }
     }
 }
@@ -180,7 +209,9 @@ impl Tracker {
             down: AtomicU64::new(0),
             cancel: CancellationToken::new(),
             outbound_traffic: traffic,
+            opened: Instant::now(),
         });
+        self.events.emit(|| Event::ConnectionOpen(info.view()));
         let mut conns = self.conns.lock().unwrap();
         let registered = conns.len() < MAX_TRACKED;
         if registered {
@@ -191,6 +222,14 @@ impl Tracker {
             info,
             registered,
         }
+    }
+
+    /// Передано всего: вверх и вниз.
+    pub fn totals(&self) -> (u64, u64) {
+        (
+            self.total.up.load(Ordering::Relaxed),
+            self.total.down.load(Ordering::Relaxed),
+        )
     }
 
     pub fn summary(&self) -> Summary {
@@ -221,21 +260,7 @@ impl Tracker {
             .lock()
             .unwrap()
             .values()
-            .map(|c| ConnView {
-                id: c.id,
-                inbound: c.inbound.to_string(),
-                network: match c.network {
-                    Network::Tcp => "tcp",
-                    Network::Udp => "udp",
-                },
-                target: c.target.clone(),
-                port: c.port,
-                outbound: c.outbound.clone(),
-                member: c.member.clone(),
-                start: c.start,
-                up: c.up(),
-                down: c.down(),
-            })
+            .map(|c| c.view())
             .collect();
         v.sort_by_key(|c| c.id);
         v

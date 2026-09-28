@@ -23,6 +23,7 @@ use std::time::Duration;
 use futures_util::future::BoxFuture;
 use futures_util::StreamExt;
 
+use super::events::{Bus, Event, MemberDelay};
 use super::http_client::{self, Url};
 use super::outbound::{Outbound, UdpSession};
 use super::Metadata;
@@ -100,16 +101,23 @@ pub struct Group {
     dynamic: RwLock<HashMap<String, Vec<Arc<Member>>>>,
     /// Выбранный (selector) или текущий (urltest) участник.
     current: RwLock<Option<String>>,
+    events: Bus,
 }
 
 impl Group {
-    pub fn new(tag: String, settings: GroupSettings, default: Option<String>) -> Arc<Self> {
+    pub fn new(
+        tag: String,
+        settings: GroupSettings,
+        default: Option<String>,
+        events: Bus,
+    ) -> Arc<Self> {
         Arc::new(Group {
             tag,
             settings,
             fixed: RwLock::new(Vec::new()),
             dynamic: RwLock::new(HashMap::new()),
             current: RwLock::new(default),
+            events,
         })
     }
 
@@ -158,8 +166,13 @@ impl Group {
         v
     }
 
+    /// Текущий участник; у `selector` без выбора — первый (он и работает).
     pub fn current(&self) -> Option<String> {
-        self.current.read().unwrap().clone()
+        let c = self.current.read().unwrap().clone();
+        if c.is_none() && self.settings.strategy == Strategy::Selector {
+            return self.members().first().map(|m| m.tag().to_string());
+        }
+        c
     }
 
     /// Выбрать участника вручную (selector).
@@ -170,8 +183,21 @@ impl Group {
                 self.tag
             )));
         }
+        let previous = self.current();
         *self.current.write().unwrap() = Some(tag.to_string());
         tracing::info!(group = %self.tag, member = tag, "группа: выбран вручную");
+        self.events.emit(|| Event::GroupSwitch {
+            group: self.tag.clone(),
+            member: tag.to_string(),
+            previous,
+            delay_ms: self
+                .members()
+                .iter()
+                .find(|m| m.tag() == tag)
+                .and_then(|m| m.delay())
+                .map(|d| d.as_millis() as u64),
+            manual: true,
+        });
         Ok(())
     }
 
@@ -230,7 +256,15 @@ impl Group {
                 delay_ms = ?m.delay().map(|d| d.as_millis()),
                 "группа: переключение"
             );
-            *cur = Some(m.tag().to_string());
+            let previous = cur.replace(m.tag().to_string());
+            drop(cur);
+            self.events.emit(|| Event::GroupSwitch {
+                group: self.tag.clone(),
+                member: m.tag().to_string(),
+                previous,
+                delay_ms: m.delay().map(|d| d.as_millis() as u64),
+                manual: false,
+            });
         }
     }
 
@@ -255,6 +289,18 @@ impl Group {
                 self.note_choice(first);
             }
         }
+        self.events.emit(|| Event::GroupCheck {
+            group: self.tag.clone(),
+            current: self.current(),
+            members: self
+                .members()
+                .iter()
+                .map(|m| MemberDelay {
+                    tag: m.tag().to_string(),
+                    delay_ms: m.delay().map(|d| d.as_millis() as u64),
+                })
+                .collect(),
+        });
     }
 
     /// Проверять в фоне, пока группа жива (для `selector` — ничего).
@@ -348,6 +394,7 @@ mod tests {
                 timeout: Duration::from_secs(1),
             },
             None,
+            Bus::default(),
         )
     }
 
@@ -472,6 +519,7 @@ mod tests {
                 timeout: Duration::from_secs(2),
             },
             None,
+            Bus::default(),
         );
         g.set_fixed(vec![
             Arc::new(BlockOutbound::new("blocked")) as Arc<dyn Outbound>,
