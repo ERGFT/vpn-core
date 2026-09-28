@@ -347,6 +347,8 @@ impl ProxyInbound {
             target,
             port,
             sniffed: None,
+            inbound_type: self.kind.name(),
+            rule: None,
         };
         // Sniffing нужен, только когда домена нет. Ответ «соединено»
         // уходит раньше, чем соединение с сайтом открыто, — иначе
@@ -482,6 +484,8 @@ async fn udp_associate(
                     target: to_address(&addr),
                     port,
                     sniffed: None,
+                    inbound_type: "socks",
+                    rule: None,
                 };
                 let original = meta.target.clone();
                 let router = routers.get();

@@ -19,6 +19,7 @@
 
 pub mod access;
 pub mod api;
+mod clash;
 pub mod config;
 pub mod dns;
 pub mod dns_in;
@@ -61,6 +62,9 @@ use stats::Tracker;
 use subscription::Subscription;
 use vless_out::VlessOutbound;
 
+/// Служебная группа режима global (как в Clash API).
+pub const GLOBAL: &str = "GLOBAL";
+
 /// Минимальная длина пароля входа, если он открыт в сеть.
 pub const MIN_LAN_PASSWORD: usize = 12;
 
@@ -84,6 +88,11 @@ pub struct Metadata {
     /// Домен, распознанный по первым байтам (SNI, Host), — для правил,
     /// когда приложение прислало IP.
     pub sniffed: Option<String>,
+    /// Вид входа (`mixed`, `tun`, …) — для API.
+    pub inbound_type: &'static str,
+    /// Какое правило выбрало выход (описание; `None` — `route.final`).
+    /// Заполняет маршрутизатор.
+    pub rule: Option<Arc<str>>,
 }
 
 enum InboundSvc {
@@ -763,6 +772,9 @@ fn build_core(
     check_group_cycles(&cfg.outbounds)?;
     let mut route = cfg.route.clone();
     route.rules.extend(preset_rules(cfg)?);
+    for r in &mut route.rules {
+        r.label = Some(rules::describe(r));
+    }
     let mut dns_cfg = cfg.dns.clone();
     ruleset::expand(&mut route, dns_cfg.as_mut())?;
     let cfg_dns = dns_cfg.as_ref();
@@ -770,6 +782,9 @@ fn build_core(
     // Выходы `direct` и `dns` получают DNS-модуль позже: он сам ходит
     // к серверам через выходы.
     let dns_slot: DnsSlot = Arc::new(std::sync::OnceLock::new());
+    // Группа GLOBAL — как у Clash: выход режима global (выбирается через
+    // API); создаётся, если в настройках нет своего выхода с таким tag.
+    let global_cfg = config::OutboundConfig::new(GLOBAL, OutboundKind::Selector);
     let mut outbounds: Vec<Arc<dyn Outbound>> = Vec::new();
     let mut groups: Vec<(&config::OutboundConfig, Arc<Group>)> = Vec::new();
     for o in &cfg.outbounds {
@@ -796,7 +811,7 @@ fn build_core(
                     o.tag.clone(),
                     group_settings(o)?,
                     o.default.clone(),
-                    tracker.events.clone(),
+                    tracker.clone(),
                 );
                 groups.push((o, g.clone()));
                 g
@@ -835,7 +850,6 @@ fn build_core(
         }
         g.set_fixed(members);
     }
-
     // Подписки.
     let mut subs = Vec::new();
     for (n, sc) in cfg.subscriptions.iter().enumerate() {
@@ -884,6 +898,31 @@ fn build_core(
         let loaded = sub.load_cache().is_some();
         subs.push((sub, loaded));
     }
+    let mut global_members: Vec<Arc<dyn Outbound>> = Vec::new();
+    if !outbounds.iter().any(|o| o.tag() == GLOBAL) {
+        global_members = outbounds
+            .iter()
+            .filter(|o| !o.tag().starts_with("__") && !o.is_dns())
+            .cloned()
+            .collect();
+    }
+    if !global_members.is_empty() {
+        let members = global_members;
+        let default = route
+            .final_
+            .clone()
+            .filter(|t| members.iter().any(|m| m.tag() == t));
+        let g = Group::new(
+            GLOBAL.to_string(),
+            group_settings(&global_cfg)?,
+            default,
+            tracker.clone(),
+        );
+        g.set_fixed(members);
+        outbounds.push(g.clone());
+        groups.push((&global_cfg, g));
+    }
+
     let groups: Vec<Arc<Group>> = groups.into_iter().map(|(_, g)| g).collect();
 
     let mut site_codes: Vec<String> = route.rules.iter().flat_map(|r| r.geosite.clone()).collect();
@@ -930,7 +969,16 @@ fn build_core(
                 .into(),
         ));
     }
+    let global = outbounds.iter().find(|o| o.tag() == GLOBAL).cloned();
+    let direct = cfg
+        .outbounds
+        .iter()
+        .find(|o| o.kind == OutboundKind::Direct)
+        .and_then(|o| outbounds.iter().find(|x| x.tag() == o.tag))
+        .cloned()
+        .unwrap_or_else(|| Arc::new(DirectOutbound::new("direct".to_string())));
     let mut router = Router::new(outbounds, &route, tags, &geo)?;
+    router.set_modes(global, direct);
     if let Some(d) = &dns {
         router.set_dns(d.clone());
     }
@@ -1101,6 +1149,15 @@ impl App {
                         a.listen
                     )));
                 }
+                if let Some(d) = &a.external_ui {
+                    if !d.is_dir() {
+                        return Err(Error::Config(format!(
+                            "api: external_ui {} — нет такой папки (положите туда файлы \
+                             панели: yacd, metacubexd, zashboard)",
+                            d.display()
+                        )));
+                    }
+                }
                 Some((a.clone(), token))
             }
             None => None,
@@ -1228,6 +1285,9 @@ impl App {
         });
         let (api_addr, api_task) = match api {
             Some((cfg, token)) => {
+                if let Some(m) = cfg.default_mode {
+                    tracker.set_mode(m);
+                }
                 let l = TcpListener::bind(cfg.listen).await.map_err(|e| {
                     Error::Config(format!("api: не удалось слушать {}: {e}", cfg.listen))
                 })?;
@@ -1299,6 +1359,17 @@ impl Controller {
             groups,
             subs,
         } = core;
+        // Выбор в группах (в том числе GLOBAL) переживает перечитывание.
+        for (old, new) in self.groups.read().unwrap().iter().flat_map(|o| {
+            groups
+                .iter()
+                .filter(move |n| n.tag() == o.tag())
+                .map(move |n| (o, n))
+        }) {
+            if let Some(t) = old.chosen() {
+                new.restore(&t);
+            }
+        }
         let core_tasks = spawn_core(dns.as_ref(), &groups, subs.clone(), &self.errors);
         *self.groups.write().unwrap() = groups.clone();
         *self.subs.write().unwrap() = subs.into_iter().map(|(s, _)| s).collect();
@@ -1453,6 +1524,59 @@ impl api::Control for Controller {
 
     fn reload(&self) -> futures_util::future::BoxFuture<'_, Result<Vec<String>>> {
         Box::pin(self.reload_from_file())
+    }
+
+    fn proxies(&self) -> serde_json::Value {
+        self.clash_proxies()
+    }
+
+    fn clash_groups(&self) -> serde_json::Value {
+        Controller::clash_groups(self)
+    }
+
+    fn delay<'a>(
+        &'a self,
+        name: &'a str,
+        url: &'a str,
+        timeout: std::time::Duration,
+    ) -> futures_util::future::BoxFuture<'a, Result<Option<u64>>> {
+        Box::pin(self.clash_delay(name, url, timeout))
+    }
+
+    fn group_delay<'a>(
+        &'a self,
+        name: &'a str,
+        url: &'a str,
+        timeout: std::time::Duration,
+    ) -> futures_util::future::BoxFuture<'a, Result<serde_json::Value>> {
+        Box::pin(self.clash_group_delay(name, url, timeout))
+    }
+
+    fn rules(&self) -> serde_json::Value {
+        self.clash_rules()
+    }
+
+    fn configs(&self) -> serde_json::Value {
+        self.clash_configs()
+    }
+
+    fn providers(&self) -> serde_json::Value {
+        self.clash_providers()
+    }
+
+    fn provider_check<'a>(
+        &'a self,
+        name: &'a str,
+    ) -> futures_util::future::BoxFuture<'a, Result<()>> {
+        Box::pin(self.clash_provider_check(name))
+    }
+
+    fn dns_query<'a>(
+        &'a self,
+        name: &'a str,
+        qtype: &'a str,
+    ) -> futures_util::future::BoxFuture<'a, Result<serde_json::Value>> {
+        Box::pin(self.clash_dns_query(name, qtype))
     }
 }
 

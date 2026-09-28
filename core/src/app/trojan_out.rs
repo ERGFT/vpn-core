@@ -67,6 +67,10 @@ impl Outbound for TrojanOutbound {
         &self.tag
     }
 
+    fn clash_type(&self) -> &'static str {
+        "Trojan"
+    }
+
     fn server(&self) -> Option<(String, u16)> {
         Some((self.cfg.transport.host.clone(), self.cfg.transport.port))
     }

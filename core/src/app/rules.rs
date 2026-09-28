@@ -91,6 +91,64 @@ pub struct RuleConfig {
     pub inbound: Vec<String>,
     /// Куда: tag выхода.
     pub outbound: String,
+    /// Описание правила для API (`GET /rules`, поле `rule` у соединений);
+    /// задаётся до раскрытия наборов правил, чтобы в нём были их tag, а не
+    /// тысячи доменов.
+    #[serde(skip)]
+    pub label: Option<String>,
+}
+
+/// Правило строкой, как у sing-box: `domain_suffix=ru su geoip=ru port=443`.
+/// Длинные списки сокращаются: `domain=a.com b.com c.com …(+97)`.
+pub fn describe(c: &RuleConfig) -> String {
+    fn list<T: std::fmt::Display>(out: &mut Vec<String>, name: &str, v: &[T]) {
+        if v.is_empty() {
+            return;
+        }
+        let mut s = format!("{name}=");
+        for (i, x) in v.iter().take(3).enumerate() {
+            if i > 0 {
+                s.push(' ');
+            }
+            s.push_str(&x.to_string());
+        }
+        if v.len() > 3 {
+            s.push_str(&format!(" …(+{})", v.len() - 3));
+        }
+        out.push(s);
+    }
+    let mut out = Vec::new();
+    list(&mut out, "domain", &c.domain);
+    list(&mut out, "domain_suffix", &c.domain_suffix);
+    list(&mut out, "domain_keyword", &c.domain_keyword);
+    list(&mut out, "domain_regex", &c.domain_regex);
+    list(&mut out, "geosite", &c.geosite);
+    list(&mut out, "rule_set", &c.rule_set);
+    list(&mut out, "ip_cidr", &c.ip_cidr);
+    if c.ip_is_private {
+        out.push("ip_is_private=true".into());
+    }
+    list(&mut out, "geoip", &c.geoip);
+    let ports: Vec<String> = c
+        .port
+        .iter()
+        .map(|p| match p {
+            PortSpec::Num(n) => n.to_string(),
+            PortSpec::Str(s) => s.clone(),
+        })
+        .collect();
+    list(&mut out, "port", &ports);
+    if let Some(n) = c.network {
+        out.push(format!(
+            "network={}",
+            match n {
+                Network::Tcp => "tcp",
+                Network::Udp => "udp",
+            }
+        ));
+    }
+    list(&mut out, "inbound", &c.inbound);
+    out.join(" ")
 }
 
 /// Домен для сравнения: нижний регистр, без точки в конце.
@@ -302,6 +360,8 @@ pub const PRIVATE_NETS: &[&str] = &[
 
 pub struct Rule {
     pub index: usize,
+    /// Описание для API (см. [`describe`]).
+    pub label: Arc<str>,
     domains: DomainSet,
     ips: IpSet,
     has_dest: bool,
@@ -457,6 +517,7 @@ pub fn compile(
     }
     Ok(Rule {
         index,
+        label: c.label.clone().unwrap_or_else(|| describe(c)).into(),
         domains,
         ips,
         has_dest,

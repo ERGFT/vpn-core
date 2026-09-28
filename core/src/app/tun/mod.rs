@@ -303,6 +303,8 @@ impl TunInbound {
             target: ip_address(dst.ip()),
             port: dst.port(),
             sniffed: None,
+            inbound_type: "tun",
+            rule: None,
         };
         let mut initial = Vec::new();
         if self.settings.sniff {
@@ -359,6 +361,8 @@ impl TunInbound {
             target: ip_address(dst.ip()),
             port: dst.port(),
             sniffed: None,
+            inbound_type: "tun",
+            rule: None,
         };
         // QUIC (HTTP/3): домен из ClientHello в первых Initial-пакетах.
         let mut pending = Vec::new();

@@ -16,7 +16,7 @@ use super::dns::fakeip::Reverse;
 use super::dns::Dns;
 use super::outbound::Outbound;
 use super::rules::{self, GeoFiles, Rule};
-use super::stats::{ConnInfo, Counted, Tracker};
+use super::stats::{ConnInfo, Counted, Mode, Tracker};
 use super::Metadata;
 use crate::error::{Error, Result};
 use crate::transport::AsyncStream;
@@ -30,6 +30,10 @@ pub struct Router {
     domain_strategy: DomainStrategy,
     /// Учёт соединений (переживает перечитывание настроек).
     tracker: Arc<Tracker>,
+    /// Группа `GLOBAL` — выход в режиме global.
+    global: Option<Arc<dyn Outbound>>,
+    /// Выход в режиме direct.
+    direct: Option<Arc<dyn Outbound>>,
 }
 
 /// Текущий маршрутизатор. Перечитывание настроек подменяет его целиком;
@@ -107,7 +111,33 @@ impl Router {
             dns: None,
             domain_strategy: route.domain_strategy,
             tracker: Tracker::new(),
+            global: None,
+            direct: None,
         })
+    }
+
+    /// Выходы режимов global и direct.
+    pub fn set_modes(&mut self, global: Option<Arc<dyn Outbound>>, direct: Arc<dyn Outbound>) {
+        self.global = global;
+        self.direct = Some(direct);
+    }
+
+    /// Правила с их выходами — для API (`GET /rules`).
+    pub fn rules(&self) -> impl Iterator<Item = (&str, &str)> {
+        self.rules.iter().map(|r| (&*r.label, r.outbound.tag()))
+    }
+
+    /// Все выходы (для API), без скрытых служебных.
+    pub fn outbounds(&self) -> Vec<Arc<dyn Outbound>> {
+        self.outbounds
+            .values()
+            .filter(|o| !o.tag().starts_with("__"))
+            .cloned()
+            .collect()
+    }
+
+    pub fn final_tag(&self) -> &str {
+        self.final_.tag()
     }
 
     pub fn set_tracker(&mut self, t: Arc<Tracker>) {
@@ -175,6 +205,27 @@ impl Router {
                 }
             }
         }
+        let mode = self.tracker.mode();
+        if mode != Mode::Rule {
+            // Перехват DNS — в любом режиме: иначе DNS-запросы программ
+            // ушли бы на сервер как обычный трафик.
+            if let Some(r) = self
+                .rules
+                .iter()
+                .find(|r| r.outbound.is_dns() && r.matches(meta))
+            {
+                meta.rule = Some(r.label.clone());
+                return Ok(r.outbound.clone());
+            }
+            let out = match mode {
+                Mode::Global => self.global.clone(),
+                _ => self.direct.clone(),
+            };
+            if let Some(o) = out {
+                meta.rule = Some(format!("mode={}", mode.clash_name().to_ascii_lowercase()).into());
+                return Ok(o);
+            }
+        }
         if let Some(o) = self.match_rules(meta) {
             return Ok(o);
         }
@@ -190,7 +241,8 @@ impl Router {
                                 std::net::IpAddr::V4(v4) => Address::Ipv4(v4),
                                 std::net::IpAddr::V6(v6) => Address::Ipv6(v6),
                             };
-                            if let Some(o) = self.match_rules(&m) {
+                            if let Some(o) = self.match_rules(&mut m) {
+                                meta.rule = m.rule;
                                 return Ok(o);
                             }
                         }
@@ -206,13 +258,15 @@ impl Router {
 
     /// Выход для соединения только по правилам (без DNS).
     pub fn select(&self, meta: &Metadata) -> Arc<dyn Outbound> {
-        self.match_rules(meta)
+        let mut m = meta.clone();
+        self.match_rules(&mut m)
             .unwrap_or_else(|| self.final_.clone())
     }
 
-    fn match_rules(&self, meta: &Metadata) -> Option<Arc<dyn Outbound>> {
+    fn match_rules(&self, meta: &mut Metadata) -> Option<Arc<dyn Outbound>> {
         for r in &self.rules {
             if r.matches(meta) {
+                meta.rule = Some(r.label.clone());
                 tracing::debug!(
                     rule = r.index + 1,
                     outbound = r.outbound.tag(),
@@ -262,6 +316,8 @@ mod tests {
             target,
             port: 443,
             sniffed: sniffed.map(str::to_string),
+            inbound_type: "socks",
+            rule: None,
         }
     }
 

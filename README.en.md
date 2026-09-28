@@ -53,7 +53,7 @@ what works and what does not is listed honestly below.
 | Mux.Cool for TCP (`"mux": 8` on an outbound or subscription; not together with Vision) | ✅ tested against Xray-core |
 | Shared HTTP/2 connections: gRPC — all streams in one connection (as in Xray), xhttp — `xmux` (Xray defaults: 16–32 sessions per connection; for both HTTP/2 and HTTP/3) | ✅ tested against Xray-core (connection count) |
 | Anti-DPI: ClientHello fragmentation (`fragment`: TLS records and/or TCP segments with delays) on `vless` and `direct`, noise before UDP (`noises`) on `direct` | ✅ fragmentation tested against an Xray REALITY server (including 1–3 byte records and Vision); off by default |
-| Local API (127.0.0.1 + token): traffic, open connections and closing them, groups and server selection, subscription updates; config reload without dropping connections (API, SIGHUP); rule presets | ✅ |
+| Local API compatible with the Clash API (127.0.0.1 + token): outbounds and groups, server selection, latency tests, connections and closing them, rules, subscriptions, rule/global/direct modes, DNS queries; event, traffic, memory and log streams (WebSocket); web dashboard from a folder (`external_ui`); config reload without dropping connections (API, SIGHUP); rule presets | ✅ responses checked against sing-box 1.12; metacubexd and yacd tested in a browser |
 | `trojan` outbound (`trojan://` link, TLS or REALITY, all VLESS transports, TCP and UDP); Trojan servers in subscriptions | ✅ tested against Xray-core (tcp, ws, REALITY, UDP) |
 | Transport `kcp` | ❌ not supported (see below why); `quic`/`h2` have been removed from Xray-core itself — the error suggests `xhttp` |
 | Linux | ✅ builds and tested |
@@ -320,30 +320,72 @@ and an unusual ClientHello is noticeable in itself. `noises` — dummy packets
 not sent to port 53. Both are off by default; parameters are as in Xray's
 `freedom`.
 
-### API and config reload
+### API, web dashboards and config reload
 
-Address and secret — as in sing-box's Clash API:
+The API is compatible with the **Clash API** (as in sing-box and mihomo):
+ready-made web dashboards — [metacubexd](https://github.com/MetaCubeX/metacubexd),
+[yacd](https://github.com/haishanh/yacd), zashboard — and clients that speak
+the Clash API work with the core unchanged. metacubexd and yacd were tested
+against the real core in a browser: groups, server selection, latency
+tests, connections, rules, logs, mode.
 
 ```json
 "experimental": {
-  "clash_api": { "external_controller": "127.0.0.1:9090", "secret_file": "api-token.txt" }
+  "clash_api": {
+    "external_controller": "127.0.0.1:9090",
+    "secret_file": "api-token.txt",
+    "external_ui": "ui",
+    "default_mode": "rule"
+  }
 },
 "route": { "presets": ["block-ads", "private-direct", "ru-direct"] }
 ```
 
-`secret` — the token right in the config, `secret_file` (extension) — in a
-separate file; at least 16 characters.
+- `secret` — the token right in the config, `secret_file` (extension) — in
+  a separate file; at least 16 characters.
+- `external_ui` — a folder with dashboard files (e.g. metacubexd's unpacked
+  `compressed-dist.tgz`); it opens at `http://127.0.0.1:9090/ui/`. The client
+  does not download dashboards itself (`external_ui_download_url` is an
+  error): put the files into the folder.
+- `access_control_allow_origin` — dashboard sites allowed to call the API
+  from a browser (`["https://metacubex.github.io"]` or `["*"]`); your own
+  dashboard from `external_ui` is always allowed.
+  `access_control_allow_private_network: true` — needed by Chrome for a
+  dashboard hosted on the internet.
+- `default_mode` — the mode at startup: `rule` (by rules), `global`
+  (everything through the outbound selected in the `GLOBAL` group) or
+  `direct` (everything direct). DNS hijacking works in every mode. The
+  `GLOBAL` group (all outbounds, `route.final` by default) is created
+  automatically, as in Clash.
+
+Clash requests — the same paths and responses as sing-box:
 
 ```sh
 T="Authorization: Bearer $(cat api-token.txt)"
-curl -H "$T" http://127.0.0.1:9090/stats
+curl -H "$T" http://127.0.0.1:9090/proxies                         # outbounds and groups
+curl -H "$T" -X PUT -d '{"name":"my-panel/Finland"}' http://127.0.0.1:9090/proxies/proxy
+curl -H "$T" "http://127.0.0.1:9090/proxies/proxy/delay?url=https://www.gstatic.com/generate_204&timeout=5000"
+curl -H "$T" -X PATCH -d '{"mode":"global"}' http://127.0.0.1:9090/configs
 curl -H "$T" http://127.0.0.1:9090/connections
 curl -H "$T" -X DELETE http://127.0.0.1:9090/connections/42
-curl -H "$T" http://127.0.0.1:9090/groups
-curl -H "$T" -X PUT -d '{"member":"my-panel/Finland"}' http://127.0.0.1:9090/groups/proxy
-curl -H "$T" -X POST http://127.0.0.1:9090/subscriptions/my-panel/update
-curl -H "$T" -X POST http://127.0.0.1:9090/reload
+curl -H "$T" "http://127.0.0.1:9090/dns/query?name=example.com&type=A"
 ```
+
+| Request | What it does |
+|---|---|
+| `GET /configs`, `PATCH /configs` | inbound ports and the mode; change the mode (`mode`; ports and the rest — only in the config file) |
+| `PUT /configs` | reread the config file |
+| `GET /proxies[/{name}]`, `PUT /proxies/{group}` | outbounds, groups (`now`, `all`), subscription servers; select a selector member |
+| `GET /proxies/{name}/delay`, `GET /group/{name}/delay` | test the latency of an outbound or of all group members |
+| `GET /connections`, `DELETE /connections[/{id}]` | open connections (outbound, chain, rule, traffic); close |
+| `GET /rules` | rules in order and `route.final` |
+| `GET /providers/proxies[/{name}]`, `PUT …/{name}`, `GET …/{name}/healthcheck` | subscriptions: servers, update, check |
+| `GET /dns/query?name=&type=` | ask the client's DNS |
+
+Own requests (not in the Clash API): `GET /stats` (traffic per outbound),
+`GET /groups`, `PUT /groups/{tag}`, `POST /groups/{tag}/check`,
+`POST /subscriptions/{tag}/update`, `POST /reload` (with notes in the
+response).
 
 Streams — the client learns about changes immediately, without polling. The
 response does not end until the client closes the connection: one JSON
@@ -358,29 +400,34 @@ curl -N -H "$T" "http://127.0.0.1:9090/logs?level=warning"
 
 | Stream | What it sends |
 |---|---|
-| `/events` | `connection_open` (fields as in `/connections`), `connection_close` (traffic totals, duration), `group_switch` (a group changed its member: by itself or manually), `group_check` (delays after a check), `subscription_update` (server count or error), `reload`; `lagged` — the client was too slow and some events were skipped (re-read `/connections`) |
-| `/traffic` | every second: `up`, `down` — bytes per second, `upTotal`, `downTotal` — totals (as in Clash) |
-| `/memory` | every second: `inuse` — process memory, bytes (as in Clash) |
-| `/logs?level=info` | the log: `{"type": "warning", "payload": "…"}` (as in Clash); `level` — `debug`, `info`, `warning`, `error`; never more detailed than what is logged (`RUST_LOG`) |
+| `/events` | own events: `connection_open` (fields as in `/connections`), `connection_close` (traffic totals, duration), `group_switch` (a group changed its member: by itself or manually), `group_check` (delays after a check), `subscription_update` (server count or error), `reload`, `mode_change`; `lagged` — the client was too slow and some events were skipped (re-read `/connections`) |
+| `/traffic` | every second: `up`, `down` — bytes per second, `upTotal`, `downTotal` — totals |
+| `/memory` | every second: `inuse` — process memory, bytes |
+| `/logs?level=info` | the log: `{"type": "warning", "payload": "…"}`; `level` — `debug`, `info`, `warning`, `error`; never more detailed than what is logged (`RUST_LOG`) |
+| `/connections` (WebSocket only) | every `interval` ms (1000 by default) — the same as `GET /connections` |
 
 While nobody listens to a stream, events are not even assembled. Up to 16
 streams at a time.
 
-- The token is always required; `Host` must be the API address (DNS
-  rebinding protection), requests with `Origin` (from a browser) are
-  rejected; listening on anything but 127.0.0.1 requires `allow_ip`. Site
-  addresses in `/connections` are browsing history, so they are only in the
-  API, not in the log.
-- Reload (`POST /reload`, on Linux also `kill -HUP`): if the file has an
-  error, the previous config keeps working. New outbounds, rules, DNS, groups
-  and subscriptions apply immediately to new connections, open ones keep the
-  old ones. Inbounds are restarted only if their settings changed; the TUN
+- The token is always required (`Authorization: Bearer`; a WebSocket from a
+  browser — `?token=`). Only dashboard files and the `GET /` greeting are
+  served without it, as in Clash. `Host` must be the API address (DNS
+  rebinding protection); browser requests are accepted only from your own
+  dashboard and sites in `access_control_allow_origin`; listening on
+  anything but 127.0.0.1 requires `allow_ip`. Site addresses in
+  `/connections` are browsing history, so they are only in the API, not in
+  the log.
+- Reload (`PUT /configs`, `POST /reload`, on Linux also `kill -HUP`): if the
+  file has an error, the previous config keeps working. New outbounds,
+  rules, DNS, groups and subscriptions apply immediately to new
+  connections, open ones keep the old ones; group selections and the mode
+  are kept. Inbounds are restarted only if their settings changed; the TUN
   inbound and the API — after a program restart. The fake-IP table is kept.
 - Presets (after your own rules, so your rules can override them):
   `block-ads` (geosite `category-ads-all` → the first `block`),
   `private-direct` (private addresses, `.local`, `.lan` → the first
-  `direct`), `ru-direct`, `cn-direct`, `ir-direct` (country domains, geosite,
-  geoip → `direct`).
+  `direct`), `ru-direct`, `cn-direct`, `ir-direct` (country domains,
+  geosite, geoip → `direct`).
 
 ### TUN — all of the computer's traffic
 

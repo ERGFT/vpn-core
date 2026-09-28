@@ -141,6 +141,10 @@ impl Outbound for VlessOutbound {
         &self.tag
     }
 
+    fn clash_type(&self) -> &'static str {
+        "VLESS"
+    }
+
     fn server(&self) -> Option<(String, u16)> {
         Some(self.server_addr())
     }

@@ -40,6 +40,8 @@ pub trait UdpSession: Send + Sync {
 
 pub trait Outbound: Send + Sync {
     fn tag(&self) -> &str;
+    /// Тип выхода, как его называет Clash API: `Direct`, `Reject`, `VLESS`…
+    fn clash_type(&self) -> &'static str;
     /// TCP-соединение с `meta.target:meta.port`.
     fn connect<'a>(&'a self, meta: &'a Metadata) -> BoxFuture<'a, Result<Box<dyn AsyncStream>>>;
     /// UDP-сессия для ассоциации, которую открыл `meta.source`.
@@ -159,6 +161,10 @@ const DIRECT_CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
 impl Outbound for DirectOutbound {
     fn tag(&self) -> &str {
         &self.tag
+    }
+
+    fn clash_type(&self) -> &'static str {
+        "Direct"
     }
 
     fn connect<'a>(&'a self, meta: &'a Metadata) -> BoxFuture<'a, Result<Box<dyn AsyncStream>>> {
@@ -374,6 +380,10 @@ impl Outbound for BlockOutbound {
         &self.tag
     }
 
+    fn clash_type(&self) -> &'static str {
+        "Reject"
+    }
+
     fn connect<'a>(&'a self, _meta: &'a Metadata) -> BoxFuture<'a, Result<Box<dyn AsyncStream>>> {
         Box::pin(async move { Err(Error::Blocked) })
     }
@@ -428,6 +438,10 @@ const DNS_OUT_CONCURRENCY: usize = 64;
 impl Outbound for DnsOutbound {
     fn tag(&self) -> &str {
         &self.tag
+    }
+
+    fn clash_type(&self) -> &'static str {
+        "DNS"
     }
 
     fn is_dns(&self) -> bool {
@@ -529,6 +543,8 @@ mod tests {
             target,
             port,
             sniffed: None,
+            inbound_type: "socks",
+            rule: None,
         }
     }
 

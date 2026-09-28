@@ -61,6 +61,8 @@ pub enum Event {
     },
     /// Настройки перечитаны.
     Reload { notes: Vec<String> },
+    /// Сменился режим маршрутизации: `rule`, `global`, `direct`.
+    ModeChange { mode: String },
     /// Слушатель не успевал: `skipped` событий пропущено.
     Lagged { skipped: u64 },
 }

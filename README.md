@@ -55,7 +55,7 @@
 | Mux.Cool для TCP (`"mux": 8` у выхода или подписки; не вместе с Vision) | ✅ проверен против Xray-core |
 | Общие HTTP/2-соединения: gRPC — все потоки в одном соединении (как у Xray), xhttp — `xmux` (умолчания Xray: 16–32 сессии на соединение; и для HTTP/2, и для HTTP/3) | ✅ проверено против Xray-core (счёт соединений) |
 | Против DPI: дробление ClientHello (`fragment`: TLS-рекорды и/или TCP-сегменты с паузами) у `vless` и `direct`, шум перед UDP (`noises`) у `direct` | ✅ дробление проверено против REALITY-сервера Xray (в т.ч. рекорды по 1–3 байта и Vision); по умолчанию выключено |
-| Локальное API (127.0.0.1 + токен): трафик, открытые соединения и их закрытие, группы и выбор сервера, обновление подписки; перечитывание настроек без разрыва соединений (API, SIGHUP); пресеты правил | ✅ |
+| Локальное API, совместимое с Clash API (127.0.0.1 + токен): выходы и группы, выбор сервера, проверка задержки, соединения и их закрытие, правила, подписки, режимы rule/global/direct, DNS-запрос; потоки событий, трафика, памяти и журнала (WebSocket); веб-панель из папки (`external_ui`); перечитывание настроек без разрыва соединений (API, SIGHUP); пресеты правил | ✅ ответы сверены с sing-box 1.12; metacubexd и yacd проверены в браузере |
 | Выход `trojan` (ссылка `trojan://`, TLS или REALITY, все транспорты VLESS, TCP и UDP); серверы Trojan в подписках | ✅ проверен против Xray-core (tcp, ws, REALITY, UDP) |
 | Транспорт `kcp` | ❌ не поддерживается (почему — ниже); `quic`/`h2` удалены из самого Xray-core — ошибка подсказывает `xhttp` |
 | Linux | ✅ собирается и проверен |
@@ -322,30 +322,70 @@ TCP-сегментами с паузами (мс). `packets = "1-3"` — вме�
 порту 53 не шлются. Оба выключены по умолчанию; параметры — как у
 `freedom` в Xray.
 
-### API и перечитывание настроек
+### API, веб-панели и перечитывание настроек
 
-Адрес и секрет — как у Clash API в sing-box:
+API совместимо с **Clash API** (как у sing-box и mihomo): готовые
+веб-панели — [metacubexd](https://github.com/MetaCubeX/metacubexd),
+[yacd](https://github.com/haishanh/yacd), zashboard — и клиенты, умеющие
+Clash API, работают с ядром без переделок. metacubexd и yacd проверены на
+настоящем ядре в браузере: группы, выбор сервера, проверка задержки,
+соединения, правила, журнал, режим.
 
 ```json
 "experimental": {
-  "clash_api": { "external_controller": "127.0.0.1:9090", "secret_file": "api-token.txt" }
+  "clash_api": {
+    "external_controller": "127.0.0.1:9090",
+    "secret_file": "api-token.txt",
+    "external_ui": "ui",
+    "default_mode": "rule"
+  }
 },
 "route": { "presets": ["block-ads", "private-direct", "ru-direct"] }
 ```
 
-`secret` — токен прямо в файле, `secret_file` (расширение) — в отдельном
-файле; не короче 16 символов.
+- `secret` — токен прямо в файле, `secret_file` (расширение) — в отдельном
+  файле; не короче 16 символов.
+- `external_ui` — папка с файлами панели (например, распакованный
+  `compressed-dist.tgz` metacubexd): она открывается по адресу
+  `http://127.0.0.1:9090/ui/`. Скачивать панель сам клиент не умеет
+  (`external_ui_download_url` — ошибка): положите файлы в папку.
+- `access_control_allow_origin` — сайты панелей, которым можно обращаться к
+  API из браузера (`["https://metacubex.github.io"]` или `["*"]`); своя
+  панель из `external_ui` разрешена всегда.
+  `access_control_allow_private_network: true` — нужно Chrome для панели
+  из интернета.
+- `default_mode` — режим при запуске: `rule` (по правилам), `global` (всё
+  через выбранный в группе `GLOBAL` выход) или `direct` (всё напрямую).
+  Перехват DNS работает в любом режиме. Группа `GLOBAL` (все выходы,
+  по умолчанию — `route.final`) создаётся сама, как у Clash.
+
+Запросы Clash — те же адреса и ответы, что у sing-box:
 
 ```sh
 T="Authorization: Bearer $(cat api-token.txt)"
-curl -H "$T" http://127.0.0.1:9090/stats
+curl -H "$T" http://127.0.0.1:9090/proxies                         # выходы и группы
+curl -H "$T" -X PUT -d '{"name":"my-panel/Finland"}' http://127.0.0.1:9090/proxies/proxy
+curl -H "$T" "http://127.0.0.1:9090/proxies/proxy/delay?url=https://www.gstatic.com/generate_204&timeout=5000"
+curl -H "$T" -X PATCH -d '{"mode":"global"}' http://127.0.0.1:9090/configs
 curl -H "$T" http://127.0.0.1:9090/connections
 curl -H "$T" -X DELETE http://127.0.0.1:9090/connections/42
-curl -H "$T" http://127.0.0.1:9090/groups
-curl -H "$T" -X PUT -d '{"member":"my-panel/Finland"}' http://127.0.0.1:9090/groups/proxy
-curl -H "$T" -X POST http://127.0.0.1:9090/subscriptions/my-panel/update
-curl -H "$T" -X POST http://127.0.0.1:9090/reload
+curl -H "$T" "http://127.0.0.1:9090/dns/query?name=example.com&type=A"
 ```
+
+| Запрос | Что делает |
+|---|---|
+| `GET /configs`, `PATCH /configs` | порты входов и режим; сменить режим (`mode`; порты и прочее — только в файле настроек) |
+| `PUT /configs` | перечитать файл настроек |
+| `GET /proxies[/{имя}]`, `PUT /proxies/{группа}` | выходы, группы (`now`, `all`), серверы подписок; выбрать участника selector |
+| `GET /proxies/{имя}/delay`, `GET /group/{имя}/delay` | проверить задержку выхода или всех участников группы |
+| `GET /connections`, `DELETE /connections[/{id}]` | открытые соединения (выход, цепочка, правило, трафик); закрыть |
+| `GET /rules` | правила по порядку и `route.final` |
+| `GET /providers/proxies[/{имя}]`, `PUT …/{имя}`, `GET …/{имя}/healthcheck` | подписки: серверы, обновить, проверить |
+| `GET /dns/query?name=&type=` | спросить DNS клиента |
+
+Свои запросы (в Clash API их нет): `GET /stats` (трафик по выходам),
+`GET /groups`, `PUT /groups/{tag}`, `POST /groups/{tag}/check`,
+`POST /subscriptions/{tag}/update`, `POST /reload` (с замечаниями в ответе).
 
 Потоки — клиент узнаёт о переменах сразу, без опроса. Ответ не кончается,
 пока клиент не закроет соединение: по JSON-объекту на строку или, с
@@ -359,23 +399,28 @@ curl -N -H "$T" "http://127.0.0.1:9090/logs?level=warning"
 
 | Поток | Что присылает |
 |---|---|
-| `/events` | `connection_open` (поля — как в `/connections`), `connection_close` (итог трафика, длительность), `group_switch` (группа сменила участника: сама или вручную), `group_check` (задержки после проверки), `subscription_update` (число серверов или ошибка), `reload`; `lagged` — клиент не успевал, часть событий пропущена (перечитайте `/connections`) |
-| `/traffic` | раз в секунду: `up`, `down` — байт за секунду, `upTotal`, `downTotal` — всего (как в Clash) |
-| `/memory` | раз в секунду: `inuse` — память процесса, байт (как в Clash) |
-| `/logs?level=info` | журнал: `{"type": "warning", "payload": "…"}` (как в Clash); `level` — `debug`, `info`, `warning`, `error`; подробнее, чем пишется в журнал (`RUST_LOG`), не бывает |
+| `/events` | свои события: `connection_open` (поля — как в `/connections`), `connection_close` (итог трафика, длительность), `group_switch` (группа сменила участника: сама или вручную), `group_check` (задержки после проверки), `subscription_update` (число серверов или ошибка), `reload`, `mode_change`; `lagged` — клиент не успевал, часть событий пропущена (перечитайте `/connections`) |
+| `/traffic` | раз в секунду: `up`, `down` — байт за секунду, `upTotal`, `downTotal` — всего |
+| `/memory` | раз в секунду: `inuse` — память процесса, байт |
+| `/logs?level=info` | журнал: `{"type": "warning", "payload": "…"}`; `level` — `debug`, `info`, `warning`, `error`; подробнее, чем пишется в журнал (`RUST_LOG`), не бывает |
+| `/connections` (только WebSocket) | раз в `interval` мс (по умолчанию 1000) — то же, что `GET /connections` |
 
 Пока поток никто не слушает, события не собираются вовсе. Потоков
 одновременно — до 16.
 
-- Токен обязателен всегда; `Host` должен быть адресом API (защита от DNS
-  rebinding), запросы с `Origin` (из браузера) отвергаются; слушать не
-  на 127.0.0.1 — только с `allow_ip`. Адреса сайтов в `/connections` —
-  история посещений, поэтому они есть только в API, не в журнале.
-- Перечитывание (`POST /reload`, на Linux ещё `kill -HUP`): ошибка в файле —
-  работают прежние настройки. Новые выходы, правила, DNS, группы и
-  подписки — сразу для новых соединений, открытые живут со старыми.
-  Входы перезапускаются, только если их настройки изменились; вход TUN и
-  API — после перезапуска программы. Таблица fake-IP сохраняется.
+- Токен обязателен всегда (`Authorization: Bearer`; WebSocket из браузера —
+  `?token=`). Без токена отдаются только файлы панели и приветствие `GET /`,
+  как у Clash. `Host` должен быть адресом API (защита от DNS rebinding);
+  запросы из браузера — только от своей панели и сайтов из
+  `access_control_allow_origin`; слушать не на 127.0.0.1 — только с
+  `allow_ip`. Адреса сайтов в `/connections` — история посещений, поэтому
+  они есть только в API, не в журнале.
+- Перечитывание (`PUT /configs`, `POST /reload`, на Linux ещё `kill -HUP`):
+  ошибка в файле — работают прежние настройки. Новые выходы, правила, DNS,
+  группы и подписки — сразу для новых соединений, открытые живут со
+  старыми; выбор в группах и режим сохраняются. Входы перезапускаются,
+  только если их настройки изменились; вход TUN и API — после перезапуска
+  программы. Таблица fake-IP сохраняется.
 - Пресеты (после своих правил, так что своими можно переопределить):
   `block-ads` (geosite `category-ads-all` → первый `block`),
   `private-direct` (частные адреса, `.local`, `.lan` → первый `direct`),

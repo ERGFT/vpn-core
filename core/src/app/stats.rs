@@ -1,15 +1,18 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Учёт соединений и трафика — для локального API (`api.rs`): сколько
 //! передано всего и по выходам, какие соединения открыты сейчас, закрыть
-//! соединение.
+//! соединение. Здесь же — всё, что живёт всё время работы приложения и
+//! переживает перечитывание настроек: шина событий, режим маршрутизации
+//! (rule/global/direct), последние задержки серверов.
 //!
 //! Адреса сайтов здесь — это история посещений, поэтому наружу они
 //! уходят только через API (127.0.0.1 и токен) и в журнал не пишутся.
 
 use std::collections::HashMap;
 use std::io;
+use std::net::SocketAddr;
 use std::pin::Pin;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicU8, Ordering};
 use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
@@ -38,11 +41,85 @@ pub struct Tracker {
     per_outbound: Mutex<HashMap<String, Arc<Traffic>>>,
     /// События для `GET /events`.
     pub events: Bus,
+    /// Режим маршрутизации ([`Mode`]).
+    mode: AtomicU8,
+    /// Последняя проверка задержки каждого выхода: время (мс Unix) и
+    /// задержка (`None` — не ответил).
+    delays: Mutex<HashMap<String, (u64, Option<u64>)>>,
+}
+
+/// Режим маршрутизации, как в Clash: по правилам, всё через выбранный в
+/// группе `GLOBAL` выход или всё напрямую. Перехват DNS работает в любом.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Mode {
+    Rule,
+    Global,
+    Direct,
+}
+
+impl Mode {
+    /// Как в Clash API: `Rule`, `Global`, `Direct`.
+    pub fn clash_name(self) -> &'static str {
+        match self {
+            Mode::Rule => "Rule",
+            Mode::Global => "Global",
+            Mode::Direct => "Direct",
+        }
+    }
+
+    /// `rule`, `global`, `direct` в любом регистре.
+    pub fn parse(s: &str) -> Option<Mode> {
+        match s.to_ascii_lowercase().as_str() {
+            "rule" => Some(Mode::Rule),
+            "global" => Some(Mode::Global),
+            "direct" => Some(Mode::Direct),
+            _ => None,
+        }
+    }
+}
+
+/// Миллисекунды Unix сейчас.
+pub fn now_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+/// Время в RFC 3339 (UTC, с миллисекундами), как его отдаёт Clash API.
+pub fn rfc3339(unix_ms: u64) -> String {
+    let secs = (unix_ms / 1000) as i64;
+    let (days, rem) = (secs.div_euclid(86400), secs.rem_euclid(86400));
+    // Гражданская дата из дней от 1970-01-01 (алгоритм Хиннанта).
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = yoe + era * 400 + i64::from(m <= 2);
+    format!(
+        "{y:04}-{m:02}-{d:02}T{:02}:{:02}:{:02}.{:03}Z",
+        rem / 3600,
+        rem % 3600 / 60,
+        rem % 60,
+        unix_ms % 1000
+    )
 }
 
 pub struct ConnInfo {
     pub id: u64,
     pub inbound: Arc<str>,
+    /// Вид входа: `mixed`, `tun`…
+    pub inbound_type: &'static str,
+    /// Приложение.
+    pub source: SocketAddr,
+    /// Имя, найденное sniffing'ом.
+    pub sniffed: Option<String>,
+    /// Какое правило выбрало выход (`None` — `route.final`).
+    pub rule: Option<Arc<str>>,
     pub network: Network,
     /// Назначение (имя или адрес) и порт.
     pub target: String,
@@ -52,6 +129,7 @@ pub struct ConnInfo {
     pub member: Option<String>,
     /// Время начала, секунды Unix.
     pub start: u64,
+    start_ms: u64,
     up: AtomicU64,
     down: AtomicU64,
     cancel: CancellationToken,
@@ -75,7 +153,48 @@ impl ConnInfo {
             start: self.start,
             up: self.up(),
             down: self.down(),
+            rule: self.rule.as_deref().map(str::to_string),
+            sniffed: self.sniffed.clone(),
         }
+    }
+
+    /// Соединение в формате Clash API (`GET /connections`).
+    pub fn clash(&self) -> serde_json::Value {
+        let target_ip = self.target.parse::<std::net::IpAddr>().is_ok();
+        let host = if target_ip {
+            self.sniffed.clone().unwrap_or_default()
+        } else {
+            self.target.clone()
+        };
+        // Цепочка — от последнего выхода к первому, как у Clash.
+        let mut chains = Vec::new();
+        if let Some(m) = &self.member {
+            chains.push(m.clone());
+        }
+        chains.push(self.outbound.clone());
+        serde_json::json!({
+            "id": self.id.to_string(),
+            "metadata": {
+                "network": match self.network {
+                    Network::Tcp => "tcp",
+                    Network::Udp => "udp",
+                },
+                "type": format!("{}/{}", self.inbound_type, self.inbound),
+                "sourceIP": self.source.ip().to_canonical().to_string(),
+                "sourcePort": self.source.port().to_string(),
+                "destinationIP": if target_ip { self.target.as_str() } else { "" },
+                "destinationPort": self.port.to_string(),
+                "host": host,
+                "dnsMode": "normal",
+                "processPath": "",
+            },
+            "upload": self.up(),
+            "download": self.down(),
+            "start": rfc3339(self.start_ms),
+            "chains": chains,
+            "rule": self.rule.as_deref().unwrap_or("final"),
+            "rulePayload": "",
+        })
     }
     pub fn up(&self) -> u64 {
         self.up.load(Ordering::Relaxed)
@@ -159,6 +278,10 @@ pub struct ConnView {
     pub start: u64,
     pub up: u64,
     pub down: u64,
+    /// Правило, выбравшее выход (`None` — `route.final`).
+    pub rule: Option<String>,
+    /// Имя, найденное sniffing'ом.
+    pub sniffed: Option<String>,
 }
 
 impl Default for Tracker {
@@ -170,6 +293,8 @@ impl Default for Tracker {
             total: Traffic::default(),
             per_outbound: Mutex::new(HashMap::new()),
             events: Bus::default(),
+            mode: AtomicU8::new(0),
+            delays: Mutex::new(HashMap::new()),
         }
     }
 }
@@ -177,6 +302,42 @@ impl Default for Tracker {
 impl Tracker {
     pub fn new() -> Arc<Self> {
         Arc::new(Self::default())
+    }
+
+    pub fn mode(&self) -> Mode {
+        match self.mode.load(Ordering::Relaxed) {
+            1 => Mode::Global,
+            2 => Mode::Direct,
+            _ => Mode::Rule,
+        }
+    }
+
+    /// Сменить режим; событие `mode_change`, если он и правда сменился.
+    pub fn set_mode(&self, m: Mode) {
+        let v = match m {
+            Mode::Rule => 0,
+            Mode::Global => 1,
+            Mode::Direct => 2,
+        };
+        if self.mode.swap(v, Ordering::Relaxed) != v {
+            tracing::info!(mode = m.clash_name(), "режим маршрутизации");
+            self.events.emit(|| Event::ModeChange {
+                mode: m.clash_name().to_ascii_lowercase(),
+            });
+        }
+    }
+
+    /// Запомнить итог проверки задержки выхода `tag`.
+    pub fn record_delay(&self, tag: &str, delay: Option<std::time::Duration>) {
+        self.delays.lock().unwrap().insert(
+            tag.to_string(),
+            (now_ms(), delay.map(|d| d.as_millis() as u64)),
+        );
+    }
+
+    /// Последняя проверка выхода: время (мс Unix) и задержка.
+    pub fn last_delay(&self, tag: &str) -> Option<(u64, Option<u64>)> {
+        self.delays.lock().unwrap().get(tag).copied()
     }
 
     /// Начать учёт соединения через выход `outbound` (и участника группы).
@@ -193,18 +354,21 @@ impl Tracker {
             .entry(outbound.to_string())
             .or_default()
             .clone();
+        let start_ms = now_ms();
         let info = Arc::new(ConnInfo {
             id: self.next_id.fetch_add(1, Ordering::Relaxed),
             inbound: meta.inbound.clone(),
+            inbound_type: meta.inbound_type,
+            source: meta.source,
+            sniffed: meta.sniffed.clone(),
+            rule: meta.rule.clone(),
             network: meta.network,
             target: meta.target.to_string(),
             port: meta.port,
             outbound: outbound.to_string(),
             member,
-            start: SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .map(|d| d.as_secs())
-                .unwrap_or(0),
+            start: start_ms / 1000,
+            start_ms,
             up: AtomicU64::new(0),
             down: AtomicU64::new(0),
             cancel: CancellationToken::new(),
@@ -264,6 +428,13 @@ impl Tracker {
             .collect();
         v.sort_by_key(|c| c.id);
         v
+    }
+
+    /// Открытые соединения в формате Clash API.
+    pub fn clash_connections(&self) -> Vec<serde_json::Value> {
+        let mut v: Vec<Arc<ConnInfo>> = self.conns.lock().unwrap().values().cloned().collect();
+        v.sort_by_key(|c| c.id);
+        v.iter().map(|c| c.clash()).collect()
     }
 
     /// Закрыть соединение; `false` — такого нет.
