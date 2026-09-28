@@ -246,51 +246,54 @@ python3 "$TMP/dns_up.py" "$DNS_UP_PORT" &
 PIDS+=($!)
 mkdir -p "$TMP/conf"
 cp "$TMP/link.txt" "$TMP/conf/server.txt"
-cat > "$TMP/conf/client.toml" <<TOML
-[[inbounds]]
-type = "mixed"
-listen = "127.0.0.1:$SOCKS2_PORT"
-
-[[inbounds]]
-type = "dns"
-listen = "127.0.0.1:$DNS_IN_PORT"
-
-[[outbounds]]
-tag = "proxy"
-type = "vless"
-link_file = "server.txt"
-
-[[outbounds]]
-tag = "direct"
-type = "direct"
-
-[[outbounds]]
-tag = "block"
-type = "block"
-
-[[route.rules]]
-domain_suffix = ["blocked.test"]
-outbound = "block"
-
-[route]
-final = "proxy"
-
-# DNS: запросы уходят через сервер VLESS (XUDP через Xray).
-[dns]
-[[dns.servers]]
-tag = "remote"
-address = "udp://127.0.0.1:$DNS_UP_PORT"
-detour = "proxy"
-TOML
-$CLIENT_RUNNER "$CLIENT_BIN" --config "$TMP/conf/client.toml" --check > "$TMP/check.log" 2>&1 \
+# Формат sing-box; сервер — ссылкой из файла (расширение link_file).
+cat > "$TMP/conf/client.json" <<JSON
+{
+  "inbounds": [
+    { "type": "mixed", "listen": "127.0.0.1", "listen_port": $SOCKS2_PORT },
+    { "type": "direct", "tag": "dns-in", "listen": "127.0.0.1", "listen_port": $DNS_IN_PORT }
+  ],
+  "outbounds": [
+    { "type": "vless", "tag": "proxy", "link_file": "server.txt" },
+    { "type": "direct", "tag": "direct" },
+    { "type": "block", "tag": "block" }
+  ],
+  "route": {
+    "rules": [
+      { "inbound": ["dns-in"], "action": "hijack-dns" },
+      { "domain_suffix": ["blocked.test"], "outbound": "block" }
+    ],
+    "final": "proxy"
+  },
+  // DNS: запросы уходят через сервер VLESS (XUDP через Xray).
+  "dns": { "servers": [{ "type": "udp", "tag": "remote", "server": "127.0.0.1", "server_port": $DNS_UP_PORT, "detour": "proxy" }] }
+}
+JSON
+$CLIENT_RUNNER "$CLIENT_BIN" --config "$TMP/conf/client.json" --check > "$TMP/check.log" 2>&1 \
     || { echo "--check отверг правильный файл настроек:"; cat "$TMP/check.log"; exit 1; }
-sed 's/^link_file/link_fiel/' "$TMP/conf/client.toml" > "$TMP/conf/typo.toml"
-if $CLIENT_RUNNER "$CLIENT_BIN" --config "$TMP/conf/typo.toml" --check > "$TMP/typo.log" 2>&1; then
+sed 's/"link_file"/"link_fiel"/' "$TMP/conf/client.json" > "$TMP/conf/typo.json"
+if $CLIENT_RUNNER "$CLIENT_BIN" --config "$TMP/conf/typo.json" --check > "$TMP/typo.log" 2>&1; then
     echo "опечатка в файле настроек должна быть ошибкой"; exit 1
 fi
 grep -q 'link_fiel' "$TMP/typo.log" || { cat "$TMP/typo.log"; exit 1; }
-echo "OK: --check и опечатки в файле настроек"
-$CLIENT_RUNNER "$CLIENT_BIN" --config "$TMP/conf/client.toml" > "$TMP/client2.log" 2>&1 &
+# Тот же сервер в формате Xray-core: полями, как пишут v2rayN и панели.
+cat > "$TMP/conf/xray.json" <<JSON
+{
+  "inbounds": [{ "protocol": "socks", "listen": "127.0.0.1", "port": $SOCKS2_PORT }],
+  "outbounds": [{
+    "tag": "proxy", "protocol": "vless",
+    "settings": { "vnext": [{ "address": "127.0.0.1", "port": $SRV_PORT,
+                              "users": [{ "id": "$UUID", "encryption": "none", "flow": "xtls-rprx-vision" }] }] },
+    "streamSettings": { "network": "raw", "security": "reality",
+                        "realitySettings": { "serverName": "decoy.test", "fingerprint": "chrome",
+                                             "publicKey": "$PBK", "shortId": "$SID" } }
+  }]
+}
+JSON
+$CLIENT_RUNNER "$CLIENT_BIN" --config "$TMP/conf/xray.json" --check > "$TMP/check-xray.log" 2>&1 \
+    || { echo "--check отверг настройки Xray:"; cat "$TMP/check-xray.log"; exit 1; }
+echo "OK: --check (sing-box и Xray) и опечатки в файле настроек"
+$CLIENT_RUNNER "$CLIENT_BIN" --config "$TMP/conf/client.json" > "$TMP/client2.log" 2>&1 &
 PIDS+=($!)
 for _ in $(seq 1 300); do grep -q 'прокси слушает' "$TMP/client2.log" && break; sleep 0.1; done
 python3 - "$SOCKS2_PORT" "$ECHO_PORT" "$TMP/cert.pem" "$DNS_IN_PORT" <<'PY' || { cat "$TMP/client2.log"; exit 1; }
@@ -340,6 +343,27 @@ s.sendall(b"CONNECT ads.blocked.test:443 HTTP/1.1\r\n\r\n")
 assert s.recv(64).startswith(b"HTTP/1.1 403")
 print("OK: --config: правило block для домена (SOCKS5 0x02, HTTP 403)")
 PY
+# Настройки в формате Xray-core — тот же трафик (REALITY + Vision) через Xray.
+SOCKS4_PORT="$(free_port)"
+sed "s/\"port\": $SOCKS2_PORT/\"port\": $SOCKS4_PORT/" "$TMP/conf/xray.json" > "$TMP/conf/xray-run.json"
+$CLIENT_RUNNER "$CLIENT_BIN" --config "$TMP/conf/xray-run.json" > "$TMP/client-xray.log" 2>&1 &
+PIDS+=($!)
+for _ in $(seq 1 300); do grep -q 'прокси слушает' "$TMP/client-xray.log" && break; sleep 0.1; done
+python3 - "$SOCKS4_PORT" "$ECHO_PORT" "$TMP/cert.pem" <<'PY' || { cat "$TMP/client-xray.log"; exit 1; }
+import os, socket, ssl, struct, sys
+socks, echo, ca = int(sys.argv[1]), int(sys.argv[2]), sys.argv[3]
+s = socket.create_connection(("127.0.0.1", socks), timeout=30)
+s.sendall(b"\x05\x01\x00"); assert s.recv(2) == b"\x05\x00"
+s.sendall(b"\x05\x01\x00\x01" + socket.inet_aton("127.0.0.1") + struct.pack(">H", echo))
+rep = s.recv(10); assert rep[:2] == b"\x05\x00", rep
+t = ssl.create_default_context(cafile=ca).wrap_socket(s, server_hostname="inner.test")
+data = os.urandom(64 * 1024); t.sendall(data)
+got = b""
+while len(got) < len(data):
+    b = t.recv(65536); assert b; got += b
+assert got == data
+print("OK: настройки Xray-core: 64 КиБ TLS-эха через REALITY + Vision")
+PY
 # Фаза 4: группа urltest из «мёртвого» сервера и сервера из подписки.
 # Подписка — HTTPS-панель на 127.0.0.1 со своим сертификатом, в ответе
 # base64 со ссылкой на Xray; проверка групп идёт через Xray к HTTP-серверу.
@@ -372,39 +396,23 @@ PY
 python3 "$TMP/panel.py" "$PANEL_PORT" "$PROBE_PORT" "$TMP" "${LINK%#*}#from-panel" &
 PIDS+=($!)
 echo "https://127.0.0.1:$PANEL_PORT/sub/tok" > "$TMP/conf/sub.txt"
-cat > "$TMP/conf/groups.toml" <<TOML
-[[inbounds]]
-type = "socks"
-listen = "127.0.0.1:$SOCKS3_PORT"
-
-[[outbounds]]
-tag = "auto"
-type = "urltest"
-outbounds = ["dead"]
-subscriptions = ["panel"]
-url = "http://127.0.0.1:$PROBE_PORT/generate_204"
-interval = 10
-
-[[outbounds]]
-tag = "dead"
-type = "vless"
-link = "vless://$UUID@127.0.0.1:$DEAD_PORT?encryption=none&security=reality&sni=decoy.test&pbk=$PBK&sid=$SID&type=tcp"
-
-[[outbounds]]
-tag = "direct"
-type = "direct"
-
-[[subscriptions]]
-tag = "panel"
-url_file = "sub.txt"
-ca_file = "panel-ca.pem"
-detour = "direct"
-
-[route]
-final = "auto"
-TOML
+cat > "$TMP/conf/groups.json" <<JSON
+{
+  "inbounds": [{ "type": "socks", "listen": "127.0.0.1", "listen_port": $SOCKS3_PORT }],
+  "outbounds": [
+    { "type": "urltest", "tag": "auto", "outbounds": ["dead"], "subscriptions": ["panel"],
+      "url": "http://127.0.0.1:$PROBE_PORT/generate_204", "interval": "10s" },
+    { "type": "vless", "tag": "dead", "server": "127.0.0.1", "server_port": $DEAD_PORT, "uuid": "$UUID",
+      "tls": { "enabled": true, "server_name": "decoy.test",
+               "reality": { "enabled": true, "public_key": "$PBK", "short_id": "$SID" } } },
+    { "type": "direct", "tag": "direct" }
+  ],
+  "subscriptions": [{ "tag": "panel", "url_file": "sub.txt", "ca_file": "panel-ca.pem", "detour": "direct" }],
+  "route": { "final": "auto" }
+}
+JSON
 sleep 0.5
-$CLIENT_RUNNER "$CLIENT_BIN" --config "$TMP/conf/groups.toml" > "$TMP/client3.log" 2>&1 &
+$CLIENT_RUNNER "$CLIENT_BIN" --config "$TMP/conf/groups.json" > "$TMP/client3.log" 2>&1 &
 PIDS+=($!)
 for _ in $(seq 1 300); do grep -q 'группа: переключение' "$TMP/client3.log" && break; sleep 0.1; done
 grep -q 'подписка обновлена' "$TMP/client3.log" || { echo "подписка не загрузилась:"; cat "$TMP/client3.log"; exit 1; }

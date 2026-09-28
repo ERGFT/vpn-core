@@ -282,7 +282,7 @@ fn secret(
 
 fn build_vless(o: &config::OutboundConfig) -> Result<VlessOutbound> {
     let link = secret(&o.link, &o.link_file, &format!("выход {}", o.tag))?
-        .ok_or_else(|| Error::Config(format!("выход {}: нужна link или link_file", o.tag)))?;
+        .ok_or_else(|| Error::Config(format!("выход {}: не задан сервер", o.tag)))?;
     let roots = match &o.ca_file {
         Some(ca) => Some(Arc::new(config::load_ca(ca)?)),
         None => None,
@@ -297,7 +297,7 @@ fn build_vless(o: &config::OutboundConfig) -> Result<VlessOutbound> {
 
 fn build_trojan(o: &config::OutboundConfig) -> Result<trojan_out::TrojanOutbound> {
     let link = secret(&o.link, &o.link_file, &format!("выход {}", o.tag))?
-        .ok_or_else(|| Error::Config(format!("выход {}: нужна link или link_file", o.tag)))?;
+        .ok_or_else(|| Error::Config(format!("выход {}: не задан сервер", o.tag)))?;
     let roots = match &o.ca_file {
         Some(ca) => Some(Arc::new(config::load_ca(ca)?)),
         None => None,
@@ -329,7 +329,7 @@ fn trojan_from_link(
     if t.transport.security == Security::None && !allow_insecure {
         return Err(Error::Config(format!(
             "выход {tag}: trojan с security=none — пароль и весь трафик идут открытым \
-             текстом; если это осознанно, разрешите явно (allow_insecure = true)"
+             текстом; если это осознанно, разрешите явно (\"allow_insecure\": true у выхода)"
         )));
     }
     if let (Some(w), false) = (
@@ -547,7 +547,7 @@ fn build_dns_inbound(
 ) -> Result<Arc<DnsInbound>> {
     if !has_dns {
         return Err(Error::Config(format!(
-            "вход {tag}: type = \"dns\" требует раздела [dns]"
+            "вход {tag}: DNS-серверу нужен раздел dns"
         )));
     }
     if i.auth.is_some() || i.auth_file.is_some() || i.sniff || i.sniff_override_destination {
@@ -601,7 +601,7 @@ fn build_proxy_inbound(i: &config::InboundConfig, tag: &str) -> Result<Arc<Proxy
     }
     if i.sniff_override_destination && !i.sniff {
         return Err(Error::Config(format!(
-            "вход {tag}: sniff_override_destination работает только вместе с sniff = true"
+            "вход {tag}: sniff_override_destination работает только вместе с sniff (правило {{\"action\": \"sniff\"}})"
         )));
     }
     Ok(Arc::new(ProxyInbound {
@@ -623,8 +623,8 @@ fn build_tun_inbound(
     let settings = tun::settings(i)?;
     if settings.dns_hijack && dns.is_none() {
         return Err(Error::Config(format!(
-            "вход {tag}: TUN перехватывает DNS (dns_hijack), а раздела [dns] нет; \
-             добавьте [dns] или dns_hijack = false"
+            "вход {tag}: TUN перехватывает DNS (правило hijack-dns), а раздела dns нет; \
+             добавьте раздел dns или уберите правило"
         )));
     }
     if settings.auto_route && dns.is_some_and(|d| d.has_local()) {
@@ -669,9 +669,7 @@ fn inbound_tags(cfg: &Config) -> Result<Vec<String>> {
         .count()
         > 1
     {
-        return Err(Error::Config(
-            "вход type = \"tun\" может быть только один".into(),
-        ));
+        return Err(Error::Config("вход tun может быть только один".into()));
     }
     let mut tags: Vec<String> = Vec::new();
     for (n, i) in cfg.inbounds.iter().enumerate() {
@@ -696,7 +694,7 @@ fn preset_rules(cfg: &Config) -> Result<Vec<config::RuleConfig>> {
             .map(|o| o.tag.clone())
             .ok_or_else(|| {
                 Error::Config(format!(
-                    "route.presets: «{preset}» нужен выход type = \"{}\"",
+                    "route.presets: «{preset}» нужен выход {}",
                     match kind {
                         OutboundKind::Block => "block",
                         _ => "direct",
@@ -784,10 +782,11 @@ fn build_core(
             OutboundKind::Block => Arc::new(BlockOutbound::new(o.tag.clone())),
             OutboundKind::Dns => {
                 if cfg.dns.is_none() {
-                    return Err(Error::Config(format!(
-                        "выход {}: type = \"dns\" требует раздела [dns]",
-                        o.tag
-                    )));
+                    return Err(Error::Config(if o.tag.starts_with("__") {
+                        "правило hijack-dns требует раздела dns".to_string()
+                    } else {
+                        format!("выход {} (dns) требует раздела dns", o.tag)
+                    }));
                 }
                 Arc::new(DnsOutbound::new(o.tag.clone(), dns_slot.clone()))
             }
@@ -811,7 +810,7 @@ fn build_core(
         for s in &o.subscriptions {
             if !cfg.subscriptions.iter().any(|c| &c.tag == s) {
                 return Err(Error::Config(format!(
-                    "группа {}: нет подписки «{s}» (раздел [[subscriptions]])",
+                    "группа {}: нет подписки «{s}» (раздел subscriptions)",
                     o.tag
                 )));
             }
@@ -919,7 +918,7 @@ fn build_core(
     };
     if route.domain_strategy == config::DomainStrategy::IpIfNonMatch && dns.is_none() {
         return Err(Error::Config(
-            "route.domain_strategy = \"ip_if_non_match\" требует раздела [dns]: \
+            "route.domain_strategy ip_if_non_match требует раздела dns: \
              иначе имена сайтов уходили бы системному DNS мимо туннеля"
                 .into(),
         ));

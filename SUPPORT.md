@@ -5,7 +5,7 @@
 - **Как собрать, запустить и настроить** — [README.md](README.md):
   ключи командной строки, файл настроек, TUN, DNS, подписки; Windows —
   [docs/WINDOWS.md](docs/WINDOWS.md). Проверить файл настроек, ничего не
-  запуская: `reality-client --config client.toml --check`.
+  запуская: `reality-client --config config.json --check`.
 - **Не подключается** — запустите с `RUST_LOG=debug` и посмотрите
   журнал; сверьте параметры ссылки с таблицей «Какие параметры ссылки
   понимает» в README и раздел «Что осталось открытым» (например, `kcp` не
@@ -29,7 +29,7 @@
 - **Building, running and configuring** — [README.en.md](README.en.md):
   command-line flags, config file, TUN, DNS, subscriptions; Windows —
   [docs/WINDOWS.en.md](docs/WINDOWS.en.md). To validate a config file
-  without starting anything: `reality-client --config client.toml --check`.
+  without starting anything: `reality-client --config config.json --check`.
 - **It does not connect** — run with `RUST_LOG=debug` and read the log;
   check the link parameters against the "Supported link parameters" table in
   the README and the "Known gaps" section (for example, `kcp` is not

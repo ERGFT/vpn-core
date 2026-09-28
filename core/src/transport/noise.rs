@@ -151,8 +151,25 @@ impl Noise {
 mod tests {
     use super::*;
 
+    /// `ключ='строка'` или `ключ=число` построчно → JSON-объект.
+    fn kv(s: &str) -> serde_json::Value {
+        let mut m = serde_json::Map::new();
+        for line in s.lines() {
+            let (k, v) = line.split_once('=').unwrap();
+            let v = v.trim();
+            let v = match v.strip_prefix('\'').and_then(|x| x.strip_suffix('\'')) {
+                Some(s) => serde_json::Value::String(s.into()),
+                None => serde_json::Value::from(v.parse::<u64>().unwrap()),
+            };
+            m.insert(k.trim().into(), v);
+        }
+        serde_json::Value::Object(m)
+    }
+
     fn n(s: &str) -> Result<Noise> {
-        toml::from_str::<NoiseConfig>(s).unwrap().build()
+        serde_json::from_value::<NoiseConfig>(kv(s))
+            .unwrap()
+            .build()
     }
 
     #[test]

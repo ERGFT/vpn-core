@@ -20,35 +20,26 @@ fn tmp_dir(name: &str) -> PathBuf {
     d
 }
 
+/// Путь как строка JSON (на Windows — с экранированными «\\»).
+fn q(p: &Path) -> String {
+    serde_json::to_string(&p.display().to_string()).unwrap()
+}
+
 fn cfg(dir: &Path, rule: &str) -> String {
     format!(
-        r#"
-[[inbounds]]
-type = "socks"
-listen = "127.0.0.1:0"
-
-[[outbounds]]
-tag = "direct"
-type = "direct"
-
-[[outbounds]]
-tag = "block"
-type = "block"
-
-[[route.rule_set]]
-tag = "local"
-path = "local.json"
-
-[[route.rule_set]]
-tag = "names"
-path = '{names}'
-
-{rule}
-
-[route]
-final = "direct"
-"#,
-        names = dir.join("names.json").display()
+        r#"{{
+  "inbounds": [{{ "type": "socks", "listen": "127.0.0.1", "listen_port": 0 }}],
+  "outbounds": [{{ "type": "direct", "tag": "direct" }}, {{ "type": "block", "tag": "block" }}],
+  "route": {{
+    "rule_set": [
+      {{ "type": "local", "tag": "local", "path": "local.json" }},
+      {{ "type": "local", "tag": "names", "path": {names} }}
+    ],
+    "rules": [{rule}],
+    "final": "direct"
+  }}
+}}"#,
+        names = q(&dir.join("names.json"))
     )
 }
 
@@ -80,13 +71,10 @@ async fn rule_set_blocks_by_address_and_relative_path_works() {
         r#"{"version":3,"rules":[{"domain":"a.invalid"}]}"#,
     )
     .unwrap();
-    let path = dir.join("client.toml");
+    let path = dir.join("client.json");
     std::fs::write(
         &path,
-        cfg(
-            &dir,
-            "[[route.rules]]\nrule_set = [\"local\"]\noutbound = \"block\"",
-        ),
+        cfg(&dir, r#"{"rule_set": ["local"], "outbound": "block"}"#),
     )
     .unwrap();
     // Config::load: относительный путь набора — от папки файла настроек.
@@ -124,57 +112,57 @@ fn rule_set_errors_are_clear() {
         r#"{"version":3,"rules":[{"domain":"a.invalid","port":443}]}"#,
     )
     .unwrap();
-    let with = |sets: &str, rules: &str| {
-        let toml = format!(
-            r#"
-[[inbounds]]
-type = "socks"
-listen = "127.0.0.1:0"
-
-[[outbounds]]
-tag = "direct"
-type = "direct"
-
-{sets}
-
-{rules}
-"#
+    // sets — элементы route.rule_set; tail — rules и прочее в route, dns.
+    let with = |sets: &str, rules: &str, dns: &str| {
+        let json = format!(
+            r#"{{
+  "inbounds": [{{ "type": "socks", "listen": "127.0.0.1", "listen_port": 0 }}],
+  "outbounds": [{{ "type": "direct", "tag": "direct" }}],
+  "route": {{ "rule_set": [{sets}], "rules": [{rules}] }}{dns}
+}}"#
         );
-        match App::build(&Config::parse(&toml).expect("разбор")) {
-            Ok(_) => panic!("сборка должна была отказать:\n{toml}"),
+        match App::build(&Config::parse(&json).expect("разбор")) {
+            Ok(_) => panic!("сборка должна была отказать:\n{json}"),
             Err(e) => e.to_string(),
         }
     };
     let set = |tag: &str, file: &str| {
         format!(
-            "[[route.rule_set]]\ntag = \"{tag}\"\npath = '{}'\n",
-            dir.join(file).display()
+            r#"{{"type": "local", "tag": "{tag}", "path": {}}}"#,
+            q(&dir.join(file))
         )
     };
-    let rule = "[[route.rules]]\nrule_set = [\"x\"]\noutbound = \"direct\"";
+    let rule = r#"{"rule_set": ["x"], "outbound": "direct"}"#;
 
-    let e = with("", rule);
+    let e = with("", rule, "");
     assert!(e.contains("нет такого набора"), "{e}");
-    let e = with(&(set("x", "names.json") + &set("x", "ips.json")), rule);
+    let e = with(
+        &(set("x", "names.json") + ", " + &set("x", "ips.json")),
+        rule,
+        "",
+    );
     assert!(e.contains("повторяется"), "{e}");
-    let e = with(&set("x", "empty.json"), rule);
+    let e = with(&set("x", "empty.json"), rule, "");
     assert!(e.contains("пуст"), "{e}");
-    let e = with(&set("x", "port.json"), rule);
+    let e = with(&set("x", "port.json"), rule, "");
     assert!(e.contains("port") && e.contains("не поддерживается"), "{e}");
-    let e = with(&set("x", "missing.json"), rule);
+    let e = with(&set("x", "missing.json"), rule, "");
     assert!(e.contains("не удалось прочитать"), "{e}");
     let e = with(
         &set("x", "ips.json"),
-        "[dns]\n[[dns.servers]]\ntag = \"l\"\naddress = \"local\"\n[[dns.rules]]\nrule_set = [\"x\"]\nserver = \"l\"",
+        "",
+        r#", "dns": {"servers": [{"type": "local", "tag": "l"}], "rules": [{"rule_set": ["x"], "server": "l"}]}"#,
     );
     assert!(e.contains("нет доменов"), "{e}");
     // Неиспользуемый битый набор не мешает (читаются только нужные).
     std::fs::write(dir.join("bad.srs"), b"SRS\x01garbage").unwrap();
-    let toml = format!(
-        "[[inbounds]]\ntype = \"socks\"\nlisten = \"127.0.0.1:0\"\n[[outbounds]]\ntag = \"direct\"\ntype = \"direct\"\n{}",
+    let json = format!(
+        r#"{{"inbounds": [{{"type": "socks", "listen": "127.0.0.1", "listen_port": 0}}],
+            "outbounds": [{{"type": "direct", "tag": "direct"}}],
+            "route": {{"rule_set": [{}]}}}}"#,
         set("unused", "bad.srs")
     );
-    App::build(&Config::parse(&toml).unwrap()).expect("неиспользуемый набор");
+    App::build(&Config::parse(&json).unwrap()).expect("неиспользуемый набор");
     let _ = std::fs::remove_dir_all(&dir);
 }
 

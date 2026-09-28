@@ -262,21 +262,13 @@ async fn doq_server(ip: Ipv4Addr) -> (SocketAddr, PathBuf, Arc<AtomicUsize>) {
 #[tokio::test]
 async fn doq_server_works_and_reuses_connection() {
     let (doq, ca, conns) = doq_server(Ipv4Addr::new(4, 4, 4, 4)).await;
-    let app = start(&format!(
-        r#"
-[[inbounds]]
-type = "dns"
-listen = "127.0.0.1:0"
-{OUTS}
-[dns]
-[[dns.servers]]
-tag = "doq"
-address = "quic://{doq}"
-detour = "direct"
-ca_file = '{}'
-"#,
-        ca.display()
-    ))
+    let app = start(&dns_only(&format!(
+        r#"{{ "type": "quic", "tag": "doq", "server": "{}", "server_port": {},
+             "detour": "direct", "tls": {{ "certificate_path": {} }} }}"#,
+        doq.ip(),
+        doq.port(),
+        q(&ca)
+    )))
     .await;
     let dns = app.listen_addrs[0];
     for i in 0..20 {
@@ -293,32 +285,22 @@ ca_file = '{}'
     );
 
     // Чужой сертификат — SERVFAIL, без ответа.
-    let app = start(&format!(
-        r#"
-[[inbounds]]
-type = "dns"
-listen = "127.0.0.1:0"
-{OUTS}
-[dns]
-[[dns.servers]]
-tag = "doq"
-address = "quic://{doq}"
-detour = "direct"
-"#
-    ))
+    let app = start(&dns_only(&format!(
+        r#"{{ "tag": "doq", "address": "quic://{doq}", "detour": "direct" }}"#
+    )))
     .await;
     let a = ask_udp(app.listen_addrs[0], "x.test.", RecordType::A).await;
     assert_eq!(a.metadata.response_code, ResponseCode::ServFail);
 }
 
-async fn start(toml: &str) -> Running {
+async fn start(json: &str) -> Running {
     let _ = tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .with_test_writer()
         .try_init();
-    let cfg = Config::parse(toml).unwrap_or_else(|e| panic!("{e}\n{toml}"));
+    let cfg = Config::parse(json).unwrap_or_else(|e| panic!("{e}\n{json}"));
     App::build(&cfg)
-        .unwrap_or_else(|e| panic!("{e}\n{toml}"))
+        .unwrap_or_else(|e| panic!("{e}\n{json}"))
         .start()
         .await
         .expect("запуск")
@@ -371,33 +353,35 @@ fn ips(m: &Message) -> Vec<Ipv4Addr> {
         .collect()
 }
 
-const OUTS: &str = r#"
-[[outbounds]]
-tag = "direct"
-type = "direct"
+const OUTS: &str =
+    r#""outbounds": [{"type": "direct", "tag": "direct"}, {"type": "block", "tag": "block"}]"#;
 
-[[outbounds]]
-tag = "block"
-type = "block"
-"#;
+/// DNS-сервер для программ: вход direct, чьи запросы — своему DNS.
+const DNS_IN: &str =
+    r#"{"type": "direct", "tag": "dns-in", "listen": "127.0.0.1", "listen_port": 0}"#;
+const HIJACK: &str = r#"{"inbound": ["dns-in"], "action": "hijack-dns"}"#;
+
+/// Путь как строка JSON (на Windows — с экранированными «\\»).
+fn q(p: &std::path::Path) -> String {
+    serde_json::to_string(&p.display().to_string()).unwrap()
+}
+
+/// Только вход DNS и указанные DNS-серверы.
+fn dns_only(servers: &str) -> String {
+    format!(
+        r#"{{"inbounds": [{DNS_IN}], {OUTS}, "route": {{"rules": [{HIJACK}]}},
+            "dns": {{"servers": [{servers}]}}}}"#
+    )
+}
 
 #[tokio::test]
 async fn dns_inbound_udp_and_tcp_with_cache() {
     let up = upstream(Ipv4Addr::new(1, 2, 3, 4)).await;
-    let app = start(&format!(
-        r#"
-[[inbounds]]
-type = "dns"
-listen = "127.0.0.1:0"
-{OUTS}
-[dns]
-[[dns.servers]]
-tag = "up"
-address = "udp://{}"
-detour = "direct"
-"#,
-        up.addr
-    ))
+    let app = start(&dns_only(&format!(
+        r#"{{ "type": "udp", "tag": "up", "server": "{}", "server_port": {}, "detour": "direct" }}"#,
+        up.addr.ip(),
+        up.addr.port()
+    )))
     .await;
     let dns = app.listen_addrs[0];
     let a = ask_udp(dns, "site.test.", RecordType::A).await;
@@ -430,44 +414,30 @@ async fn rules_pick_server_and_dot_doh_work() {
     let (dot, dot_ca) = dot_server(Ipv4Addr::new(2, 2, 2, 2)).await;
     let (doh, doh_ca) = doh_server(Ipv4Addr::new(3, 3, 3, 3)).await;
     let app = start(&format!(
-        r#"
-[[inbounds]]
-type = "dns"
-listen = "127.0.0.1:0"
-{OUTS}
-[dns]
-final = "doh"
-
-[[dns.servers]]
-tag = "plain"
-address = "{}"
-detour = "direct"
-
-[[dns.servers]]
-tag = "dot"
-address = "tls://{}"
-detour = "direct"
-ca_file = '{}'
-
-[[dns.servers]]
-tag = "doh"
-address = "https://{}/dns-query"
-detour = "direct"
-ca_file = '{}'
-
-[[dns.rules]]
-domain_suffix = ["ru"]
-server = "plain"
-
-[[dns.rules]]
-domain_keyword = ["secure"]
-server = "dot"
-"#,
+        r#"{{
+  "inbounds": [{DNS_IN}], {OUTS}, "route": {{ "rules": [{HIJACK}] }},
+  "dns": {{
+    "final": "doh",
+    "servers": [
+      {{ "tag": "plain", "address": "{}", "detour": "direct" }},
+      {{ "type": "tls", "tag": "dot", "server": "{}", "server_port": {},
+         "detour": "direct", "tls": {{ "certificate_path": {} }} }},
+      {{ "type": "https", "tag": "doh", "server": "{}", "server_port": {},
+         "detour": "direct", "tls": {{ "certificate_path": {} }} }}
+    ],
+    "rules": [
+      {{ "domain_suffix": ["ru"], "server": "plain" }},
+      {{ "domain_keyword": ["secure"], "server": "dot" }}
+    ]
+  }}
+}}"#,
         plain.addr,
-        dot,
-        dot_ca.display(),
-        doh,
-        doh_ca.display()
+        dot.ip(),
+        dot.port(),
+        q(&dot_ca),
+        doh.ip(),
+        doh.port(),
+        q(&doh_ca)
     ))
     .await;
     let dns = app.listen_addrs[0];
@@ -501,19 +471,9 @@ server = "dot"
 #[tokio::test]
 async fn untrusted_dot_certificate_gives_servfail() {
     let (dot, _ca) = dot_server(Ipv4Addr::new(2, 2, 2, 2)).await;
-    let app = start(&format!(
-        r#"
-[[inbounds]]
-type = "dns"
-listen = "127.0.0.1:0"
-{OUTS}
-[dns]
-[[dns.servers]]
-tag = "dot"
-address = "tls://{dot}"
-detour = "direct"
-"#
-    ))
+    let app = start(&dns_only(&format!(
+        r#"{{ "tag": "dot", "address": "tls://{dot}", "detour": "direct" }}"#
+    )))
     .await;
     let a = ask_udp(app.listen_addrs[0], "x.test.", RecordType::A).await;
     assert_eq!(a.metadata.response_code, ResponseCode::ServFail);
@@ -567,34 +527,19 @@ async fn fake_ip_end_to_end() {
     let up = upstream(Ipv4Addr::LOCALHOST).await;
     let echo = tcp_echo().await;
     let app = start(&format!(
-        r#"
-[[inbounds]]
-type = "dns"
-listen = "127.0.0.1:0"
-
-[[inbounds]]
-type = "socks"
-listen = "127.0.0.1:0"
-{OUTS}
-[route]
-final = "direct"
-
-[dns]
-final = "fake"
-
-[[dns.servers]]
-tag = "fake"
-address = "fakeip"
-
-[[dns.servers]]
-tag = "real"
-address = "udp://{}"
-detour = "direct"
-
-[[dns.rules]]
-domain = ["real.test"]
-server = "real"
-"#,
+        r#"{{
+  "inbounds": [{DNS_IN}, {{ "type": "socks", "listen": "127.0.0.1", "listen_port": 0 }}],
+  {OUTS},
+  "route": {{ "rules": [{HIJACK}], "final": "direct" }},
+  "dns": {{
+    "final": "fake",
+    "servers": [
+      {{ "type": "fakeip", "tag": "fake" }},
+      {{ "tag": "real", "address": "udp://{}", "detour": "direct" }}
+    ],
+    "rules": [{{ "domain": ["real.test"], "server": "real" }}]
+  }}
+}}"#,
         up.addr
     ))
     .await;
@@ -689,28 +634,12 @@ server = "real"
 async fn dns_outbound_hijacks_port_53() {
     let up = upstream(Ipv4Addr::new(5, 6, 7, 8)).await;
     let app = start(&format!(
-        r#"
-[[inbounds]]
-type = "socks"
-listen = "127.0.0.1:0"
-{OUTS}
-[[outbounds]]
-tag = "dns-out"
-type = "dns"
-
-[[route.rules]]
-port = [53]
-outbound = "dns-out"
-
-[route]
-final = "block"
-
-[dns]
-[[dns.servers]]
-tag = "up"
-address = "udp://{}"
-detour = "direct"
-"#,
+        r#"{{
+  "inbounds": [{{ "type": "socks", "listen": "127.0.0.1", "listen_port": 0 }}],
+  {OUTS},
+  "route": {{ "rules": [{{ "port": 53, "action": "hijack-dns" }}], "final": "block" }},
+  "dns": {{ "servers": [{{ "tag": "up", "address": "udp://{}", "detour": "direct" }}] }}
+}}"#,
         up.addr
     ))
     .await;
@@ -774,25 +703,16 @@ async fn ip_if_non_match_resolves_for_ip_rules() {
     let echo = tcp_echo().await;
     let cfg = |strategy: &str| {
         format!(
-            r#"
-[[inbounds]]
-type = "socks"
-listen = "127.0.0.1:0"
-{OUTS}
-[[route.rules]]
-ip_cidr = ["127.0.0.0/8"]
-outbound = "block"
-
-[route]
-final = "direct"
-domain_strategy = "{strategy}"
-
-[dns]
-[[dns.servers]]
-tag = "up"
-address = "udp://{}"
-detour = "direct"
-"#,
+            r#"{{
+  "inbounds": [{{ "type": "socks", "listen": "127.0.0.1", "listen_port": 0 }}],
+  {OUTS},
+  "route": {{
+    "rules": [{{ "ip_cidr": ["127.0.0.0/8"], "outbound": "block" }}],
+    "final": "direct",
+    "domain_strategy": "{strategy}"
+  }},
+  "dns": {{ "servers": [{{ "tag": "up", "address": "udp://{}", "detour": "direct" }}] }}
+}}"#,
             up.addr
         )
     };
@@ -808,57 +728,95 @@ detour = "direct"
 
 #[test]
 fn dns_config_errors() {
-    let err = |toml: &str| match App::build(&Config::parse(toml).unwrap_or_else(|e| panic!("{e}")))
-    {
-        Ok(_) => panic!("должна быть ошибка:\n{toml}"),
-        Err(e) => e.to_string(),
+    // inbounds, outbounds (после direct), route, dns — фрагментами JSON.
+    let cfg = |inb: &str, outs: &str, route: &str, dns: &str| {
+        format!(
+            r#"{{"inbounds": [{inb}], "outbounds": [{{"type": "direct", "tag": "direct"}}{outs}],
+                "route": {{{route}}}{dns}}}"#
+        )
     };
-    let dns_ok = "[dns]\n[[dns.servers]]\ntag='up'\naddress='1.1.1.1'\ndetour='direct'\n";
-    let socks = "[[inbounds]]\ntype='socks'\nlisten='127.0.0.1:1'\n";
-    let out = "[[outbounds]]\ntag='direct'\ntype='direct'\n";
+    let err =
+        |json: String| match App::build(&Config::parse(&json).unwrap_or_else(|e| panic!("{e}"))) {
+            Ok(_) => panic!("должна быть ошибка:\n{json}"),
+            Err(e) => e.to_string(),
+        };
+    let socks = r#"{"type": "socks", "listen": "127.0.0.1", "listen_port": 1}"#;
+    let dns_ok =
+        r#", "dns": {"servers": [{"tag": "up", "address": "1.1.1.1", "detour": "direct"}]}"#;
+    let dns_in = |listen: &str| {
+        format!(r#"{{"type": "direct", "tag": "dns-in", "listen": "{listen}", "listen_port": 53}}"#)
+    };
+    let hijack = r#""rules": [{"inbound": ["dns-in"], "action": "hijack-dns"}]"#;
 
-    let e = err(&format!(
-        "[[inbounds]]\ntype='dns'\nlisten='0.0.0.0:53'\n{out}{dns_ok}"
-    ));
+    let e = err(cfg(&dns_in("0.0.0.0"), "", hijack, dns_ok));
     assert!(e.contains("открытый"), "{e}");
-    let e = err(&format!(
-        "[[inbounds]]\ntype='dns'\nlisten='127.0.0.1:53'\n{out}"
+    let e = err(cfg(&dns_in("127.0.0.1"), "", hijack, ""));
+    assert!(e.contains("раздел"), "{e}");
+    let e = err(cfg(
+        socks,
+        "",
+        r#""domain_strategy": "ip_if_non_match""#,
+        "",
     ));
-    assert!(e.contains("[dns]"), "{e}");
-    let e = err(&format!(
-        "{socks}{out}[route]\ndomain_strategy='ip_if_non_match'\n"
-    ));
-    assert!(e.contains("[dns]"), "{e}");
-    let e = err(&format!("{socks}{out}[[outbounds]]\ntag='d'\ntype='dns'\n"));
-    assert!(e.contains("[dns]"), "{e}");
-    let e = err(&format!(
-        "{socks}{out}{dns_ok}[[dns.rules]]\ndomain=['a']\nserver='nope'\n"
+    assert!(e.contains("раздел"), "{e}");
+    let e = err(cfg(socks, r#", {"type": "dns", "tag": "d"}"#, "", ""));
+    assert!(e.contains("раздел"), "{e}");
+    let e = err(cfg(
+        socks,
+        "",
+        "",
+        r#", "dns": {"servers": [{"tag": "up", "address": "1.1.1.1", "detour": "direct"}],
+                   "rules": [{"domain": ["a"], "server": "nope"}]}"#,
     ));
     assert!(e.contains("nope"), "{e}");
-    let e = err(&format!(
-        "{socks}{out}[dns]\n[[dns.servers]]\ntag='x'\naddress='udp://dns.google'\n"
+    let e = err(cfg(
+        socks,
+        "",
+        "",
+        r#", "dns": {"servers": [{"tag": "x", "address": "udp://dns.google"}]}"#,
     ));
     assert!(e.contains("IP"), "{e}");
-    let e = err(&format!(
-        "{socks}{out}[[outbounds]]\ntag='d'\ntype='dns'\n[dns]\n[[dns.servers]]\ntag='x'\naddress='1.1.1.1'\ndetour='d'\n"
+    let e = err(cfg(
+        socks,
+        r#", {"type": "dns", "tag": "d"}"#,
+        "",
+        r#", "dns": {"servers": [{"tag": "x", "address": "1.1.1.1", "detour": "d"}]}"#,
     ));
     assert!(e.contains("петля"), "{e}");
-    let e = err(&format!(
-        "{socks}{out}[dns]\n[[dns.servers]]\ntag='f'\naddress='fakeip'\n"
+    let e = err(cfg(
+        socks,
+        "",
+        "",
+        r#", "dns": {"servers": [{"type": "fakeip", "tag": "f"}]}"#,
     ));
     assert!(e.contains("настоящий"), "{e}");
-    let e = err(&format!(
-        "{socks}{out}{dns_ok}[dns.fakeip]\ninet4_range='198.18.0.0/15'\n"
+    let e = err(cfg(
+        socks,
+        "",
+        "",
+        r#", "dns": {"servers": [{"tag": "up", "address": "1.1.1.1", "detour": "direct"}],
+                   "fakeip": {"enabled": true, "inet4_range": "198.18.0.0/15"}}"#,
     ));
     assert!(e.contains("fakeip"), "{e}");
-    let e = err(&format!(
-        "{socks}{out}[dns]\n[[dns.servers]]\ntag='x'\naddress='1.1.1.1'\ndetour='nope'\n"
+    let e = err(cfg(
+        socks,
+        "",
+        "",
+        r#", "dns": {"servers": [{"tag": "x", "address": "1.1.1.1", "detour": "nope"}]}"#,
     ));
     assert!(e.contains("nope"), "{e}");
+    // Вход direct без правила hijack-dns — не DNS-сервер: ошибка разбора.
+    let e = Config::parse(&cfg(&dns_in("127.0.0.1"), "", "", dns_ok))
+        .unwrap_err()
+        .to_string();
+    assert!(e.contains("hijack-dns"), "{e}");
     // Без detour — через route.final (здесь его нет — первый выход).
     App::build(
-        &Config::parse(&format!(
-            "{socks}{out}[dns]\n[[dns.servers]]\ntag='x'\naddress='tls://1.1.1.1'\n"
+        &Config::parse(&cfg(
+            socks,
+            "",
+            "",
+            r#", "dns": {"servers": [{"tag": "x", "address": "tls://1.1.1.1"}]}"#,
         ))
         .unwrap(),
     )

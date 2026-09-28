@@ -105,11 +105,11 @@ cargo build --release -p reality-client
 ### Автозапуск
 
 - **С системным прокси, при входе в Windows** (обычный пользователь):
-  `reality-client.exe --autostart-install --config C:\путь\client.toml --system-proxy`.
+  `reality-client.exe --autostart-install --config C:\путь\config.json --system-proxy`.
   Клиент запускается без окна, журнал — `reality-client.log` рядом с
   настройками. Убрать: `--autostart-uninstall`.
 - **Служба — для TUN** (запуск до входа в систему, от имени
-  администратора): `reality-client.exe --service-install --config C:\путь\client.toml`.
+  администратора): `reality-client.exe --service-install --config C:\путь\config.json`.
   Настройки, файлы рядом с ними, `reality-client.exe` и `wintun.dll`
   копируются в `C:\ProgramData\RealityClient` — эту папку могут менять
   только администраторы (служба работает от SYSTEM, и подменить её файлы
@@ -120,13 +120,14 @@ cargo build --release -p reality-client
 
 ## 5. Дополнительные ключи
 
-- `--config client.toml` — файл настроек: несколько входов и выходов,
-  правила маршрутизации (реклама — в `block`, российские сайты и
-  локальная сеть — напрямую и т.п.). Пример — `examples/client.toml`.
-  Пути Windows в файле пишите в одинарных кавычках:
-  `link_file = 'C:\Users\me\server.txt'`. Проверить файл, ничего не
-  запуская: `--config client.toml --check`.
-- **TUN — как настоящий VPN** (вход `type = "tun"`, см. README): через
+- `--config config.json` — файл настроек в формате sing-box или Xray-core:
+  несколько входов и выходов, правила маршрутизации (реклама — в `block`,
+  российские сайты и локальная сеть — напрямую и т.п.). Примеры —
+  `examples/sing-box.json`, `examples/xray.json`. Обратную косую черту в
+  путях Windows в JSON удваивайте (`"link_file": "C:\\Users\\me\\server.txt"`)
+  или пишите прямую: `"C:/Users/me/server.txt"`. Проверить файл, ничего не
+  запуская: `--config config.json --check`.
+- **TUN — как настоящий VPN** (вход `"type": "tun"`, см. README): через
   клиент идёт трафик всех программ. Нужно запускать от имени
   администратора и положить рядом с `reality-client.exe` файл
   `wintun.dll` (с [wintun.net](https://www.wintun.net/), папка `amd64`).
@@ -134,7 +135,7 @@ cargo build --release -p reality-client
   переходят на IPv4). Kill switch (`strict_route`) на Windows пока нет.
   Если что-то пошло не так, закройте клиент: маршруты исчезают вместе с
   интерфейсом.
-- Свой DNS (раздел `[dns]` и вход `type = "dns"` в файле настроек, см.
+- Свой DNS (раздел `dns` и DNS-вход в файле настроек, см.
   README): если в «Параметры → Сеть и Интернет → Свойства адаптера →
   DNS» указать `127.0.0.1`, запросы имён всех программ пойдут через
   клиент — зашифрованно (DoH/DoT) и через сервер, а не открытым текстом в

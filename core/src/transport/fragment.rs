@@ -540,15 +540,32 @@ mod tests {
         assert!(got.ends_with(b"rest"));
     }
 
+    /// `ключ='строка'` или `ключ=число` построчно → JSON-объект.
+    fn kv(s: &str) -> serde_json::Value {
+        let mut m = serde_json::Map::new();
+        for line in s.lines() {
+            let (k, v) = line.split_once('=').unwrap();
+            let v = v.trim();
+            let v = match v.strip_prefix('\'').and_then(|x| x.strip_suffix('\'')) {
+                Some(s) => serde_json::Value::String(s.into()),
+                None => serde_json::Value::from(v.parse::<u64>().unwrap()),
+            };
+            m.insert(k.trim().into(), v);
+        }
+        serde_json::Value::Object(m)
+    }
+
     #[test]
     fn config_parsing() {
         let c: FragmentConfig =
-            toml::from_str("packets='tlshello'\nlength='100-200'\ninterval=10").unwrap();
+            serde_json::from_value(kv("packets='tlshello'\nlength='100-200'\ninterval=10"))
+                .unwrap();
         let f = c.build().unwrap();
         assert_eq!(f.packets, Packets::TlsHello);
         assert_eq!(f.length, Range { from: 100, to: 200 });
         assert_eq!(f.interval, Range { from: 10, to: 10 });
-        let c: FragmentConfig = toml::from_str("packets='1-3'\nlength=5\ninterval='0'").unwrap();
+        let c: FragmentConfig =
+            serde_json::from_value(kv("packets='1-3'\nlength=5\ninterval='0'")).unwrap();
         assert_eq!(
             c.build().unwrap().packets,
             Packets::Writes { from: 1, to: 3 }
@@ -560,7 +577,7 @@ mod tests {
             "packets='tlshello'\nlength='9-3'\ninterval=0",
             "packets='tlshello'\nlength=5\ninterval=5000",
         ] {
-            let c: FragmentConfig = toml::from_str(bad).unwrap();
+            let c: FragmentConfig = serde_json::from_value(kv(bad)).unwrap();
             assert!(c.build().is_err(), "{bad}");
         }
     }

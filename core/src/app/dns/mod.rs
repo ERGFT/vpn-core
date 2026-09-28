@@ -3,23 +3,15 @@
 //! сервера по имени (те же доменные условия и geosite, что у
 //! маршрутизатора), кеш, fake-IP.
 //!
-//! ```toml
-//! [dns]
-//! final = "remote"
-//!
-//! [[dns.servers]]
-//! tag = "remote"
-//! address = "https://1.1.1.1/dns-query"   # DoH через сервер
-//! detour = "proxy"
-//!
-//! [[dns.servers]]
-//! tag = "local"
-//! address = "77.88.8.8"                   # местный DNS напрямую
-//! detour = "direct"
-//!
-//! [[dns.rules]]
-//! geosite = ["category-ru"]
-//! server = "local"
+//! ```json
+//! "dns": {
+//!   "servers": [
+//!     { "type": "https", "tag": "remote", "server": "1.1.1.1", "detour": "proxy" },  // DoH через сервер
+//!     { "type": "udp", "tag": "local", "server": "77.88.8.8", "detour": "direct" }   // местный DNS напрямую
+//!   ],
+//!   "rules": [{ "geosite": ["category-ru"], "server": "local" }],
+//!   "final": "remote"
+//! }
 //! ```
 //!
 //! Где используется:
@@ -96,7 +88,7 @@ pub struct DnsRuleConfig {
     pub domain_regex: Vec<String>,
     #[serde(default)]
     pub geosite: Vec<String>,
-    /// tag наборов из `[[route.rule_set]]` (берутся только домены).
+    /// tag наборов из `route.rule_set` (берутся только домены).
     #[serde(default)]
     pub rule_set: Vec<String>,
     /// tag сервера.
@@ -187,7 +179,7 @@ impl Dns {
             }
             if needs_detour && detour.as_ref().is_some_and(|d| d.is_dns()) {
                 return Err(Error::Config(format!(
-                    "dns-сервер {}: detour не может быть выходом type = \"dns\" (петля)",
+                    "dns-сервер {}: detour не может быть выходом dns (петля)",
                     s.tag
                 )));
             }

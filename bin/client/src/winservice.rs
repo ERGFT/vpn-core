@@ -143,7 +143,7 @@ pub fn install(config: &Path) -> Result<()> {
     let dst_config = if src_dir == dir_abs {
         config_abs.clone()
     } else {
-        dir.join("client.toml")
+        dir.join("config.json")
     };
     if src_dir != dir_abs {
         let mut files = vec![config_abs.clone()];
@@ -222,7 +222,7 @@ pub fn install(config: &Path) -> Result<()> {
         }
     };
     let _ = service.set_description(
-        "VLESS/REALITY-клиент (reality-core): настройки — %ProgramData%\\RealityClient\\client.toml",
+        "VLESS/REALITY-клиент (reality-core): настройки — %ProgramData%\\RealityClient\\config.json",
     );
     // Перезапуск после сбоя: 5 с, 30 с, 2 мин. Не удалось (старые системы,
     // Wine) — служба работает и без этого.

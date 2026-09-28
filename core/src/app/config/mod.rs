@@ -1,60 +1,40 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! Файл настроек (TOML).
+//! Файл настроек: формат sing-box или Xray-core (JSON, можно с
+//! комментариями) — определяется сам, см. [`Config::parse`].
 //!
-//! ```toml
-//! [[inbounds]]
-//! type = "socks"
-//! listen = "127.0.0.1:1080"
-//! # auth_file = "auth.txt"          # логин:пароль в первой строке
-//! # allow_ip = ["192.168.1.23"]
+//! Оба формата разбираются в одну внутреннюю модель ([`Config`]): её
+//! заполняют [`singbox`] и [`xray`], ею пользуется всё остальное ядро.
+//! Неизвестный или неподдерживаемый ключ — ошибка с путём до него.
 //!
-//! [[outbounds]]
-//! tag = "proxy"
-//! type = "vless"
-//! link_file = "server.txt"          # или link = "vless://…"
-//!
-//! [[outbounds]]
-//! tag = "direct"
-//! type = "direct"
-//!
-//! [route]
-//! final = "proxy"                   # выход по умолчанию
-//! ```
-//!
-//! Относительные пути — от папки файла настроек. Секреты (ссылку, пароль)
-//! лучше держать в отдельных файлах: сам файл настроек тогда можно
-//! показывать и хранить без опаски.
+//! Относительные пути — от папки файла настроек.
+
+pub mod link;
+mod obj;
+mod singbox;
+mod xray;
 
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
-
-use serde::Deserialize;
 
 use super::access::IpNet;
 pub use super::rules::{PortSpec, RuleConfig};
 use crate::error::{Error, Result};
 
-#[derive(Debug, Clone, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[derive(Debug, Clone, Default)]
 pub struct Config {
-    #[serde(default)]
     pub inbounds: Vec<InboundConfig>,
-    #[serde(default)]
     pub outbounds: Vec<OutboundConfig>,
-    #[serde(default)]
     pub route: RouteConfig,
     /// Свой DNS (см. `super::dns`); не задан — имена разрешает система
     /// (для `direct`) или сервер VLESS.
     pub dns: Option<super::dns::DnsConfig>,
     /// Подписки: списки серверов с панели (см. `super::subscription`).
-    #[serde(default)]
     pub subscriptions: Vec<super::subscription::SubscriptionConfig>,
     /// Локальное API (см. `super::api`).
     pub api: Option<super::api::ApiConfig>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
-#[serde(rename_all = "lowercase")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InboundKind {
     /// SOCKS5 (CONNECT, UDP ASSOCIATE).
     Socks,
@@ -68,10 +48,8 @@ pub enum InboundKind {
     Tun,
 }
 
-#[derive(Debug, Clone, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[derive(Debug, Clone)]
 pub struct InboundConfig {
-    #[serde(rename = "type")]
     pub kind: InboundKind,
     pub tag: Option<String>,
     /// Адрес входа (у `tun` не бывает).
@@ -79,15 +57,12 @@ pub struct InboundConfig {
     /// `логин:пароль` прямо в файле (лучше — `auth_file`).
     pub auth: Option<String>,
     pub auth_file: Option<PathBuf>,
-    #[serde(default)]
     pub allow_ip: Vec<IpNet>,
     pub max_conns: Option<usize>,
     /// Узнавать домен по первым байтам (TLS SNI, HTTP Host), когда
     /// приложение прислало IP, — для правил по доменам.
-    #[serde(default)]
     pub sniff: bool,
     /// Подставлять найденный домен вместо IP (имя разрешит сервер).
-    #[serde(default)]
     pub sniff_override_destination: bool,
 
     // ── только для type = "tun" ──
@@ -102,17 +77,38 @@ pub struct InboundConfig {
     /// Направить весь трафик компьютера в TUN (по умолчанию да).
     pub auto_route: Option<bool>,
     /// Подсети, которые остаются мимо TUN.
-    #[serde(default)]
     pub route_exclude: Vec<IpNet>,
     /// Kill switch (Linux): если клиент упал, трафик не идёт мимо туннеля,
     /// пока клиент не запущен снова (или `--tun-cleanup`).
     pub strict_route: Option<bool>,
     /// Отвечать на DNS-запросы (порт 53 на любой адрес) своим DNS
-    /// (по умолчанию да; нужен раздел [dns]).
+    /// (по умолчанию да; нужен раздел `dns`).
     pub dns_hijack: Option<bool>,
 }
 
 impl InboundConfig {
+    pub fn new(kind: InboundKind) -> Self {
+        InboundConfig {
+            kind,
+            tag: None,
+            listen: None,
+            auth: None,
+            auth_file: None,
+            allow_ip: Vec::new(),
+            max_conns: None,
+            sniff: false,
+            sniff_override_destination: false,
+            interface_name: None,
+            inet4_address: None,
+            inet6_address: None,
+            mtu: None,
+            auto_route: None,
+            route_exclude: Vec::new(),
+            strict_route: None,
+            dns_hijack: None,
+        }
+    }
+
     /// Адрес входа; у всех, кроме `tun`, обязателен.
     pub fn listen_addr(&self) -> Result<SocketAddr> {
         self.listen.ok_or_else(|| {
@@ -158,8 +154,7 @@ impl InboundConfig {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
-#[serde(rename_all = "lowercase")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OutboundKind {
     Vless,
     /// Сервер Trojan (ссылка trojan://).
@@ -182,11 +177,9 @@ impl OutboundKind {
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[derive(Debug, Clone)]
 pub struct OutboundConfig {
     pub tag: String,
-    #[serde(rename = "type")]
     pub kind: OutboundKind,
     /// vless: ссылка прямо в файле (лучше — `link_file`).
     pub link: Option<String>,
@@ -194,10 +187,8 @@ pub struct OutboundConfig {
     /// vless: свои корневые сертификаты для `security=tls`.
     pub ca_file: Option<PathBuf>,
     /// vless: UDP через XUDP (по умолчанию) или поток на назначение.
-    #[serde(default = "yes")]
     pub xudp: bool,
     /// vless: разрешить `security=none` (без шифрования).
-    #[serde(default)]
     pub allow_insecure: bool,
     /// vless: Mux.Cool — до стольких TCP-соединений в одном потоке
     /// (как `mux.concurrency` у Xray; не вместе с Vision).
@@ -205,15 +196,12 @@ pub struct OutboundConfig {
     /// vless, direct: дробить начало соединения (ClientHello) против DPI.
     pub fragment: Option<crate::transport::fragment::FragmentConfig>,
     /// direct: пакеты-пустышки перед первой UDP-датаграммой к адресу.
-    #[serde(default)]
     pub noises: Vec<crate::transport::noise::NoiseConfig>,
 
     // ── только для групп (selector, urltest, fallback) ──
     /// Участники — tag других выходов (в том числе групп).
-    #[serde(default)]
     pub outbounds: Vec<String>,
     /// Подписки, серверы которых входят в группу.
-    #[serde(default)]
     pub subscriptions: Vec<String>,
     /// Адрес проверки (по умолчанию `https://www.gstatic.com/generate_204`).
     pub url: Option<String>,
@@ -227,6 +215,27 @@ pub struct OutboundConfig {
 }
 
 impl OutboundConfig {
+    pub fn new(tag: &str, kind: OutboundKind) -> Self {
+        OutboundConfig {
+            tag: tag.to_string(),
+            kind,
+            link: None,
+            link_file: None,
+            ca_file: None,
+            xudp: true,
+            allow_insecure: false,
+            mux: None,
+            fragment: None,
+            noises: Vec::new(),
+            outbounds: Vec::new(),
+            subscriptions: Vec::new(),
+            url: None,
+            interval: None,
+            tolerance: None,
+            default: None,
+        }
+    }
+
     /// Поля, которые бывают только у одного вида выхода.
     pub fn check_fields(&self) -> Result<()> {
         let tag = &self.tag;
@@ -300,18 +309,11 @@ impl OutboundConfig {
     }
 }
 
-fn yes() -> bool {
-    true
-}
-
-#[derive(Debug, Clone, Default, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[derive(Debug, Clone, Default)]
 pub struct RouteConfig {
     /// Правила по порядку; срабатывает первое подошедшее.
-    #[serde(default)]
     pub rules: Vec<RuleConfig>,
     /// Выход по умолчанию; не задан — первый из `outbounds`.
-    #[serde(rename = "final")]
     pub final_: Option<String>,
     /// База доменов для `geosite = [...]` (по умолчанию `geosite.dat`
     /// рядом с файлом настроек).
@@ -320,20 +322,16 @@ pub struct RouteConfig {
     pub geoip_file: Option<PathBuf>,
     /// `ip_if_non_match` — если ни одно правило не подошло к имени,
     /// разрешить его (DNS-модулем) и проверить правила по адресу.
-    #[serde(default)]
     pub domain_strategy: DomainStrategy,
     /// Готовые наборы правил: `block-ads`, `private-direct`, `ru-direct`,
     /// `cn-direct`, `ir-direct` — после своих правил.
-    #[serde(default)]
     pub presets: Vec<String>,
-    /// Наборы правил sing-box: `[[route.rule_set]] tag, path` — для
+    /// Наборы правил sing-box: `route.rule_set` (tag, path) — для
     /// `rule_set = [...]` в правилах маршрутизации и DNS.
-    #[serde(default)]
     pub rule_set: Vec<super::ruleset::RuleSetConfig>,
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
-#[serde(rename_all = "snake_case")]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum DomainStrategy {
     #[default]
     AsIs,
@@ -341,18 +339,27 @@ pub enum DomainStrategy {
 }
 
 impl Config {
+    /// Разобрать текст настроек: формат sing-box или Xray-core
+    /// определяется по содержимому.
     pub fn parse(text: &str) -> Result<Self> {
-        toml::from_str(text).map_err(|e| {
-            let mut msg = e.to_string();
-            // Частая ошибка на Windows: путь в двойных кавычках, где «\U»,
-            // «\s» и т.п. читаются как спецсимволы.
-            if msg.contains("escape") || msg.contains("unicode") {
-                msg.push_str(
-                    "\nподсказка: пути Windows пишите в одинарных кавычках: 'C:\\Users\\me\\server.txt'",
-                );
-            }
-            Error::Config(msg)
-        })
+        let json = obj::strip_jsonc(text.trim_start_matches('\u{feff}'));
+        if !json.trim_start().starts_with('{') {
+            return Err(Error::Config(
+                "ожидался JSON в формате sing-box или Xray-core (свой формат TOML больше не \
+                 поддерживается — пример: examples/sing-box.json, examples/xray.json)"
+                    .into(),
+            ));
+        }
+        let v: serde_json::Value =
+            serde_json::from_str(&json).map_err(|e| Error::Config(format!("JSON: {e}")))?;
+        let root = obj::Obj::new("", &v)?;
+        let cfg = match detect(&v) {
+            Format::SingBox => singbox::parse(&root)?,
+            Format::Xray => xray::parse(&root)?,
+        };
+        root.ignore(&["subscriptions", "experimental"]);
+        root.finish()?;
+        Ok(cfg)
     }
 
     /// Файлы, на которые ссылаются настройки (после [`Config::load`] —
@@ -453,6 +460,36 @@ impl Config {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Format {
+    SingBox,
+    Xray,
+}
+
+/// sing-box или Xray: у Xray входы и выходы с `protocol`, разделы
+/// `routing`/`fakedns`/`observatory`; у sing-box — `type`, `route`.
+fn detect(v: &serde_json::Value) -> Format {
+    let has = |k: &str| v.get(k).is_some();
+    let entries_have = |k: &str| {
+        ["inbounds", "outbounds"].iter().any(|list| {
+            v.get(list)
+                .and_then(|l| l.as_array())
+                .is_some_and(|a| a.iter().any(|e| e.get(k).is_some()))
+        })
+    };
+    if entries_have("protocol")
+        || has("routing")
+        || has("fakedns")
+        || has("observatory")
+        || has("burstObservatory")
+        || has("policy")
+    {
+        Format::Xray
+    } else {
+        Format::SingBox
+    }
+}
+
 /// На Unix: файл с секретами не должен читаться другими пользователями.
 pub fn warn_if_readable_by_others(path: &Path) {
     #[cfg(unix)]
@@ -515,70 +552,105 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parses_example_and_rejects_typos() {
-        let c = Config::parse(
-            r#"
-[[inbounds]]
-type = "socks"
-listen = "127.0.0.1:1080"
-allow_ip = ["192.168.1.0/24"]
-
-[[outbounds]]
-tag = "proxy"
-type = "vless"
-link = "vless://u@h:1"
-xudp = false
-
-[[outbounds]]
-tag = "direct"
-type = "direct"
-
-[route]
-final = "direct"
-"#,
-        )
-        .unwrap();
-        assert_eq!(c.inbounds[0].kind, InboundKind::Socks);
-        assert_eq!(c.inbounds[0].allow_ip.len(), 1);
-        assert_eq!(c.outbounds.len(), 2);
-        assert!(!c.outbounds[0].xudp);
-        assert!(c.outbounds[1].xudp, "xudp по умолчанию включён");
-        assert_eq!(c.route.final_.as_deref(), Some("direct"));
-
-        // Опечатка в имени поля — ошибка, а не молчаливое «не задано».
-        let e = Config::parse("[[outbounds]]\ntag='a'\ntype='direct'\nxudpp=true\n").unwrap_err();
-        assert!(e.to_string().contains("xudpp"), "{e}");
-        assert!(
-            Config::parse("[[inbounds]]\ntype='carrier-pigeon'\nlisten='127.0.0.1:1'\n").is_err()
-        );
-        assert!(Config::parse(
-            "[[inbounds]]\ntype='socks'\nlisten='127.0.0.1:1'\nallow_ip=['x']\n"
-        )
-        .is_err());
-
-        // Windows-путь в двойных кавычках — ошибка с подсказкой.
-        let e = Config::parse(
-            "[[outbounds]]\ntag='a'\ntype='vless'\nlink_file=\"C:\\Users\\me\\s.txt\"\n",
-        )
-        .unwrap_err();
-        assert!(e.to_string().contains("одинарных"), "{e}");
-        let ok = Config::parse(
-            "[[outbounds]]\ntag='a'\ntype='vless'\nlink_file='C:\\Users\\me\\s.txt'\n",
-        )
-        .unwrap();
-        assert_eq!(
-            ok.outbounds[0].link_file.as_deref(),
-            Some(Path::new("C:\\Users\\me\\s.txt"))
-        );
-
-        // Пример из репозитория разбирается.
-        let ex = Config::parse(include_str!("../../../examples/client.toml")).unwrap();
-        assert_eq!(ex.outbounds.len(), 3);
-        assert_eq!(ex.route.rules.len(), 3);
-        assert_eq!(ex.inbounds[0].kind, InboundKind::Mixed);
-        let dns = ex.dns.expect("в примере есть [dns]");
-        assert_eq!(dns.servers.len(), 2);
+    fn singbox_example() {
+        let c = Config::parse(include_str!("../../../../examples/sing-box.json")).unwrap();
+        assert_eq!(c.inbounds.len(), 1);
+        let i = &c.inbounds[0];
+        assert_eq!(i.kind, InboundKind::Mixed);
+        assert_eq!(i.listen, Some("127.0.0.1:1080".parse().unwrap()));
+        assert!(i.sniff, "action: sniff без inbound — у всех входов");
+        // proxy, direct, block + скрытый выход для hijack-dns.
+        let tags: Vec<&str> = c.outbounds.iter().map(|o| o.tag.as_str()).collect();
+        assert_eq!(tags, ["proxy", "direct", "block", "__hijack_dns"]);
+        let link = c.outbounds[0].link.as_deref().unwrap();
+        let v = crate::vless::VlessConfig::parse(link).unwrap();
+        assert_eq!(v.host, "server.example.com");
+        assert_eq!(v.security, crate::vless::Security::Reality);
+        assert!(v.flow.is_vision());
+        assert_eq!(v.sni.as_deref(), Some("www.example.com"));
+        assert_eq!(c.route.final_.as_deref(), Some("proxy"));
+        // sniff — не правило; hijack-dns — правило порта 53.
+        assert_eq!(c.route.rules.len(), 4);
+        assert_eq!(c.route.rules[0].outbound, "__hijack_dns");
+        let dns = c.dns.unwrap();
+        assert_eq!(dns.servers[0].address, "https://1.1.1.1:443/dns-query");
+        assert_eq!(dns.servers[1].detour.as_deref(), Some("direct"));
         assert_eq!(dns.rules.len(), 1);
-        assert_eq!(ex.route.final_.as_deref(), Some("proxy"));
+    }
+
+    #[test]
+    fn xray_example() {
+        let c = Config::parse(include_str!("../../../../examples/xray.json")).unwrap();
+        assert_eq!(c.inbounds[0].kind, InboundKind::Socks);
+        assert!(c.inbounds[0].sniff);
+        assert!(
+            !c.inbounds[0].sniff_override_destination,
+            "routeOnly — домен только для правил"
+        );
+        let tags: Vec<&str> = c.outbounds.iter().map(|o| o.tag.as_str()).collect();
+        assert_eq!(tags, ["proxy", "direct", "block"]);
+        let v = crate::vless::VlessConfig::parse(c.outbounds[0].link.as_deref().unwrap()).unwrap();
+        assert_eq!(v.port, 443);
+        assert_eq!(v.security, crate::vless::Security::Reality);
+        assert_eq!(c.route.rules.len(), 4);
+        assert_eq!(c.route.rules[0].geosite, ["category-ads-all"]);
+        assert_eq!(c.route.rules[1].geoip, ["private"]);
+        let dns = c.dns.unwrap();
+        assert_eq!(dns.servers.len(), 2);
+        assert_eq!(
+            dns.servers[1].detour.as_deref(),
+            Some("direct"),
+            "+local — напрямую"
+        );
+        assert_eq!(dns.rules[0].geosite, ["category-ru"]);
+        assert_eq!(dns.final_.as_deref(), Some("dns-0"));
+    }
+
+    #[test]
+    fn errors_name_the_key() {
+        let e = Config::parse(r#"{"outbounds":[{"type":"direct","tag":"d","typo":1}]}"#)
+            .unwrap_err()
+            .to_string();
+        assert!(e.contains("outbounds[0]") && e.contains("typo"), "{e}");
+        let e = Config::parse(r#"{"outbounds":[{"type":"shadowsocks","tag":"s"}]}"#)
+            .unwrap_err()
+            .to_string();
+        assert!(e.contains("shadowsocks"), "{e}");
+        let e = Config::parse(r#"{"outbounds":[{"protocol":"vmess"}]}"#)
+            .unwrap_err()
+            .to_string();
+        assert!(e.contains("vmess"), "{e}");
+        let e = Config::parse("[[inbounds]]\ntype = 'socks'\n")
+            .unwrap_err()
+            .to_string();
+        assert!(e.contains("TOML"), "{e}");
+    }
+
+    #[test]
+    fn xray_balancer_becomes_urltest() {
+        let c = Config::parse(
+            r#"{
+              "outbounds": [
+                {"tag": "de", "protocol": "trojan", "settings": {"servers": [{"address": "de.example", "port": 443, "password": "p"}]}},
+                {"tag": "fi", "protocol": "trojan", "settings": {"servers": [{"address": "fi.example", "port": 443, "password": "p"}]}},
+                {"tag": "direct", "protocol": "freedom"}
+              ],
+              "routing": {
+                "rules": [{"type": "field", "port": "0-65535", "balancerTag": "auto"}],
+                "balancers": [{"tag": "auto", "selector": ["de", "fi"], "strategy": {"type": "leastPing"}}]
+              },
+              "observatory": {"subjectSelector": ["de", "fi"], "probeURL": "https://cp.example/204", "probeInterval": "1m"}
+            }"#,
+        )
+        .unwrap();
+        let g = c.outbounds.iter().find(|o| o.tag == "auto").unwrap();
+        assert_eq!(g.kind, OutboundKind::Urltest);
+        assert_eq!(g.outbounds, ["de", "fi"]);
+        assert_eq!(g.url.as_deref(), Some("https://cp.example/204"));
+        assert_eq!(g.interval, Some(60));
+        assert_eq!(
+            c.outbounds[0].tag, "de",
+            "первый выход — как у Xray, по умолчанию"
+        );
     }
 }

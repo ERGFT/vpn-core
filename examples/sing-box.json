@@ -1,0 +1,118 @@
+// Пример настроек reality-client в формате sing-box:
+//   reality-client --config sing-box.json          (проверить: --check)
+//
+// Формат — как у sing-box 1.11+ (комментарии и запятые в конце разрешены).
+// Подходят и готовые настройки sing-box: чего это ядро не умеет, то при
+// запуске будет названо с путём до ключа, а не пропущено молча.
+// Относительные пути — от папки этого файла.
+//
+// Расширения этого ядра (в sing-box их нет) помечены «расширение».
+{
+  "log": { "level": "info" },           // уровень журнала задаёт RUST_LOG, раздел не нужен
+
+  // ── Входы: куда подключаются приложения ──────────────────────────
+  "inbounds": [
+    {
+      "type": "mixed",                  // SOCKS5 и HTTP на одном порту ("socks", "http" — по отдельности)
+      "tag": "local",
+      "listen": "127.0.0.1",
+      "listen_port": 1080
+      // "users": [{ "username": "me", "password": "длинный-пароль" }],
+      // "allow_ip": ["192.168.1.23"],   // расширение: кому из сети можно
+      // "max_conns": 512                // расширение
+    }
+    // TUN — весь трафик компьютера, как у VPN (права администратора/root;
+    // на Windows — wintun.dll рядом с программой):
+    // {
+    //   "type": "tun",
+    //   "tag": "tun",
+    //   "address": ["172.19.0.1/30"],
+    //   "auto_route": true,
+    //   "strict_route": true,            // kill switch (Linux): упал клиент — сеть закрыта
+    //   "route_exclude_address": ["192.168.0.0/16"]
+    // },
+    // DNS-сервер для системы (127.0.0.1 — как DNS в настройках сети) —
+    // вход direct + правило hijack-dns ниже:
+    // { "type": "direct", "tag": "dns-in", "listen": "127.0.0.1", "listen_port": 53 }
+  ],
+
+  // ── Выходы: куда уходят соединения ───────────────────────────────
+  "outbounds": [
+    {
+      "type": "vless",
+      "tag": "proxy",
+      "server": "server.example.com",
+      "server_port": 443,
+      "uuid": "b831381d-6324-4d53-ad4f-8cda48b30811",
+      "flow": "xtls-rprx-vision",
+      "tls": {
+        "enabled": true,
+        "server_name": "www.example.com",
+        "utls": { "enabled": true, "fingerprint": "chrome" },
+        "reality": {
+          "enabled": true,
+          "public_key": "Z84J2IelR9ch3k8VtlVhhs5ycBUlXA7wHBWcBrjqnAw",
+          "short_id": "6ba85179e30d4fc2"
+        }
+      }
+      // "transport": { "type": "ws", "path": "/ws", "headers": { "Host": "cdn.example.com" } },
+      // "transport": { "type": "grpc", "service_name": "grpc" },
+      // "transport": { "type": "xhttp", "path": "/x", "mode": "auto" },   // расширение
+      // "packet_encoding": "xudp",       // UDP через XUDP (по умолчанию); "" — поток на назначение
+      // "mux": 8,                        // расширение: Mux.Cool (не вместе с Vision)
+      // "fragment": { "packets": "tlshello", "length": "100-200", "interval": "10-20" },   // расширение
+      // "link_file": "server.txt"        // расширение: вместо полей — ссылка vless:// из файла
+    },
+    { "type": "direct", "tag": "direct" },
+    // "fragment" и "noises" у direct — расширение (как у freedom в Xray):
+    // { "type": "direct", "tag": "direct-frag",
+    //   "fragment": { "packets": "tlshello", "length": "100-200", "interval": "10-20" },
+    //   "noises": [{ "type": "rand", "packet": "10-20", "delay": "10-16" }] },
+    { "type": "block", "tag": "block" }
+    // Группа серверов: selector — выбранный вручную, urltest — самый быстрый,
+    // fallback (расширение) — первый работающий.
+    // { "type": "urltest", "tag": "auto", "outbounds": ["proxy"],
+    //   "subscriptions": ["my-panel"],   // расширение: серверы из подписки
+    //   "url": "https://www.gstatic.com/generate_204", "interval": "3m", "tolerance": 50 }
+  ],
+
+  // ── Маршрутизация ────────────────────────────────────────────────
+  // Правила по порядку, срабатывает первое подошедшее.
+  "route": {
+    "rules": [
+      { "action": "sniff" },                                   // домен по TLS SNI / HTTP Host / QUIC
+      { "protocol": "dns", "action": "hijack-dns" },           // DNS-запросы — своим DNS (раздел dns)
+      { "geosite": ["category-ads-all"], "outbound": "block" },
+      { "ip_is_private": true, "outbound": "direct" },
+      { "geosite": ["category-ru"], "geoip": ["ru"], "outbound": "direct" }
+      // { "rule_set": ["ru-sites"], "outbound": "direct" }
+    ],
+    // "rule_set": [{ "type": "local", "tag": "ru-sites", "format": "binary", "path": "geosite-category-ru.srs" }],
+    "final": "proxy"
+    // Расширения:
+    // "presets": ["block-ads", "private-direct"],   // готовые наборы правил — после своих
+    // "domain_strategy": "ip_if_non_match",         // нет правила для имени — проверить правила по IP
+    // "geosite_file": "geosite.dat",                // базы v2fly (как у Xray), по умолчанию — рядом
+    // "geoip_file": "geoip.dat"
+  },
+
+  // ── DNS ──────────────────────────────────────────────────────────
+  "dns": {
+    "servers": [
+      { "type": "https", "tag": "remote", "server": "1.1.1.1", "detour": "proxy" },
+      { "type": "https", "tag": "local", "server": "common.dot.dns.yandex.net", "detour": "direct" }
+      // { "type": "fakeip", "tag": "fake", "inet4_range": "198.18.0.0/15" }
+    ],
+    "rules": [
+      { "geosite": ["category-ru"], "server": "local" }
+    ],
+    "final": "remote"
+    // "strategy": "prefer_ipv4"
+  }
+
+  // ── Локальное API (clash_api: адрес и секрет) ────────────────────
+  // "experimental": { "clash_api": { "external_controller": "127.0.0.1:9090", "secret": "не-короче-16-символов" } },
+
+  // ── Подписки (расширение) ────────────────────────────────────────
+  // "subscriptions": [{ "tag": "my-panel", "url_file": "subscription.txt" }]
+}

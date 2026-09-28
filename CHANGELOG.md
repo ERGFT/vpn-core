@@ -28,6 +28,9 @@
 - Свой DNS: UDP, TCP, DoT, DoH, DoQ, кеш, fake-IP.
 - Группы `selector`/`urltest`/`fallback`, подписки (base64, sing-box,
   Clash); локальное API; перечитывание настроек без разрыва соединений.
+- Файл настроек в форматах sing-box и Xray-core (JSON, формат
+  определяется сам); неподдерживаемое — ошибка с путём до ключа. Свой
+  формат TOML убран.
 - Против DPI: `fragment`, `noises`.
 - Windows: системный прокси, служба, автозапуск при входе; Linux: systemd.
 
@@ -74,6 +77,9 @@ It will include:
 - Own DNS: UDP, TCP, DoT, DoH, DoQ, cache, fake-IP.
 - `selector`/`urltest`/`fallback` groups, subscriptions (base64, sing-box,
   Clash); local API; config reload without dropping connections.
+- Config file in the sing-box and Xray-core formats (JSON, detected
+  automatically); anything unsupported is an error with the path to the
+  key. The own TOML format has been removed.
 - Anti-DPI: `fragment`, `noises`.
 - Windows: system proxy, service, autostart at logon; Linux: systemd.
 

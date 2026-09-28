@@ -14,8 +14,8 @@ use reality_core::app::{App, Running};
 
 const T: Duration = Duration::from_secs(10);
 
-async fn start(toml: &str) -> Running {
-    let cfg = Config::parse(toml).expect("настройки");
+async fn start(json: &str) -> Running {
+    let cfg = Config::parse(json).expect("настройки");
     App::build(&cfg)
         .expect("сборка")
         .start()
@@ -25,22 +25,14 @@ async fn start(toml: &str) -> Running {
 
 fn cfg(final_: &str) -> String {
     format!(
-        r#"
-[[inbounds]]
-type = "socks"
-listen = "127.0.0.1:0"
-
-[[outbounds]]
-tag = "direct"
-type = "direct"
-
-[[outbounds]]
-tag = "block"
-type = "block"
-
-[route]
-final = "{final_}"
-"#
+        r#"{{
+  "inbounds": [{{ "type": "socks", "listen": "127.0.0.1", "listen_port": 0 }}],
+  "outbounds": [
+    {{ "type": "direct", "tag": "direct" }},
+    {{ "type": "block", "tag": "block" }}
+  ],
+  "route": {{ "final": "{final_}" }}
+}}"#
     )
 }
 
@@ -159,62 +151,70 @@ async fn udp_blocked_is_dropped() {
     );
 }
 
-fn build_err(toml: &str) -> String {
-    match App::build(&Config::parse(toml).expect("разбор")) {
-        Ok(_) => panic!("сборка должна была отказать:\n{toml}"),
+fn build_err(json: &str) -> String {
+    match App::build(&Config::parse(json).expect("разбор")) {
+        Ok(_) => panic!("сборка должна была отказать:\n{json}"),
         Err(e) => e.to_string(),
     }
 }
 
+/// Настройки из входов и выходов (JSON-фрагменты через запятую).
+fn cfg_of(inbounds: &str, outbounds: &str, route: &str) -> String {
+    format!(r#"{{"inbounds": [{inbounds}], "outbounds": [{outbounds}], "route": {{{route}}}}}"#)
+}
+
 #[test]
 fn build_rejects_unsafe_or_broken_settings() {
-    let direct = "[[outbounds]]\ntag='direct'\ntype='direct'\n";
+    let direct = r#"{"type": "direct", "tag": "direct"}"#;
+    let socks = |listen: &str, port: u16, users: &str| {
+        format!(r#"{{"type": "socks", "listen": "{listen}", "listen_port": {port}{users}}}"#)
+    };
 
-    let e = build_err(&format!(
-        "[[inbounds]]\ntype='socks'\nlisten='0.0.0.0:1080'\n{direct}"
-    ));
+    let e = build_err(&cfg_of(&socks("0.0.0.0", 1080, ""), direct, ""));
     assert!(e.contains("без пароля"), "{e}");
 
-    let e = build_err(&format!(
-        "[[inbounds]]\ntype='socks'\nlisten='0.0.0.0:1080'\nauth='u:short'\n{direct}"
-    ));
+    let short = r#", "users": [{"username": "u", "password": "short"}]"#;
+    let e = build_err(&cfg_of(&socks("0.0.0.0", 1080, short), direct, ""));
     assert!(e.contains("короче"), "{e}");
 
-    let e = build_err(&format!(
-        "[[inbounds]]\ntype='socks'\nlisten='127.0.0.1:1080'\n{direct}{direct}"
+    let e = build_err(&cfg_of(
+        &socks("127.0.0.1", 1080, ""),
+        &format!("{direct}, {direct}"),
+        "",
     ));
     assert!(e.contains("одинаковым tag"), "{e}");
 
-    let e = build_err(&format!(
-        "[[inbounds]]\ntype='socks'\nlisten='127.0.0.1:1080'\n{direct}[route]\nfinal='nope'\n"
+    let e = build_err(&cfg_of(
+        &socks("127.0.0.1", 1080, ""),
+        direct,
+        r#""final": "nope""#,
     ));
     assert!(e.contains("nope"), "{e}");
 
-    let e = build_err(direct);
+    let e = build_err(&cfg_of("", direct, ""));
     assert!(e.contains("вход"), "{e}");
 
-    let e = build_err("[[inbounds]]\ntype='socks'\nlisten='127.0.0.1:1080'\n");
+    let e = build_err(&cfg_of(&socks("127.0.0.1", 1080, ""), "", ""));
     assert!(e.contains("выход"), "{e}");
 
-    let e = build_err(
-        "[[inbounds]]\ntype='socks'\nlisten='127.0.0.1:1080'\n\
-         [[outbounds]]\ntag='p'\ntype='vless'\n\
-         link='vless://11111111-2222-3333-4444-555555555555@example.com:443?security=none'\n",
-    );
+    // Без tls — без шифрования: нужен явный allow_insecure.
+    let plain = r#"{"type": "vless", "tag": "p", "server": "example.com", "server_port": 443,
+                   "uuid": "11111111-2222-3333-4444-555555555555"}"#;
+    let e = build_err(&cfg_of(&socks("127.0.0.1", 1080, ""), plain, ""));
     assert!(e.contains("allow_insecure"), "{e}");
 
-    let e = build_err(
-        "[[inbounds]]\ntype='socks'\nlisten='127.0.0.1:1080'\n\
-         [[outbounds]]\ntag='p'\ntype='vless'\n",
-    );
-    assert!(e.contains("link"), "{e}");
+    // Сервер без адреса — ошибка разбора с путём до ключа.
+    let e = Config::parse(&cfg_of(
+        &socks("127.0.0.1", 1080, ""),
+        r#"{"type": "vless", "tag": "p"}"#,
+        "",
+    ))
+    .unwrap_err()
+    .to_string();
+    assert!(e.contains("outbounds[0].uuid"), "{e}");
 
     // С паролем достаточной длины открыть в сеть можно.
-    App::build(
-        &Config::parse(&format!(
-            "[[inbounds]]\ntype='socks'\nlisten='0.0.0.0:1080'\nauth='u:long-enough-password'\n{direct}"
-        ))
-        .unwrap(),
-    )
-    .expect("пароль длинный — сборка проходит");
+    let long = r#", "users": [{"username": "u", "password": "long-enough-password"}]"#;
+    App::build(&Config::parse(&cfg_of(&socks("0.0.0.0", 1080, long), direct, "")).unwrap())
+        .expect("пароль длинный — сборка проходит");
 }

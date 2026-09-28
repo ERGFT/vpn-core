@@ -106,11 +106,11 @@ VPN: traffic goes through it only for programs that use this proxy.
 ### Autostart
 
 - **With the system proxy, at Windows logon** (regular user):
-  `reality-client.exe --autostart-install --config C:\path\client.toml --system-proxy`.
+  `reality-client.exe --autostart-install --config C:\path\config.json --system-proxy`.
   The client starts without a window; the log is `reality-client.log` next
   to the config. Remove: `--autostart-uninstall`.
 - **Service — for TUN** (starts before logon, run as administrator):
-  `reality-client.exe --service-install --config C:\path\client.toml`.
+  `reality-client.exe --service-install --config C:\path\config.json`.
   The config, the files next to it, `reality-client.exe` and `wintun.dll` are
   copied to `C:\ProgramData\RealityClient` — only administrators can change
   this folder (the service runs as SYSTEM, and a regular program cannot
@@ -121,12 +121,14 @@ VPN: traffic goes through it only for programs that use this proxy.
 
 ## 5. More options
 
-- `--config client.toml` — config file: multiple inbounds and outbounds,
-  routing rules (ads to `block`, Russian sites and the local network direct,
-  etc.). Example — `examples/client.toml`. Write Windows paths in the file in
-  single quotes: `link_file = 'C:\Users\me\server.txt'`. Check the file
-  without starting anything: `--config client.toml --check`.
-- **TUN — like a real VPN** (the `type = "tun"` inbound, see the README):
+- `--config config.json` — config file in the sing-box or Xray-core format:
+  multiple inbounds and outbounds, routing rules (ads to `block`, Russian
+  sites and the local network direct, etc.). Examples —
+  `examples/sing-box.json`, `examples/xray.json`. Double the backslashes of
+  Windows paths in JSON (`"link_file": "C:\\Users\\me\\server.txt"`) or use
+  forward slashes: `"C:/Users/me/server.txt"`. Check the file without
+  starting anything: `--config config.json --check`.
+- **TUN — like a real VPN** (the `"type": "tun"` inbound, see the README):
   traffic from all programs goes through the client. Run as administrator
   and put `wintun.dll` next to `reality-client.exe` (from
   [wintun.net](https://www.wintun.net/), the `amd64` folder).
@@ -134,7 +136,7 @@ VPN: traffic goes through it only for programs that use this proxy.
   fall back to IPv4 right away). There is no kill switch (`strict_route`)
   on Windows yet. If something goes wrong, close the client: the routes
   disappear together with the interface.
-- Own DNS (the `[dns]` section and the `type = "dns"` inbound in the config,
+- Own DNS (the `dns` section and a DNS inbound in the config,
   see the README): if you set `127.0.0.1` in "Settings → Network & Internet →
   Adapter properties → DNS", all programs' name lookups go through the
   client — encrypted (DoH/DoT) and through the server, not in plain text over

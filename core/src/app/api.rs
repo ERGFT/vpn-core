@@ -3,11 +3,13 @@
 //! подписки, перечитать настройки. HTTP/1.1 + JSON, как у Clash/sing-box
 //! (но без веб-панели).
 //!
-//! ```toml
-//! [api]
-//! listen = "127.0.0.1:9090"
-//! token_file = "api-token.txt"     # или token = "…" (не короче 16 символов)
+//! ```json
+//! "experimental": {
+//!   "clash_api": { "external_controller": "127.0.0.1:9090", "secret_file": "api-token.txt" }
+//! }
 //! ```
+//!
+//! (или `"secret": "…"`, не короче 16 символов)
 //!
 //! | Запрос | Что делает |
 //! |---|---|

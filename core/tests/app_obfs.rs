@@ -12,8 +12,8 @@ use reality_core::app::{App, Running};
 
 const T: Duration = Duration::from_secs(10);
 
-async fn start(toml: &str) -> Running {
-    let cfg = Config::parse(toml).expect("настройки");
+async fn start(json: &str) -> Running {
+    let cfg = Config::parse(json).expect("настройки");
     App::build(&cfg)
         .expect("сборка")
         .start()
@@ -69,16 +69,13 @@ async fn direct_fragments_client_hello() {
         let _ = tx.send((got, reads));
     });
     let r = start(
-        r#"
-[[inbounds]]
-type = "socks"
-listen = "127.0.0.1:0"
-
-[[outbounds]]
-tag = "direct"
-type = "direct"
-fragment = { packets = "tlshello", length = "40-60", interval = "3-5" }
-"#,
+        r#"{
+  "inbounds": [{ "type": "socks", "listen": "127.0.0.1", "listen_port": 0 }],
+  "outbounds": [{
+    "type": "direct", "tag": "direct",
+    "fragment": { "packets": "tlshello", "length": "40-60", "interval": "3-5" }
+  }]
+}"#,
     )
     .await;
     let mut s = TcpStream::connect(r.listen_addrs[0]).await.unwrap();
@@ -116,19 +113,16 @@ async fn direct_udp_sends_noise_first() {
     let srv = UdpSocket::bind("127.0.0.1:0").await.unwrap();
     let srv_addr = srv.local_addr().unwrap();
     let r = start(
-        r#"
-[[inbounds]]
-type = "socks"
-listen = "127.0.0.1:0"
-
-[[outbounds]]
-tag = "direct"
-type = "direct"
-noises = [
-  { type = "str", packet = "hello-noise", delay = 5 },
-  { type = "rand", packet = "30-40" },
-]
-"#,
+        r#"{
+  "inbounds": [{ "type": "socks", "listen": "127.0.0.1", "listen_port": 0 }],
+  "outbounds": [{
+    "type": "direct", "tag": "direct",
+    "noises": [
+      { "type": "str", "packet": "hello-noise", "delay": 5 },
+      { "type": "rand", "packet": "30-40" }
+    ]
+  }]
+}"#,
     )
     .await;
     let app_udp = UdpSocket::bind("127.0.0.1:0").await.unwrap();
@@ -164,29 +158,33 @@ noises = [
 
 #[test]
 fn obfs_config_errors() {
-    for (toml, want) in [
+    for (out, want) in [
         (
-            "[[outbounds]]\ntag='b'\ntype='block'\nfragment={packets='tlshello',length=5,interval=0}\n",
-            "только у vless, trojan и direct",
+            r#"{"type": "block", "tag": "b", "fragment": {"packets": "tlshello", "length": 5, "interval": 0}}"#,
+            "outbounds[0] неизвестные или неподдерживаемые ключи: fragment",
         ),
         (
-            "[[outbounds]]\ntag='d'\ntype='direct'\nfragment={packets='0-1',length=5,interval=0}\n",
+            r#"{"type": "direct", "tag": "d", "fragment": {"packets": "0-1", "length": 5, "interval": 0}}"#,
             "с 1",
         ),
         (
-            "[[outbounds]]\ntag='v'\ntype='vless'\nlink='vless://11111111-1111-1111-1111-111111111111@h.example:443?security=tls'\nnoises=[{type='str',packet='x'}]\n",
-            "только у direct",
+            r#"{"type": "vless", "tag": "v", "server": "h.example", "server_port": 443,
+                "uuid": "11111111-1111-1111-1111-111111111111", "tls": {"enabled": true},
+                "noises": [{"type": "str", "packet": "x"}]}"#,
+            "noises",
         ),
         (
-            "[[outbounds]]\ntag='d'\ntype='direct'\nnoises=[{type='rand',packet='0'}]\n",
+            r#"{"type": "direct", "tag": "d", "noises": [{"type": "rand", "packet": "0"}]}"#,
             "rand",
         ),
     ] {
-        let full = format!("[[inbounds]]\ntype='socks'\nlisten='127.0.0.1:0'\n{toml}");
+        let full = format!(
+            r#"{{"inbounds": [{{"type": "socks", "listen": "127.0.0.1", "listen_port": 0}}], "outbounds": [{out}]}}"#
+        );
         let e = match Config::parse(&full) {
             Err(e) => e.to_string(),
             Ok(c) => App::build(&c).err().expect("ошибка").to_string(),
         };
-        assert!(e.contains(want), "{toml}\n→ {e}");
+        assert!(e.contains(want), "{out}\n→ {e}");
     }
 }

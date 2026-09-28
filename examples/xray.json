@@ -1,0 +1,73 @@
+// Пример настроек reality-client в формате Xray-core:
+//   reality-client --config xray.json          (проверить: --check)
+//
+// Формат — как у Xray-core (комментарии разрешены); подходят и готовые
+// клиентские настройки Xray (v2rayN, панели). Чего это ядро не умеет, то
+// при запуске будет названо с путём до ключа, а не пропущено молча.
+{
+  "log": { "loglevel": "warning" },     // уровень журнала задаёт RUST_LOG
+  "inbounds": [
+    {
+      "tag": "socks",
+      "protocol": "socks",              // "http", "mixed", "tun"
+      "listen": "127.0.0.1",
+      "port": 1080,
+      "settings": { "udp": true },
+      "sniffing": { "enabled": true, "destOverride": ["http", "tls", "quic"], "routeOnly": true }
+    }
+    // DNS-сервер для системы: dokodemo-door, отправленный маршрутизацией в выход dns:
+    // { "tag": "dns-in", "protocol": "dokodemo-door", "listen": "127.0.0.1", "port": 53,
+    //   "settings": { "address": "1.1.1.1", "port": 53, "network": "tcp,udp" } }
+  ],
+  "outbounds": [
+    {
+      "tag": "proxy",
+      "protocol": "vless",
+      "settings": {
+        "vnext": [{
+          "address": "server.example.com",
+          "port": 443,
+          "users": [{ "id": "b831381d-6324-4d53-ad4f-8cda48b30811", "encryption": "none", "flow": "xtls-rprx-vision" }]
+        }]
+      },
+      "streamSettings": {
+        "network": "raw",               // ws, grpc, httpupgrade, xhttp
+        "security": "reality",
+        "realitySettings": {
+          "serverName": "www.example.com",
+          "fingerprint": "chrome",
+          "publicKey": "Z84J2IelR9ch3k8VtlVhhs5ycBUlXA7wHBWcBrjqnAw",
+          "shortId": "6ba85179e30d4fc2"
+        }
+      }
+      // "mux": { "enabled": true, "concurrency": 8 }    // не вместе с Vision
+    },
+    {
+      "tag": "direct",
+      "protocol": "freedom"
+      // "settings": { "fragment": { "packets": "tlshello", "length": "100-200", "interval": "10-20" },
+      //               "noises": [{ "type": "rand", "packet": "10-20", "delay": "10-16" }] }
+    },
+    { "tag": "block", "protocol": "blackhole" }
+    // { "tag": "dns-out", "protocol": "dns" }
+  ],
+  "routing": {
+    "domainStrategy": "AsIs",           // или IPIfNonMatch
+    "rules": [
+      { "type": "field", "domain": ["geosite:category-ads-all"], "outboundTag": "block" },
+      { "type": "field", "ip": ["geoip:private"], "outboundTag": "direct" },
+      { "type": "field", "domain": ["geosite:category-ru"], "outboundTag": "direct" },
+      { "type": "field", "ip": ["geoip:ru"], "outboundTag": "direct" }
+      // { "type": "field", "inboundTag": ["dns-in"], "outboundTag": "dns-out" }
+    ]
+    // Балансировщик (leastPing — самый быстрый) и observatory для проверки:
+    // "balancers": [{ "tag": "auto", "selector": ["proxy"], "strategy": { "type": "leastPing" } }]
+  },
+  // "observatory": { "subjectSelector": ["proxy"], "probeURL": "https://www.gstatic.com/generate_204", "probeInterval": "3m" },
+  "dns": {
+    "servers": [
+      "https://1.1.1.1/dns-query",
+      { "address": "https+local://common.dot.dns.yandex.net/dns-query", "domains": ["geosite:category-ru"] }
+    ]
+  }
+}

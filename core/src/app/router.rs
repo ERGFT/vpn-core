@@ -77,7 +77,7 @@ impl Router {
             Some(t) => map
                 .get(t)
                 .cloned()
-                .ok_or_else(|| Error::Config(format!("route.final: нет выхода с tag = \"{t}\"")))?,
+                .ok_or_else(|| Error::Config(format!("route.final: нет выхода «{t}»")))?,
             None => first,
         };
         let mut rules = Vec::with_capacity(route.rules.len());
@@ -270,11 +270,13 @@ mod tests {
     }
 
     fn router(dir: &Path, rules: &str) -> Router {
+        // Пути — строкой JSON: в Windows-путях есть «\».
+        let q = |f: &str| serde_json::to_string(&dir.join(f).display().to_string()).unwrap();
         let cfg = Config::parse(&format!(
-            // Пути — в одинарных кавычках: в Windows-путях есть «\».
-            "{rules}\n[route]\nfinal = \"proxy\"\ngeosite_file = '{}'\ngeoip_file = '{}'\n",
-            dir.join("geosite.dat").display(),
-            dir.join("geoip.dat").display()
+            r#"{{"route": {{"rules": [{rules}], "final": "proxy",
+                           "geosite_file": {}, "geoip_file": {}}}}}"#,
+            q("geosite.dat"),
+            q("geoip.dat")
         ))
         .unwrap();
         let geo = GeoFiles::load(
@@ -313,16 +315,8 @@ mod tests {
         std::fs::write(dir.join("geoip.dat"), build_ips(&[("ru", &["5.8.0.0/16"])])).unwrap();
         let r = router(
             &dir,
-            r#"
-[[route.rules]]
-geosite = ["category-ads"]
-outbound = "block"
-
-[[route.rules]]
-geosite = ["ru"]
-geoip = ["RU"]
-outbound = "direct"
-"#,
+            r#"{"geosite": ["category-ads"], "outbound": "block"},
+               {"geosite": ["ru"], "geoip": ["RU"], "outbound": "direct"}"#,
         );
         let pick = |m: Metadata| r.select(&m).tag().to_string();
         assert_eq!(pick(meta(dom("x.adnet.test"), None)), "block");
@@ -366,16 +360,8 @@ outbound = "direct"
         let dir = std::path::PathBuf::from(std::env::var("GEO_DIR").unwrap());
         let r = router(
             &dir,
-            r#"
-[[route.rules]]
-geosite = ["category-ads-all"]
-outbound = "block"
-
-[[route.rules]]
-geosite = ["category-ru"]
-geoip = ["ru", "private"]
-outbound = "direct"
-"#,
+            r#"{"geosite": ["category-ads-all"], "outbound": "block"},
+               {"geosite": ["category-ru"], "geoip": ["ru", "private"], "outbound": "direct"}"#,
         );
         let pick = |m: Metadata| r.select(&m).tag().to_string();
         assert_eq!(pick(meta(dom("doubleclick.net"), None)), "block");
