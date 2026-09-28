@@ -50,7 +50,7 @@
 | Sniffing: домен по TLS SNI и HTTP Host, когда приложение прислало IP; в TUN — и по QUIC (HTTP/3, v1 и v2) | ✅ QUIC проверен на векторах RFC 9001/9369 и настоящих пакетах Chromium (ClientHello на два пакета, перемешанные CRYPTO-кадры) |
 | Системный прокси Windows (`--system-proxy`) | ✅ проверен под Wine |
 | Автозапуск: служба Windows (`--service-install`, настройки в закрытой папке ProgramData), запуск при входе (`--autostart-install`), systemd на Linux | ✅ служба — на настоящей Windows (CI: установка, права папки ProgramData, остановка и запуск, удаление); автозапуск при входе — под Wine |
-| TUN — весь трафик компьютера (как VPN): свой TCP/IP-стек, `auto_route`, перехват DNS, fake-IP, `route_exclude`, kill switch `strict_route` | ✅ Linux — проверен против Xray в изолированном netns (TCP, UDP, DNS, fake-IP, ~200 МиБ/с, устойчив к потерям пакетов); ✅ Windows (Wintun) — на настоящей Windows (CI: служба, `auto_route`, HTTPS через TUN); kill switch — только Linux |
+| TUN — весь трафик компьютера (как VPN): свой TCP/IP-стек, `auto_route`, перехват DNS, fake-IP, `route_exclude`, kill switch `strict_route` | ✅ Linux — проверен против Xray в изолированном netns (TCP, UDP, DNS, fake-IP, ~200 МиБ/с, устойчив к потерям пакетов); ✅ Windows (Wintun) — на настоящей Windows (CI: служба, `auto_route`, HTTPS через TUN, kill switch: процесс убит — сеть закрыта) |
 | Свой DNS: серверы UDP, TCP, DoT, DoH, DNS over QUIC (`quic://`), системный; выбор сервера по доменам и geosite; кеш; вход DNS-сервера; перехват DNS (`hijack-dns`); fake-IP; `domain_strategy`: `ip_if_non_match` | ✅ DoH/DoT/DoQ проверены на своих серверах, UDP-DNS и DoQ — через Xray (XUDP) |
 | Mux.Cool для TCP (`"mux": 8` у выхода или подписки; не вместе с Vision) | ✅ проверен против Xray-core |
 | Общие HTTP/2-соединения: gRPC — все потоки в одном соединении (как у Xray), xhttp — `xmux` (умолчания Xray: 16–32 сессии на соединение; и для HTTP/2, и для HTTP/3) | ✅ проверено против Xray-core (счёт соединений) |
@@ -460,7 +460,7 @@ curl -N -H "$T" "http://127.0.0.1:9090/logs?level=warning"
   { "type": "tun", "tag": "tun",
     "address": ["172.19.0.1/30"],               // по умолчанию и fdfe:dcba:9876::1/126
     "auto_route": true,                         // весь трафик в TUN (по умолчанию)
-    "strict_route": true,                       // kill switch (Linux)
+    "strict_route": true,                       // kill switch
     "route_exclude_address": ["192.168.0.0/16"] }
 ],
 "route": {
@@ -492,15 +492,19 @@ curl -N -H "$T" "http://127.0.0.1:9090/logs?level=warning"
   уже с именем через сервер.
 - Выход из клиента (Ctrl+C, закрытие окна) возвращает маршруты. Если
   клиент убит, интерфейс исчезает вместе со своими маршрутами — сеть
-  снова работает напрямую. С `strict_route` (Linux) — наоборот: сеть
-  остаётся закрытой (kill switch), пока клиент не запущен снова или не
-  выполнено `reality-client --tun-cleanup`.
+  снова работает напрямую. С `strict_route` — наоборот: сеть остаётся
+  закрытой (kill switch), пока клиент не запущен снова или не выполнено
+  `reality-client --tun-cleanup` (открыты только `route_exclude_address`
+  и служебное: DHCP, для IPv6 — NDP). На Linux это правило `unreachable`,
+  на Windows — стойкие фильтры WFP (переживают и перезагрузку); служба
+  Windows после сбоя перезапускается сама. После сбоя системный DNS тоже
+  закрыт: имя сервера при перезапуске разрешится, если адрес сервера —
+  IP или в разделе `dns` есть сервер по IP с `"detour": "direct"`.
 - Системный DNS-сервер (`"type": "local"`) вместе с TUN — ошибка
   настроек: системный DNS сам идёт через TUN (петля).
 - Ограничения: ICMP (ping) через TUN не проходит; на Windows
-  `route_exclude_address` — только IPv4, kill switch нет, а при
-  исключённой локальной сети Windows может спрашивать DNS роутера
-  напрямую.
+  `route_exclude_address` — только IPv4, а при исключённой локальной сети
+  Windows может спрашивать DNS роутера напрямую.
 
 ### DNS
 

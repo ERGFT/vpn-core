@@ -48,7 +48,7 @@ what works and what does not is listed honestly below.
 | Sniffing: domain from TLS SNI and HTTP Host when the app sent an IP; in TUN — also from QUIC (HTTP/3, v1 and v2) | ✅ QUIC tested on RFC 9001/9369 vectors and real Chromium packets (ClientHello split across two packets, shuffled CRYPTO frames) |
 | Windows system proxy (`--system-proxy`) | ✅ tested under Wine |
 | Autostart: Windows service (`--service-install`, config in a locked-down ProgramData folder), start at logon (`--autostart-install`), systemd on Linux | ✅ service — on real Windows (CI: install, ProgramData folder permissions, stop and start, removal); autostart at logon — under Wine |
-| TUN — all of the computer's traffic (like a VPN): own TCP/IP stack, `auto_route`, DNS hijacking, fake-IP, `route_exclude`, `strict_route` kill switch | ✅ Linux — tested against Xray in an isolated netns (TCP, UDP, DNS, fake-IP, ~200 MiB/s, resilient to packet loss); ✅ Windows (Wintun) — on real Windows (CI: service, `auto_route`, HTTPS through TUN); kill switch — Linux only |
+| TUN — all of the computer's traffic (like a VPN): own TCP/IP stack, `auto_route`, DNS hijacking, fake-IP, `route_exclude`, `strict_route` kill switch | ✅ Linux — tested against Xray in an isolated netns (TCP, UDP, DNS, fake-IP, ~200 MiB/s, resilient to packet loss); ✅ Windows (Wintun) — on real Windows (CI: service, `auto_route`, HTTPS through TUN, kill switch: process killed — network closed) |
 | Own DNS: UDP, TCP, DoT, DoH, DNS over QUIC (`quic://`) and system servers; server selection by domain and geosite; cache; DNS server inbound; DNS hijacking (`hijack-dns`); fake-IP; `domain_strategy`: `ip_if_non_match` | ✅ DoH/DoT/DoQ tested on own servers, UDP DNS and DoQ — through Xray (XUDP) |
 | Mux.Cool for TCP (`"mux": 8` on an outbound or subscription; not together with Vision) | ✅ tested against Xray-core |
 | Shared HTTP/2 connections: gRPC — all streams in one connection (as in Xray), xhttp — `xmux` (Xray defaults: 16–32 sessions per connection; for both HTTP/2 and HTTP/3) | ✅ tested against Xray-core (connection count) |
@@ -464,7 +464,7 @@ proxy:
   { "type": "tun", "tag": "tun",
     "address": ["172.19.0.1/30"],               // default, plus fdfe:dcba:9876::1/126
     "auto_route": true,                         // all traffic into TUN (default)
-    "strict_route": true,                       // kill switch (Linux)
+    "strict_route": true,                       // kill switch
     "route_exclude_address": ["192.168.0.0/16"] }
 ],
 "route": {
@@ -496,14 +496,20 @@ DNS is hijacked by an `inboundTag` rule → a `dns` outbound.
   connects by name through the server.
 - Exiting the client (Ctrl+C, closing the window) restores the routes. If
   the client is killed, the interface disappears together with its routes —
-  the network works directly again. With `strict_route` (Linux) — the
-  opposite: the network stays closed (kill switch) until the client is
-  started again or `reality-client --tun-cleanup` is run.
+  the network works directly again. With `strict_route` — the opposite:
+  the network stays closed (kill switch) until the client is started again
+  or `reality-client --tun-cleanup` is run (only `route_exclude_address`
+  and essentials stay open: DHCP, and NDP for IPv6). On Linux this is an
+  `unreachable` rule, on Windows — persistent WFP filters (they survive
+  even a reboot); the Windows service restarts itself after a crash. After
+  a crash the system DNS is closed too: the server name resolves on restart
+  if the server address is an IP or the `dns` section has a server by IP
+  with `"detour": "direct"`.
 - A system DNS server (`"type": "local"`) together with TUN is a config
   error: system DNS itself goes through TUN (a loop).
 - Limitations: ICMP (ping) does not pass through TUN; on Windows
-  `route_exclude_address` is IPv4 only, there is no kill switch, and with
-  the local network excluded Windows may query the router's DNS directly.
+  `route_exclude_address` is IPv4 only, and with the local network
+  excluded Windows may query the router's DNS directly.
 
 ### DNS
 

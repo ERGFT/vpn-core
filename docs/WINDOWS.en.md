@@ -133,9 +133,12 @@ VPN: traffic goes through it only for programs that use this proxy.
   and put `wintun.dll` next to `reality-client.exe` (from
   [wintun.net](https://www.wintun.net/), the `amd64` folder).
   Without IPv6 on the computer, IPv6 is not routed into TUN (programs
-  fall back to IPv4 right away). There is no kill switch (`strict_route`)
-  on Windows yet. If something goes wrong, close the client: the routes
-  disappear together with the interface.
+  fall back to IPv4 right away). If something goes wrong, close the
+  client: the routes disappear together with the interface. Kill switch —
+  `"strict_route": true` on the tun inbound: if the client crashes, the
+  network stays closed (Windows Filtering Platform filters) until it is
+  started again; to open it manually run `reality-client.exe --tun-cleanup`
+  as administrator.
 - Own DNS (the `dns` section and a DNS inbound in the config,
   see the README): if you set `127.0.0.1` in "Settings → Network & Internet →
   Adapter properties → DNS", all programs' name lookups go through the

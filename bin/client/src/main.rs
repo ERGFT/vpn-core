@@ -81,8 +81,9 @@ struct Args {
     #[arg(long, exclusive = true)]
     system_proxy_off: bool,
 
-    /// Linux: снять правила маршрутизации TUN (и блокировку strict_route),
-    /// оставшиеся после аварийного завершения, и выйти
+    /// Снять то, что TUN оставил после аварийного завершения (Linux —
+    /// правила маршрутизации и блокировку strict_route, Windows — kill
+    /// switch WFP), и выйти
     #[arg(long, exclusive = true)]
     tun_cleanup: bool,
 

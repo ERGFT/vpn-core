@@ -16,7 +16,9 @@
 //! Windows: маршруты `0.0.0.0/1` и `128.0.0.0/1` (и `::/1`, `8000::/1`)
 //! через TUN — они точнее маршрута по умолчанию; соединения клиента
 //! привязаны к физическому интерфейсу (`IP_UNICAST_IF`). Маршруты живут,
-//! пока жив интерфейс.
+//! пока жив интерфейс. `strict_route` (kill switch) — стойкие фильтры WFP
+//! ([`super::wfp`]): убитый клиент так же оставляет сеть закрытой до
+//! нового запуска или `--tun-cleanup`.
 
 use crate::app::access::IpNet;
 use crate::error::{Error, Result};
@@ -35,10 +37,19 @@ const PREF_BLOCK: u32 = 9002;
 /// Пока жив — трафик идёт в TUN; при уничтожении маршруты снимаются.
 pub struct RouteGuard {
     down: Vec<Vec<String>>,
+    /// Включён kill switch WFP (Windows).
+    #[cfg(windows)]
+    wfp: bool,
 }
 
 impl Drop for RouteGuard {
     fn drop(&mut self) {
+        #[cfg(windows)]
+        if self.wfp {
+            if let Err(e) = super::wfp::disable() {
+                tracing::warn!(error = %e, "tun: kill switch не снят — reality-client --tun-cleanup");
+            }
+        }
         for cmd in &self.down {
             let _ = run(cmd, true);
         }
@@ -84,12 +95,7 @@ pub fn setup(
     }
     #[cfg(windows)]
     {
-        if strict {
-            return Err(Error::Config(
-                "tun: strict_route (kill switch) пока есть только на Linux".into(),
-            ));
-        }
-        windows(ifname, if_index, v6, exclude)
+        windows(ifname, if_index, v6, exclude, strict)
     }
     #[cfg(not(any(target_os = "linux", windows)))]
     {
@@ -100,8 +106,9 @@ pub fn setup(
     }
 }
 
-/// Снять правила и таблицу TUN, оставшиеся после аварийного завершения
-/// (в том числе блокировку `strict_route`). Linux.
+/// Снять то, что осталось после аварийного завершения: на Linux — правила
+/// и таблицу TUN (в том числе блокировку `strict_route`), на Windows —
+/// kill switch WFP (маршруты там исчезают вместе с интерфейсом).
 pub fn cleanup() -> Result<()> {
     #[cfg(target_os = "linux")]
     {
@@ -110,10 +117,14 @@ pub fn cleanup() -> Result<()> {
         }
         Ok(())
     }
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(windows)]
+    {
+        super::wfp::disable()
+    }
+    #[cfg(not(any(target_os = "linux", windows)))]
     {
         Err(Error::Config(
-            "--tun-cleanup нужен только на Linux: на Windows маршруты исчезают вместе с интерфейсом".into(),
+            "--tun-cleanup нужен только на Linux и Windows".into(),
         ))
     }
 }
@@ -191,7 +202,13 @@ fn linux(ifname: &str, v6: bool, exclude: &[IpNet], strict: bool) -> Result<Rout
 }
 
 #[cfg(windows)]
-fn windows(ifname: &str, if_index: Option<u32>, v6: bool, exclude: &[IpNet]) -> Result<RouteGuard> {
+fn windows(
+    ifname: &str,
+    if_index: Option<u32>,
+    v6: bool,
+    exclude: &[IpNet],
+    strict: bool,
+) -> Result<RouteGuard> {
     use std::net::IpAddr;
     let idx = if_index.ok_or_else(|| Error::Config("tun: не известен номер интерфейса".into()))?;
     let phys4 = winapi::best_interface(IpAddr::from([1, 1, 1, 1])).ok_or_else(|| {
@@ -242,9 +259,13 @@ fn windows(ifname: &str, if_index: Option<u32>, v6: bool, exclude: &[IpNet]) -> 
     if exclude.iter().any(|n| n.addr().is_ipv6()) {
         tracing::warn!("tun: route_exclude для IPv6 на Windows пока не поддерживается");
     }
-    let guard = RouteGuard { down };
+    let mut guard = RouteGuard { down, wfp: false };
     for cmd in &up {
         run(cmd, false)?;
+    }
+    if strict {
+        super::wfp::enable(idx, exclude)?;
+        guard.wfp = true;
     }
     tracing::info!(interface = ifname, "tun: весь трафик направлен в TUN");
     Ok(guard)
