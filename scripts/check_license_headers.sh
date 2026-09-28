@@ -3,7 +3,8 @@
 # Проверка, что у каждого своего исходника (не vendor/) в первых строках
 # есть SPDX-метка лицензии проекта. Новый файл без неё — ошибка с его
 # именем; добавить: `// SPDX-License-Identifier: GPL-3.0-or-later`
-# (или `#` для sh/ps1/py; у скриптов — сразу после строки #!).
+# (или `#` для sh/ps1/py; у скриптов — сразу после строки #!; в C —
+# `/* SPDX-License-Identifier: GPL-3.0-or-later */`).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -14,7 +15,7 @@ while IFS= read -r f; do
         echo "нет SPDX-метки: $f"
         missing=1
     fi
-done < <(git ls-files '*.rs' '*.go' '*.sh' '*.ps1' '*.py' ':!vendor/')
+done < <(git ls-files '*.rs' '*.go' '*.sh' '*.ps1' '*.py' '*.c' '*.h' ':!vendor/')
 
 [[ $missing -eq 0 ]] && echo "SPDX-метки на месте"
 exit "$missing"

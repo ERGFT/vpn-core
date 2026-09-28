@@ -279,6 +279,45 @@ impl Api {
         }))
     }
 
+    /// API без сети — для режима библиотеки: запросы идут вызовом
+    /// [`Api::local`] из того же процесса, без токена.
+    pub fn embedded(tracker: Arc<Tracker>, control: Arc<dyn Control>) -> Arc<Self> {
+        let token: String = (0..32)
+            .map(|_| char::from(b'a' + rand::random::<u8>() % 26))
+            .collect();
+        Arc::new(Api {
+            listen: SocketAddr::from(([127, 0, 0, 1], 0)),
+            token,
+            allow_ip: Vec::new(),
+            allow_origin: Vec::new(),
+            allow_private_network: false,
+            ui: None,
+            tracker,
+            control,
+            failures: AtomicU32::new(0),
+            streams: Arc::new(Semaphore::new(MAX_STREAMS)),
+        })
+    }
+
+    /// Запрос из того же процесса (режим библиотеки): те же пути и ответы,
+    /// что по HTTP, без проверок токена и браузера. Потоки так недоступны —
+    /// для них подписки на события и журнал.
+    pub async fn local(&self, method: &str, path: &str, body: &[u8]) -> (u16, Vec<u8>) {
+        let req = Request {
+            method: method.to_ascii_uppercase(),
+            path: path.to_string(),
+            headers: Vec::new(),
+            body: body.to_vec(),
+            close: false,
+        };
+        if feed_of(&req).is_some() {
+            let r = Reply::err(400, "потоки в режиме библиотеки — через обратные вызовы");
+            return (r.code, r.body);
+        }
+        let r = self.route(&req).await;
+        (r.code, r.body)
+    }
+
     pub async fn serve(self: Arc<Self>, l: TcpListener) -> Result<()> {
         let local = l.local_addr()?;
         let sem = Arc::new(tokio::sync::Semaphore::new(32));

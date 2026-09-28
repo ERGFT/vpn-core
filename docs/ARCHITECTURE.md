@@ -76,6 +76,7 @@ httpupgrade, xhttp), напрямую или никуда. Сам графиче
 | `core/` | `reality-core` (библиотека) | всё ядро: протоколы, транспорты, REALITY, приложение |
 | `bin/client/` | `reality-client` | программа: ключи командной строки, запуск, служба и системный прокси Windows |
 | `bin/fpcheck/` | `fpcheck` | снимает JA3/JA4 того ClientHello, что клиент реально отправляет |
+| `ffi/` | `reality-ffi` (`libreality`) | ядро как библиотека: C ABI для приложений ([LIBRARY.md](LIBRARY.md)) |
 | `bench/` | `bench` | criterion-замеры и `memwatch` (память процесса под нагрузкой, Linux) |
 | `vendor/rustls-reality-patch/` | `rustls` 0.23.45 с патчем | хук REALITY в ClientHello, GREASE, порядок расширений Chrome; подключается через `[patch.crates-io]` |
 | `interop/go-reality-server/` | Go | тестовый REALITY-сервер на библиотеке XTLS/REALITY |
@@ -1213,6 +1214,20 @@ API совместимо с Clash API — как у sing-box и mihomo: гото
   - TUN — Wintun; маршруты `/1`; `IP_UNICAST_IF`; kill switch — WFP.
 - **Прочие ОС**: ядро собирается там, где собираются tokio и rustls; TUN и
   защита сокетов — только Linux и Windows.
+- **Встроенное в приложение** (`ffi/`, [LIBRARY.md](LIBRARY.md)):
+  - C ABI `rc_start`/`rc_request`/`rc_reload`/`rc_stop` и обратные вызовы
+    событий и журнала;
+  - `rc_request` — тот же API, что по HTTP (`Api::embedded` +
+    `Api::local`: разбор пути и ответы общие, без сети, токена и
+    проверок браузера);
+  - на Android и iOS приложение отдаёт готовый дескриптор TUN
+    (`InboundConfig::tun_fd` → `AsyncDevice::from_fd`; маршруты и kill
+    switch тогда ставит система);
+  - сокеты ядра «защищает» обратный вызов приложения
+    (`net_protect::set_callback` → `VpnService.protect`).
+
+  Своя среда выполнения tokio на каждое ядро (2 рабочих потока);
+  паника не выходит за границу C.
 
 ## 21. Тесты и проверка
 

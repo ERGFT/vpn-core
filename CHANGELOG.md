@@ -39,6 +39,9 @@
   применить без разрыва соединений, сохранить (с `.bak`).
 - Kill switch (`strict_route`) на Windows — стойкие фильтры WFP: если
   клиент упал, сеть закрыта до нового запуска или `--tun-cleanup`.
+- Ядро как библиотека (`libreality`, C ABI, `reality.h`): запуск,
+  API вызовом функции, события и журнал обратными вызовами; для Android и
+  iOS — готовый дескриптор TUN и защита сокетов (`VpnService.protect`).
 - Файл настроек в форматах sing-box и Xray-core (JSON, формат
   определяется сам); неподдерживаемое — ошибка с путём до ключа. Свой
   формат TOML убран.
@@ -101,6 +104,9 @@ It will include:
 - Kill switch (`strict_route`) on Windows — persistent WFP filters: if the
   client crashes, the network stays closed until it restarts or
   `--tun-cleanup` is run.
+- The core as a library (`libreality`, C ABI, `reality.h`): start, the API
+  as a function call, events and log via callbacks; for Android and iOS — a
+  ready TUN descriptor and socket protection (`VpnService.protect`).
 - Config file in the sing-box and Xray-core formats (JSON, detected
   automatically); anything unsupported is an error with the path to the
   key. The own TOML format has been removed.

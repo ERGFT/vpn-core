@@ -97,6 +97,10 @@ pub struct InboundConfig {
     /// Отвечать на DNS-запросы (порт 53 на любой адрес) своим DNS
     /// (по умолчанию да; нужен раздел `dns`).
     pub dns_hijack: Option<bool>,
+    /// Готовый дескриптор TUN от системы (Android `VpnService`, iOS) —
+    /// только программно, в режиме библиотеки; маршруты тогда ставит
+    /// система, а не клиент.
+    pub tun_fd: Option<i32>,
 }
 
 impl InboundConfig {
@@ -119,6 +123,7 @@ impl InboundConfig {
             route_exclude: Vec::new(),
             strict_route: None,
             dns_hijack: None,
+            tun_fd: None,
         }
     }
 
