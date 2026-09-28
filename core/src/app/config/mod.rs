@@ -424,53 +424,101 @@ impl Config {
         warn_if_readable_by_others(path);
         let text = std::fs::read_to_string(path)
             .map_err(|e| Error::Config(format!("не удалось прочитать {}: {e}", path.display())))?;
-        let mut cfg = Self::parse(&text)?;
-        let base = path.parent().unwrap_or(Path::new("."));
-        let fix = |p: &mut Option<PathBuf>| {
-            if let Some(v) = p {
-                if v.is_relative() {
-                    *v = base.join(&*v);
-                }
-            }
-        };
-        for i in &mut cfg.inbounds {
-            fix(&mut i.auth_file);
-        }
-        for o in &mut cfg.outbounds {
-            fix(&mut o.link_file);
-            fix(&mut o.ca_file);
-        }
+        Self::parse_at(&text, path.parent().unwrap_or(Path::new(".")))
+    }
+
+    /// Разобрать текст настроек так, будто файл лежит в папке `base`:
+    /// относительные пути — от неё.
+    pub fn parse_at(text: &str, base: &Path) -> Result<Self> {
+        let mut cfg = Self::parse(text)?;
         for sub in &mut cfg.subscriptions {
-            fix(&mut sub.url_file);
-            fix(&mut sub.ca_file);
             let tag = sub.tag.clone();
             sub.cache_file
                 .get_or_insert_with(|| format!("{tag}.subscription").into());
-            fix(&mut sub.cache_file);
-        }
-        if let Some(a) = &mut cfg.api {
-            fix(&mut a.token_file);
-            fix(&mut a.external_ui);
         }
         let r = &mut cfg.route;
         r.geosite_file.get_or_insert_with(|| "geosite.dat".into());
         r.geoip_file.get_or_insert_with(|| "geoip.dat".into());
-        fix(&mut r.geosite_file);
-        fix(&mut r.geoip_file);
-        for rs in &mut r.rule_set {
-            if rs.path.is_relative() {
-                rs.path = base.join(&rs.path);
+        cfg.for_each_path(&mut |p| {
+            if p.is_relative() {
+                *p = base.join(&*p);
             }
-        }
-        if let Some(d) = &mut cfg.dns {
-            for s in &mut d.servers {
-                fix(&mut s.ca_file);
-            }
-            if let Some(f) = &mut d.fakeip {
-                fix(&mut f.cache_file);
-            }
-        }
+        });
         Ok(cfg)
+    }
+
+    /// Все пути к файлам и папкам, упомянутые в настройках.
+    pub fn for_each_path(&mut self, f: &mut dyn FnMut(&mut PathBuf)) {
+        let opt = |p: &mut Option<PathBuf>, f: &mut dyn FnMut(&mut PathBuf)| {
+            if let Some(v) = p {
+                f(v);
+            }
+        };
+        for i in &mut self.inbounds {
+            opt(&mut i.auth_file, f);
+        }
+        for o in &mut self.outbounds {
+            opt(&mut o.link_file, f);
+            opt(&mut o.ca_file, f);
+        }
+        for sub in &mut self.subscriptions {
+            opt(&mut sub.url_file, f);
+            opt(&mut sub.ca_file, f);
+            opt(&mut sub.cache_file, f);
+        }
+        if let Some(a) = &mut self.api {
+            opt(&mut a.token_file, f);
+            opt(&mut a.external_ui, f);
+        }
+        let r = &mut self.route;
+        opt(&mut r.geosite_file, f);
+        opt(&mut r.geoip_file, f);
+        for rs in &mut r.rule_set {
+            f(&mut rs.path);
+        }
+        if let Some(d) = &mut self.dns {
+            for s in &mut d.servers {
+                opt(&mut s.ca_file, f);
+            }
+            if let Some(fk) = &mut d.fakeip {
+                opt(&mut fk.cache_file, f);
+            }
+        }
+    }
+
+    /// Настройки, присланные через API: файлы — только из папки настроек
+    /// (относительные пути без `..`). Иначе тот, у кого есть токен API,
+    /// мог бы заставить клиент (служба Windows — от SYSTEM) читать и
+    /// писать любые файлы компьютера.
+    pub fn check_paths_confined(&mut self) -> Result<()> {
+        let mut bad = None;
+        self.for_each_path(&mut |p| {
+            let ok = p.components().all(|c| {
+                matches!(
+                    c,
+                    std::path::Component::Normal(_) | std::path::Component::CurDir
+                )
+            });
+            if !ok && bad.is_none() {
+                bad = Some(p.display().to_string());
+            }
+        });
+        match bad {
+            Some(p) => Err(Error::Config(format!(
+                "«{p}»: в настройках через API — только файлы из папки настроек \
+                 (относительный путь без ..)"
+            ))),
+            None => Ok(()),
+        }
+    }
+
+    /// Формат текста настроек: `sing-box` или `xray`.
+    pub fn format_name(text: &str) -> &'static str {
+        let json = obj::strip_jsonc(text.trim_start_matches('\u{feff}'));
+        match serde_json::from_str::<serde_json::Value>(&json).map(|v| detect(&v)) {
+            Ok(Format::Xray) => "xray",
+            _ => "sing-box",
+        }
     }
 }
 
