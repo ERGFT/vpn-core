@@ -98,6 +98,8 @@ pub async fn open(
         target: url.address(),
         port: url.port,
         sniffed: None,
+        inbound_type: "internal",
+        rule: None,
     };
     let s = out.connect(&meta).await?;
     if !url.https {

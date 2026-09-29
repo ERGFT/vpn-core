@@ -570,11 +570,27 @@ with protection, and `tun/route.rs` installs the routes.
    its original name. An address in the range with no known name (for
    example, the table is stale after a restart without `cache_file`) is a
    connection error, not a request into nowhere.
-2. **Rules in order**; the first match wins.
-3. **`domain_strategy`: `ip_if_non_match`.** If no rule matched, the
+2. **Mode** (as in Clash, `Tracker::mode`):
+   - in `global`, everything goes through the member selected in the
+     `GLOBAL` group;
+   - in `direct`, everything goes through the first `direct` outbound;
+   - in both, rules are not checked, except DNS hijacking rules (otherwise
+     DNS queries would go to the server as ordinary traffic).
+
+   The `GLOBAL` group (a selector of all outbounds, `route.final` by
+   default) is created in `build_core` unless you have your own with that
+   tag. The mode is changed by `PATCH /configs` and
+   `clash_api.default_mode`, and it survives reloads.
+3. **Rules in order**; the first match wins. A description of the matching
+   rule goes into `Metadata::rule`, which shows up in `/connections` and
+   `/rules`. It is built by `rules::describe`:
+   - style `domain_suffix=ru su geoip=ru`;
+   - long lists are shortened;
+   - rule sets appear by tag, described before they are expanded.
+4. **`domain_strategy`: `ip_if_non_match`.** If no rule matched, the
    destination is a name, and some rules are IP rules, the name is resolved
    by the DNS module and the rules are checked again for each address.
-4. Otherwise `route.final` is used, or the first outbound if it is not
+5. Otherwise `route.final` is used, or the first outbound if it is not
    set.
 
 ### 9.2. A rule
@@ -1022,38 +1038,67 @@ No third-party cryptographic review has been done; this is noted in
 
 ## 16. API, connection tracking and events
 
-### 16.1. The API server (`app/api.rs`)
+### 16.1. The API server (`app/api.rs`, `app/clash.rs`)
+
+The API is compatible with the Clash API, as in sing-box and mihomo:
+ready-made web dashboards (metacubexd, yacd, zashboard) and clients work
+with the core unchanged. `api.rs` is the HTTP server, the checks and
+request parsing; `clash.rs` is what to answer (`Controller` methods behind
+the `api::Control` trait). Response formats were checked against a real
+sing-box 1.12 with the same config, and metacubexd and yacd were driven in
+a browser (Playwright) against the core.
 
 - A minimal HTTP/1.1 implementation with no extra dependencies:
-  - keep-alive;
-  - request bodies only via `Content-Length` (chunked requests are not
-    accepted);
-  - headers up to 16 KiB, body up to 64 KiB, up to 32 connections;
-  - for ordinary requests, 60 s to wait for a request and 60 s to answer.
-- **Checks on every request** (`gate`):
+  keep-alive; request bodies only via `Content-Length` (chunked requests
+  are not accepted).
+- Headers up to 16 KiB, body up to 64 KiB, up to 32 connections.
+- For ordinary requests, 60 s to wait for a request and 60 s to answer.
+- **The order of checks on every request** (`handle`):
   1. `Host` must be the API's own address (`127.0.0.1:port`,
      `localhost:port`, the actual address). This protects against DNS
      rebinding: a web page cannot reach the API through its own domain.
-  2. A request with `Origin` (from a browser) gets 403.
-  3. `Authorization: Bearer <token>`:
+  2. `Origin` (a browser request) is accepted only from your own dashboard
+     (`Origin` = `http://` + `Host`) or a site listed in
+     `access_control_allow_origin` (`*` allowed); otherwise 403 with a hint.
+     An allowed site gets CORS headers in the response.
+  3. `OPTIONS` is a CORS preflight and needs no token.
+     `Access-Control-Allow-Private-Network` is sent if
+     `access_control_allow_private_network` is on.
+  4. Only two things are served without a token:
+     - the `GET /` greeting (`{"hello":"clash"}`; with your own dashboard,
+       a browser is redirected to `/ui/`);
+     - dashboard files `GET /ui/…` from `external_ui`. A file is looked up
+       only inside that folder: `..`, `\` and `:` are rejected, and the
+       final path is checked after `canonicalize`. A missing file returns
+       `index.html`, for dashboards with client-side routes.
+  5. The token is `Authorization: Bearer <token>`, and for WebSocket also
+     `?token=`, because browsers cannot set WebSocket headers:
      - compared in constant time;
      - after 10 wrong tokens in a row, each request waits up to 5 s;
      - a wrong token is logged as a warning.
 - Listening on anything but loopback requires `allow_ip`; other addresses
   are closed before parsing.
+- Errors look like Clash's, `{"message": "…"}`; successful changes return
+  `204`.
 
-Requests:
+Clash requests:
 
 | Request | What it does |
 |---|---|
-| `GET /version` | version |
-| `GET /stats` | total and per-outbound traffic, uptime, connection count |
-| `GET /connections` | open connections |
-| `DELETE /connections[/{id}]` | close one or all |
-| `GET /groups`, `PUT /groups/{tag}`, `POST /groups/{tag}/check` | groups |
-| `POST /subscriptions/{tag}/update` | update a subscription |
-| `POST /reload` | reread the config file |
-| `GET /events`, `/traffic`, `/memory`, `/logs` | streams |
+| `GET /`, `GET /version` | greeting; version (`meta`, `premium` — as in sing-box) |
+| `GET /configs`, `PATCH /configs`, `PUT /configs` | inbound ports and mode; change the mode (other keys → 400: they change only in the file); reread the config file |
+| `GET /proxies[/{name}]`, `PUT /proxies/{group}` | outbounds and subscription servers (`type`, `now`, `all`, `history`); select a selector member |
+| `GET /proxies/{name}/delay?url=&timeout=` | latency (`{"delay": ms}`; no answer → 504) |
+| `GET /group[/{name}]`, `GET /group/{name}/delay` | groups; latency of all members (those that answered) |
+| `GET /connections`, `DELETE /connections[/{id}]` | connections in the Clash format (`metadata`, `chains`, `rule`, `upload`, `download`, `start`); close |
+| `GET /rules` | rules (sing-box-style description, outbound) and `route.final` last (`Match`) |
+| `GET /providers/proxies[/{name}]`, `PUT …`, `GET …/healthcheck` | subscriptions as "proxy providers" |
+| `GET /providers/rules` | empty (rule sets are expanded at build time) |
+| `GET /dns/query?name=&type=` | the DNS module's answer (without a `dns` section — the system resolver) |
+
+Own requests: `GET /stats`, `GET /groups`, `PUT /groups/{tag}`,
+`POST /groups/{tag}/check`, `POST /subscriptions/{tag}/update`,
+`POST /reload`.
 
 **Streams**:
 
@@ -1063,14 +1108,21 @@ Requests:
   - or, with `Upgrade: websocket`, one WebSocket frame per object on the
     same port. The `101` response is written by our own code;
     async-tungstenite takes over after that.
+- `/events` (own events), `/traffic`, `/memory` and `/logs` support both
+  forms. `/connections` streams only over WebSocket (a snapshot every
+  `interval` ms, as in Clash); without it, it is an ordinary response.
 - A stream closed by the client is noticed through EOF on the read side.
 - At most 16 streams at a time.
-- `/traffic` and `/memory` send once per second in the Clash API format;
-  `/logs` also follows Clash.
 
 ### 16.2. Tracking (`app/stats.rs`)
 
-- `Tracker` is one per application and survives reloads:
+- `Tracker` is one per application and survives reloads. Besides
+  accounting, it holds everything that must survive a reload:
+  - the event bus;
+  - the routing mode (an atomic);
+  - the last delay of each outbound (for `history` in `/proxies`).
+
+  Its accounting parts:
   - total and per-outbound traffic are atomics;
   - open connections are a `HashMap<id, Arc<ConnInfo>>` of at most 65,536
     entries; beyond that, connections still work but are not tracked.
@@ -1098,6 +1150,7 @@ Requests:
   | `group_switch`, `group_check` | `Group::note_choice`, `Group::select`, `Group::check_all` |
   | `subscription_update` | `Subscription::update` |
   | `reload` | `Controller::reload` |
+  | `mode_change` | `Tracker::set_mode` |
 - **Log**: `LogLayer` is a `tracing` layer on top of the global filter.
   - It sees only what is logged anyway (`RUST_LOG`); `?level=` only narrows
     it.
@@ -1117,7 +1170,7 @@ PLAN.md):
 | Unencrypted server | `security=none` only with `allow_insecure`; the same for subscriptions |
 | UDP DNS spoofing | ID, question and server address checks; DoH/DoT/DoQ with certificate verification |
 | Open resolver | a DNS inbound on the network only with `allow_ip` |
-| API | token always, constant-time comparison, delay after failures; `Host` check; `Origin` rejected; non-loopback only with `allow_ip` |
+| API | token always (without it — only dashboard files and `GET /`), constant-time comparison, delay after failures; `Host` check; from a browser — only your own dashboard and sites in `access_control_allow_origin`; dashboard files only inside their folder; non-loopback only with `allow_ip` |
 | Tampered server list | subscriptions only over HTTPS with certificate verification |
 | Browsing history | site addresses only at `debug` and in the API; the subscription URL is never logged |
 | Windows service running as SYSTEM | config and exe copied to a folder writable only by SYSTEM and administrators; a pre-existing folder owned by someone else is refused |
@@ -1267,8 +1320,18 @@ the protocol header needs to be written on top of it.
 
 **A new API request.** Add a branch in `Api::route`. If it needs to control
 the application, add a method to the `api::Control` trait and implement it
-on `Controller`. A new stream is a `Feed` variant plus a case in
-`Api::source`.
+on `Controller` (Clash-format responses live in `clash.rs`). A new stream is
+a `Feed` variant plus a case in `Api::source`. If the request exists in
+the Clash API, follow its format and compare with a real sing-box's
+response.
+
+**Checking with a web dashboard.**
+
+1. Download a dashboard (metacubexd: `compressed-dist.tgz` from its
+   releases) and point `external_ui` at its folder.
+2. Go through its pages in a browser (for example, Playwright with
+   Chromium).
+3. Record API requests that return ≥ 400.
 
 **A new event.** Add an `events::Event` variant (it serializes with a
 snake_case `type` field) and call `bus.emit(|| …)` where it happens. The bus
@@ -1304,6 +1367,7 @@ for protocol changes (see [CONTRIBUTING](../CONTRIBUTING.md)).
 | Subscription | 4 MiB, 30 s, every 12 h ±10 % | `subscription.rs` |
 | Wrong passwords | 5 in a row → 60 s, growing to 1 h | `access.rs` |
 | API | 32 connections, 16 streams, 16 KiB headers, 64 KiB body, 60 s | `api.rs` |
+| Latency test via the API | 5 s by default, at most 30 s; a group — up to 8 members at once | `api.rs`, `clash.rs` |
 | Connection tracking | 65,536 | `stats.rs` |
 | Event bus | 1024 events per listener | `events.rs` |
 | TUN | 256 KiB TCP window, 4096-packet queues | `tun/mod.rs` |

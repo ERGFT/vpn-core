@@ -194,22 +194,25 @@ async fn api_groups_connections_stats_and_security() {
     let conns = v["connections"].as_array().unwrap();
     assert_eq!(conns.len(), 1, "{v}");
     let conn = &conns[0];
-    assert_eq!(conn["outbound"], "sel");
-    assert_eq!(conn["member"], "direct");
-    assert_eq!(conn["target"], "127.0.0.1");
-    assert_eq!(conn["up"], 5000);
-    assert_eq!(conn["down"], 5000);
+    // Формат Clash API: цепочка от участника к группе, порты строкой.
+    assert_eq!(conn["chains"], serde_json::json!(["direct", "sel"]));
+    assert_eq!(conn["metadata"]["destinationIP"], "127.0.0.1");
+    assert_eq!(conn["metadata"]["destinationPort"], echo.port().to_string());
+    assert_eq!(conn["metadata"]["type"], "socks/socks");
+    assert_eq!(conn["rule"], "final");
+    assert_eq!(conn["upload"], 5000);
+    assert_eq!(conn["download"], 5000);
     let (_, st) = authed(a, "GET", "/stats", None).await;
     assert!(st["up"].as_u64().unwrap() >= 5000);
     assert_eq!(st["connections"], 1);
 
     // Закрыть через API — приложение видит конец соединения.
-    let id = conn["id"].as_u64().unwrap();
+    let id = conn["id"].as_str().unwrap();
     assert_eq!(
         authed(a, "DELETE", &format!("/connections/{id}"), None)
             .await
             .0,
-        200
+        204
     );
     let mut b = [0u8; 1];
     let n = tokio::time::timeout(T, s.read(&mut b))
@@ -217,9 +220,10 @@ async fn api_groups_connections_stats_and_security() {
         .unwrap()
         .unwrap_or(0);
     assert_eq!(n, 0, "соединение закрыто");
+    // Как у Clash: закрыть несуществующее — не ошибка.
     assert_eq!(
         authed(a, "DELETE", "/connections/999999", None).await.0,
-        404
+        204
     );
     assert_eq!(authed(a, "GET", "/nope", None).await.0, 404);
     let (c, v) = authed(a, "GET", "/version", None).await;

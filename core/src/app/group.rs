@@ -23,9 +23,10 @@ use std::time::Duration;
 use futures_util::future::BoxFuture;
 use futures_util::StreamExt;
 
-use super::events::{Bus, Event, MemberDelay};
+use super::events::{Event, MemberDelay};
 use super::http_client::{self, Url};
 use super::outbound::{Outbound, UdpSession};
+use super::stats::Tracker;
 use super::Metadata;
 use crate::error::{Error, Result};
 use crate::transport::AsyncStream;
@@ -101,7 +102,8 @@ pub struct Group {
     dynamic: RwLock<HashMap<String, Vec<Arc<Member>>>>,
     /// Выбранный (selector) или текущий (urltest) участник.
     current: RwLock<Option<String>>,
-    events: Bus,
+    /// События и история задержек (общие на приложение).
+    hub: Arc<Tracker>,
 }
 
 impl Group {
@@ -109,7 +111,7 @@ impl Group {
         tag: String,
         settings: GroupSettings,
         default: Option<String>,
-        events: Bus,
+        hub: Arc<Tracker>,
     ) -> Arc<Self> {
         Arc::new(Group {
             tag,
@@ -117,7 +119,7 @@ impl Group {
             fixed: RwLock::new(Vec::new()),
             dynamic: RwLock::new(HashMap::new()),
             current: RwLock::new(default),
-            events,
+            hub,
         })
     }
 
@@ -175,6 +177,30 @@ impl Group {
         c
     }
 
+    /// Выбор, сделанный явно (вручную или по `default`), без подстановки
+    /// первого участника.
+    pub fn chosen(&self) -> Option<String> {
+        self.current.read().unwrap().clone()
+    }
+
+    /// Вернуть выбор после перечитывания настроек — молча, если такой
+    /// участник ещё есть.
+    pub fn restore(&self, tag: &str) {
+        if self.members().iter().any(|m| m.tag() == tag) {
+            *self.current.write().unwrap() = Some(tag.to_string());
+        }
+    }
+
+    /// Адрес проверки участников.
+    pub fn check_url(&self) -> &Url {
+        &self.settings.url
+    }
+
+    /// Таймаут проверки одного участника.
+    pub fn check_timeout(&self) -> std::time::Duration {
+        self.settings.timeout
+    }
+
     /// Выбрать участника вручную (selector).
     pub fn select(&self, tag: &str) -> Result<()> {
         if !self.members().iter().any(|m| m.tag() == tag) {
@@ -186,7 +212,7 @@ impl Group {
         let previous = self.current();
         *self.current.write().unwrap() = Some(tag.to_string());
         tracing::info!(group = %self.tag, member = tag, "группа: выбран вручную");
-        self.events.emit(|| Event::GroupSwitch {
+        self.hub.events.emit(|| Event::GroupSwitch {
             group: self.tag.clone(),
             member: tag.to_string(),
             previous,
@@ -258,7 +284,7 @@ impl Group {
             );
             let previous = cur.replace(m.tag().to_string());
             drop(cur);
-            self.events.emit(|| Event::GroupSwitch {
+            self.hub.events.emit(|| Event::GroupSwitch {
                 group: self.tag.clone(),
                 member: m.tag().to_string(),
                 previous,
@@ -280,7 +306,8 @@ impl Group {
                     Ok(d) => tracing::debug!(group = %self.tag, member = m.tag(), ms = d.as_millis(), "проверка"),
                     Err(e) => tracing::debug!(group = %self.tag, member = m.tag(), error = %e, "проверка не прошла"),
                 }
-                m.set_delay(r.ok());
+                m.set_delay(r.as_ref().ok().copied());
+                self.hub.record_delay(m.tag(), r.ok());
             })
             .await;
         // Обновить текущий по итогам проверки.
@@ -289,7 +316,7 @@ impl Group {
                 self.note_choice(first);
             }
         }
-        self.events.emit(|| Event::GroupCheck {
+        self.hub.events.emit(|| Event::GroupCheck {
             group: self.tag.clone(),
             current: self.current(),
             members: self
@@ -361,6 +388,14 @@ impl Outbound for Group {
         &self.tag
     }
 
+    fn clash_type(&self) -> &'static str {
+        match self.settings.strategy {
+            Strategy::Selector => "Selector",
+            Strategy::UrlTest => "URLTest",
+            Strategy::Fallback => "Fallback",
+        }
+    }
+
     fn connect<'a>(&'a self, meta: &'a Metadata) -> BoxFuture<'a, Result<Box<dyn AsyncStream>>> {
         Box::pin(self.try_members(meta, |m, meta| {
             Box::pin(async move { m.out.connect(meta).await })
@@ -394,7 +429,7 @@ mod tests {
                 timeout: Duration::from_secs(1),
             },
             None,
-            Bus::default(),
+            Tracker::new(),
         )
     }
 
@@ -477,6 +512,8 @@ mod tests {
             target: crate::vless::Address::Ipv4(std::net::Ipv4Addr::LOCALHOST),
             port,
             sniffed: None,
+            inbound_type: "internal",
+            rule: None,
         };
         // block — это отказ правилом, а не сбой: дальше не пробуем.
         assert!(matches!(g.connect(&meta).await, Err(Error::Blocked)));
@@ -519,7 +556,7 @@ mod tests {
                 timeout: Duration::from_secs(2),
             },
             None,
-            Bus::default(),
+            Tracker::new(),
         );
         g.set_fixed(vec![
             Arc::new(BlockOutbound::new("blocked")) as Arc<dyn Outbound>,

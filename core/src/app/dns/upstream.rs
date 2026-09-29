@@ -255,6 +255,8 @@ impl Upstream {
             target: self.host.clone(),
             port: self.port,
             sniffed: None,
+            inbound_type: "dns",
+            rule: None,
         }
     }
 

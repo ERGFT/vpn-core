@@ -15,6 +15,12 @@ pub struct IpNet {
     prefix: u8,
 }
 
+impl std::fmt::Display for IpNet {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}/{}", self.addr, self.prefix)
+    }
+}
+
 impl std::str::FromStr for IpNet {
     type Err = String;
 

@@ -1314,6 +1314,8 @@ fn meta(port: u16) -> reality_core::app::Metadata {
         target: Address::Ipv4("127.0.0.1".parse().unwrap()),
         port,
         sniffed: None,
+        inbound_type: "socks",
+        rule: None,
     }
 }
 

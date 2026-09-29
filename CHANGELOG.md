@@ -30,6 +30,11 @@
   Clash); локальное API; перечитывание настроек без разрыва соединений.
 - Потоки API: `/events` (соединения, группы, подписки, перечитывание),
   `/traffic`, `/memory`, `/logs` — построчный JSON или WebSocket.
+- API совместимо с Clash API (как у sing-box и mihomo): веб-панели
+  metacubexd, yacd, zashboard; режимы rule/global/direct и группа
+  `GLOBAL`; проверка задержки; своя панель из папки (`external_ui`), CORS
+  для панелей из интернета. Выбор в группах переживает перечитывание
+  настроек.
 - Файл настроек в форматах sing-box и Xray-core (JSON, формат
   определяется сам); неподдерживаемое — ошибка с путём до ключа. Свой
   формат TOML убран.
@@ -82,6 +87,11 @@ It will include:
   Clash); local API; config reload without dropping connections.
 - API streams: `/events` (connections, groups, subscriptions, reload),
   `/traffic`, `/memory`, `/logs` — JSON lines or WebSocket.
+- The API is compatible with the Clash API (as in sing-box and mihomo):
+  the metacubexd, yacd and zashboard dashboards; rule/global/direct modes
+  and the `GLOBAL` group; latency tests; your own dashboard from a folder
+  (`external_ui`), CORS for dashboards hosted online. Group selections
+  survive config reloads.
 - Config file in the sing-box and Xray-core formats (JSON, detected
   automatically); anything unsupported is an error with the path to the
   key. The own TOML format has been removed.

@@ -1,27 +1,44 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! Локальное API: статистика, открытые соединения, группы серверов,
-//! подписки, перечитать настройки. HTTP/1.1 + JSON, как у Clash/sing-box
-//! (но без веб-панели).
+//! Локальное API — совместимое с Clash API (как у sing-box и mihomo):
+//! готовые веб-панели (yacd, metacubexd, zashboard) и клиенты работают с
+//! ядром без переделок. Плюс свои запросы (статистика, события, подписки).
+//! HTTP/1.1 + JSON.
 //!
 //! ```json
 //! "experimental": {
-//!   "clash_api": { "external_controller": "127.0.0.1:9090", "secret_file": "api-token.txt" }
+//!   "clash_api": {
+//!     "external_controller": "127.0.0.1:9090",
+//!     "secret_file": "api-token.txt",            // или "secret": "…" (не короче 16 символов)
+//!     "external_ui": "ui",                       // папка с панелью → http://127.0.0.1:9090/ui/
+//!     "access_control_allow_origin": ["https://yacd.haishan.me"],
+//!     "default_mode": "rule"
+//!   }
 //! }
 //! ```
 //!
-//! (или `"secret": "…"`, не короче 16 символов)
+//! Запросы Clash (ответы — как у sing-box 1.12; ошибки — `{"message": "…"}`):
 //!
 //! | Запрос | Что делает |
 //! |---|---|
-//! | `GET /version` | версия |
+//! | `GET /`, `GET /version` | приветствие и версия |
+//! | `GET /configs`, `PATCH /configs` `{"mode": "global"}` | порты входов, режим; сменить режим (rule, global, direct) |
+//! | `PUT /configs` | перечитать файл настроек |
+//! | `GET /proxies`, `GET /proxies/{имя}` | выходы и серверы подписок: тип, `now`/`all` у групп, история задержки |
+//! | `PUT /proxies/{группа}` `{"name": "…"}` | выбрать участника (selector, в том числе `GLOBAL`) |
+//! | `GET /proxies/{имя}/delay?url=…&timeout=5000` | проверить задержку |
+//! | `GET /group`, `GET /group/{имя}`, `GET /group/{имя}/delay?url=…` | группы; проверить всех участников |
+//! | `GET /connections`, `DELETE /connections[/{id}]` | открытые соединения; закрыть |
+//! | `GET /rules` | правила маршрутизации |
+//! | `GET /providers/proxies[/{имя}]`, `PUT …/{имя}`, `GET …/{имя}/healthcheck` | подписки: серверы, обновить, проверить |
+//! | `GET /dns/query?name=…&type=A` | спросить DNS |
+//!
+//! Свои запросы:
+//!
+//! | Запрос | Что делает |
+//! |---|---|
 //! | `GET /stats` | трафик всего и по выходам, время работы, число соединений |
-//! | `GET /connections` | открытые соединения |
-//! | `DELETE /connections/{id}` | закрыть соединение (`/connections` — все) |
-//! | `GET /groups` | группы: участники, задержки, текущий |
-//! | `PUT /groups/{tag}` `{"member": "…"}` | выбрать участника (selector) |
-//! | `POST /groups/{tag}/check` | проверить участников сейчас |
-//! | `POST /subscriptions/{tag}/update` | обновить подписку сейчас |
-//! | `POST /reload` | перечитать файл настроек без разрыва соединений |
+//! | `GET /groups`, `PUT /groups/{tag}` `{"member": "…"}`, `POST /groups/{tag}/check` | группы в своём формате |
+//! | `POST /subscriptions/{tag}/update`, `POST /reload` | обновить подписку, перечитать настройки (с ответом) |
 //!
 //! Потоки — ответ не кончается, пока клиент не закроет соединение: по
 //! JSON-объекту на строку (`Transfer-Encoding: chunked`) или, с
@@ -29,24 +46,30 @@
 //!
 //! | Поток | Что присылает |
 //! |---|---|
-//! | `GET /events` | события: `connection_open`, `connection_close`, `group_switch`, `group_check`, `subscription_update`, `reload`, `lagged` (см. `events.rs`) |
-//! | `GET /traffic` | раз в секунду: скорость `up`/`down` (байт/с) и `upTotal`/`downTotal` — как в Clash |
-//! | `GET /memory` | раз в секунду: `inuse` (байт) — как в Clash |
-//! | `GET /logs?level=info` | журнал: `{"type": "info", "payload": "…"}` — как в Clash |
+//! | `GET /events` | свои события: `connection_open`, `connection_close`, `group_switch`, `group_check`, `subscription_update`, `reload`, `mode_change`, `lagged` (см. `events.rs`) |
+//! | `GET /traffic` | раз в секунду: скорость `up`/`down` (байт/с) и `upTotal`/`downTotal` |
+//! | `GET /memory` | раз в секунду: `inuse` (байт) |
+//! | `GET /logs?level=info` | журнал: `{"type": "info", "payload": "…"}` |
+//! | `GET /connections` (только WebSocket) | раз в `interval` мс (по умолчанию 1000) — то же, что `GET /connections` |
 //!
 //! Потоков одновременно — не больше 16. Пока поток не слушают, события
 //! не собираются.
 //!
-//! Безопасность: токен обязателен всегда (`Authorization: Bearer …`,
-//! сравнение за постоянное время, после 10 неверных подряд — пауза);
-//! заголовок `Host` должен быть адресом API (защита от DNS rebinding:
-//! страница в браузере не сможет дотянуться до API через свой домен);
-//! запросы с `Origin` отвергаются (браузер кросс-доменно не пришлёт
-//! `Authorization` без CORS, но и простые запросы здесь не нужны).
-//! Слушать не на 127.0.0.1 можно только с `allow_ip`.
+//! Безопасность:
+//! - токен обязателен всегда (`Authorization: Bearer …`; для WebSocket из
+//!   браузера — `?token=…`, иначе браузер его передать не может),
+//!   сравнение за постоянное время, после 10 неверных подряд — пауза;
+//! - заголовок `Host` должен быть адресом API (защита от DNS rebinding:
+//!   страница в браузере не сможет дотянуться до API через свой домен);
+//! - запрос из браузера (есть `Origin`) принимается только от своей панели
+//!   (`external_ui`) и от сайтов из `access_control_allow_origin`;
+//!   остальным — 403;
+//! - файлы панели и приветствие `GET /` отдаются без токена (как у
+//!   Clash): это статика, токен панель спросит сама;
+//! - слушать не на 127.0.0.1 можно только с `allow_ip`.
 
 use std::net::{IpAddr, SocketAddr};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -68,17 +91,27 @@ use tokio_util::compat::TokioAsyncReadCompatExt;
 
 use super::access::IpNet;
 use super::events::{self, Event};
-use super::stats::Tracker;
+use super::stats::{Mode, Tracker};
 use crate::error::{Error, Result};
 
-#[derive(Debug, Clone, Deserialize, PartialEq)]
-#[serde(deny_unknown_fields)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ApiConfig {
     pub listen: SocketAddr,
     pub token: Option<String>,
     pub token_file: Option<PathBuf>,
-    #[serde(default)]
     pub allow_ip: Vec<IpNet>,
+    /// Сайты, которым можно обращаться к API из браузера (CORS), — адреса
+    /// веб-панелей (`https://yacd.haishan.me`) или `*`. Своя панель
+    /// (`external_ui`) разрешена всегда.
+    pub allow_origin: Vec<String>,
+    /// Разрешить странице из интернета обращаться к API на этом
+    /// компьютере (Private Network Access в Chrome).
+    pub allow_private_network: bool,
+    /// Папка с веб-панелью (yacd, metacubexd, zashboard): открывается по
+    /// адресу `http://127.0.0.1:9090/ui/`.
+    pub external_ui: Option<PathBuf>,
+    /// Режим маршрутизации при запуске.
+    pub default_mode: Option<Mode>,
 }
 
 /// Минимальная длина токена.
@@ -89,20 +122,50 @@ const MAX_BODY: usize = 64 * 1024;
 const IDLE: Duration = Duration::from_secs(60);
 /// Потоков (`/events`, `/logs`…) одновременно.
 const MAX_STREAMS: usize = 16;
+/// Проверка задержки по умолчанию и потолок.
+const DELAY_TIMEOUT: Duration = Duration::from_secs(5);
+const DELAY_TIMEOUT_MAX: Duration = Duration::from_secs(30);
 
-/// Что API умеет делать с приложением (реализует `Running`).
+/// Что API умеет делать с приложением (реализует `Controller`).
 pub trait Control: Send + Sync {
+    /// Группы в своём формате (`GET /groups`).
     fn groups(&self) -> Value;
     fn select(&self, group: &str, member: &str) -> Result<()>;
     fn check(&self, group: &str) -> BoxFuture<'_, Result<()>>;
     fn update_subscription(&self, tag: &str) -> BoxFuture<'_, Result<usize>>;
     fn reload(&self) -> BoxFuture<'_, Result<Vec<String>>>;
+    /// `GET /proxies`.
+    fn proxies(&self) -> Value;
+    /// `GET /group`.
+    fn clash_groups(&self) -> Value;
+    /// Задержка выхода: `Ok(None)` — не ответил.
+    fn delay<'a>(
+        &'a self,
+        name: &'a str,
+        url: &'a str,
+        timeout: Duration,
+    ) -> BoxFuture<'a, Result<Option<u64>>>;
+    /// Задержки всех участников группы.
+    fn group_delay<'a>(
+        &'a self,
+        name: &'a str,
+        url: &'a str,
+        timeout: Duration,
+    ) -> BoxFuture<'a, Result<Value>>;
+    fn rules(&self) -> Value;
+    fn configs(&self) -> Value;
+    fn providers(&self) -> Value;
+    fn provider_check<'a>(&'a self, name: &'a str) -> BoxFuture<'a, Result<()>>;
+    fn dns_query<'a>(&'a self, name: &'a str, qtype: &'a str) -> BoxFuture<'a, Result<Value>>;
 }
 
 pub struct Api {
     pub listen: SocketAddr,
     token: String,
     allow_ip: Vec<IpNet>,
+    allow_origin: Vec<String>,
+    allow_private_network: bool,
+    ui: Option<PathBuf>,
     tracker: Arc<Tracker>,
     control: Arc<dyn Control>,
     failures: AtomicU32,
@@ -116,6 +179,52 @@ enum Feed {
     Traffic,
     Memory,
     Logs,
+    Connections,
+}
+
+/// Ответ на обычный запрос.
+struct Reply {
+    code: u16,
+    ctype: &'static str,
+    body: Vec<u8>,
+    headers: Vec<(&'static str, String)>,
+}
+
+impl Reply {
+    fn json(code: u16, v: &Value) -> Self {
+        Reply {
+            code,
+            ctype: "application/json; charset=utf-8",
+            body: serde_json::to_vec(v).unwrap_or_default(),
+            headers: Vec::new(),
+        }
+    }
+
+    fn ok(v: Value) -> Self {
+        Self::json(200, &v)
+    }
+
+    /// Ошибка — как у Clash: `{"message": "…"}`.
+    fn err(code: u16, msg: impl Into<String>) -> Self {
+        Self::json(code, &json!({ "message": msg.into() }))
+    }
+
+    fn empty() -> Self {
+        Reply {
+            code: 204,
+            ctype: "",
+            body: Vec::new(),
+            headers: Vec::new(),
+        }
+    }
+}
+
+/// Что делать с запросом из браузера.
+enum Cors {
+    /// Не из браузера (нет `Origin`).
+    None,
+    /// Разрешённый сайт — в ответ идут заголовки CORS.
+    Allow(String),
 }
 
 impl Api {
@@ -137,10 +246,24 @@ impl Api {
                 cfg.listen
             )));
         }
+        let ui = match &cfg.external_ui {
+            Some(d) => Some(
+                d.canonicalize()
+                    .map_err(|e| Error::Config(format!("api: external_ui {}: {e}", d.display())))?,
+            ),
+            None => None,
+        };
         Ok(Arc::new(Api {
             listen: cfg.listen,
             token,
             allow_ip: cfg.allow_ip.clone(),
+            allow_origin: cfg
+                .allow_origin
+                .iter()
+                .map(|o| o.trim_end_matches('/').to_ascii_lowercase())
+                .collect(),
+            allow_private_network: cfg.allow_private_network,
+            ui,
             tracker,
             control,
             failures: AtomicU32::new(0),
@@ -180,29 +303,170 @@ impl Api {
                 Err(_) | Ok(Ok(None)) => return,
                 Ok(Ok(Some(req))) => req,
                 Ok(Err(e)) => {
-                    let _ = respond(&mut w, 400, &json!({ "error": e.to_string() }), false).await;
+                    let _ =
+                        respond(&mut w, Reply::err(400, e.to_string()), false, &Cors::None).await;
                     return;
                 }
             };
-            if let Some(feed) = feed_of(&req) {
-                if let Some((code, body)) = self.gate(&req, local).await {
-                    let _ = respond(&mut w, code, &body, false).await;
-                } else {
-                    self.stream(feed, &req, r, w).await;
-                }
+            let keep = !req.close;
+            // DNS rebinding: Host — только адрес самого API.
+            if !host_ok(&req, local) {
+                let _ = respond(&mut w, Reply::err(421, "неверный Host"), false, &Cors::None).await;
                 return;
             }
-            let keep = !req.close;
-            let (code, body) = match self.gate(&req, local).await {
-                Some(denied) => denied,
-                None => tokio::time::timeout(IDLE, self.route(&req))
-                    .await
-                    .unwrap_or_else(|_| (504, json!({ "error": "не успели за 60 с" }))),
+            let cors = match req.header("origin") {
+                None => Cors::None,
+                Some(o) if self.origin_ok(o, &req) => Cors::Allow(o.to_string()),
+                Some(o) => {
+                    let msg = format!(
+                        "запросы со страницы {o} запрещены — добавьте её в \
+                         clash_api.access_control_allow_origin"
+                    );
+                    let _ = respond(&mut w, Reply::err(403, msg), false, &Cors::None).await;
+                    return;
+                }
             };
-            if respond(&mut w, code, &body, keep).await.is_err() || !keep {
+            if req.method == "OPTIONS" {
+                let reply = self.preflight(&req, &cors);
+                if respond(&mut w, reply, keep, &cors).await.is_err() || !keep {
+                    return;
+                }
+                continue;
+            }
+            // Приветствие — без токена, как у Clash: по нему панели
+            // проверяют, что по адресу вообще Clash API.
+            if req.method == "GET" && req.path.split('?').next() == Some("/") {
+                let browser = req
+                    .header("accept")
+                    .is_some_and(|a| a.contains("text/html"));
+                let reply = if self.ui.is_some() && browser {
+                    let mut r = Reply::empty();
+                    r.code = 302;
+                    r.headers.push(("Location", "/ui/".into()));
+                    r
+                } else {
+                    Reply::ok(json!({ "hello": "clash" }))
+                };
+                if respond(&mut w, reply, keep, &cors).await.is_err() || !keep {
+                    return;
+                }
+                continue;
+            }
+            // Файлы панели — без токена: это статика.
+            if let Some(reply) = self.ui_file(&req) {
+                if respond(&mut w, reply, keep, &cors).await.is_err() || !keep {
+                    return;
+                }
+                continue;
+            }
+            if !self.authorized(&req).await {
+                let _ = respond(
+                    &mut w,
+                    Reply::err(401, "нужен токен: Authorization: Bearer …"),
+                    false,
+                    &cors,
+                )
+                .await;
+                return;
+            }
+            if let Some(feed) = feed_of(&req) {
+                self.stream(feed, &req, r, w).await;
+                return;
+            }
+            let reply = tokio::time::timeout(IDLE, self.route(&req))
+                .await
+                .unwrap_or_else(|_| Reply::err(504, "не успели за 60 с"));
+            if respond(&mut w, reply, keep, &cors).await.is_err() || !keep {
                 return;
             }
         }
+    }
+
+    /// Своя панель (тот же адрес) или сайт из `access_control_allow_origin`.
+    fn origin_ok(&self, origin: &str, req: &Request) -> bool {
+        let o = origin.trim_end_matches('/').to_ascii_lowercase();
+        let same = req
+            .header("host")
+            .is_some_and(|h| o == format!("http://{}", h.to_ascii_lowercase()));
+        same || self.allow_origin.iter().any(|a| a == "*" || *a == o)
+    }
+
+    /// Предварительный запрос CORS (OPTIONS): что можно странице.
+    fn preflight(&self, req: &Request, cors: &Cors) -> Reply {
+        let mut r = Reply::empty();
+        if let Cors::Allow(_) = cors {
+            r.headers.push((
+                "Access-Control-Allow-Methods",
+                "GET, POST, PUT, PATCH, DELETE".into(),
+            ));
+            r.headers.push((
+                "Access-Control-Allow-Headers",
+                "Authorization, Content-Type".into(),
+            ));
+            r.headers.push(("Access-Control-Max-Age", "300".into()));
+            if self.allow_private_network
+                && req
+                    .header("access-control-request-private-network")
+                    .is_some_and(|v| v.eq_ignore_ascii_case("true"))
+            {
+                r.headers
+                    .push(("Access-Control-Allow-Private-Network", "true".into()));
+            }
+        }
+        r
+    }
+
+    /// Файл панели (`GET /ui/…`), если это запрос к ней.
+    fn ui_file(&self, req: &Request) -> Option<Reply> {
+        let path = req.path.split('?').next().unwrap_or("");
+        if req.method != "GET" || !(path == "/ui" || path.starts_with("/ui/")) {
+            return None;
+        }
+        let Some(root) = &self.ui else {
+            return Some(Reply::err(
+                404,
+                "панель не настроена (clash_api.external_ui)",
+            ));
+        };
+        if path == "/ui" {
+            let mut r = Reply::empty();
+            r.code = 301;
+            r.headers.push(("Location", "/ui/".into()));
+            return Some(r);
+        }
+        Some(serve_file(root, &path[4..]))
+    }
+
+    async fn authorized(&self, req: &Request) -> bool {
+        let header = req
+            .header("authorization")
+            .and_then(|v| v.strip_prefix("Bearer "));
+        // Браузер не умеет ставить заголовки WebSocket — токен в адресе,
+        // как у Clash; только для WebSocket.
+        let query = if is_upgrade(req) {
+            req.query("token")
+        } else {
+            None
+        };
+        let got = header.map(str::to_string).or(query).unwrap_or_default();
+        // Сравнение за постоянное время.
+        let a = got.as_bytes();
+        let b = self.token.as_bytes();
+        let mut diff = (a.len() ^ b.len()) as u8;
+        for (i, x) in b.iter().enumerate() {
+            diff |= x ^ a.get(i).copied().unwrap_or(0);
+        }
+        if diff == 0 {
+            self.failures.store(0, Ordering::Relaxed);
+            return true;
+        }
+        let n = self.failures.fetch_add(1, Ordering::Relaxed) + 1;
+        if n >= 10 {
+            // Подбор токена: пауза растёт, но не больше 5 с.
+            tokio::time::sleep(Duration::from_millis((n as u64 * 100).min(5000))).await;
+        }
+        tracing::warn!("api: неверный токен");
+        false
     }
 
     /// Отдавать поток, пока клиент не закроет соединение.
@@ -214,21 +478,18 @@ impl Api {
         mut w: OwnedWriteHalf,
     ) {
         let Ok(_permit) = self.streams.clone().try_acquire_owned() else {
-            let body = json!({ "error": format!("потоков уже {MAX_STREAMS}") });
-            let _ = respond(&mut w, 503, &body, false).await;
+            let reply = Reply::err(503, format!("потоков уже {MAX_STREAMS}"));
+            let _ = respond(&mut w, reply, false, &Cors::None).await;
             return;
         };
         let src = match self.source(feed, req) {
             Ok(s) => s,
             Err(e) => {
-                let _ = respond(&mut w, 400, &json!({ "error": e }), false).await;
+                let _ = respond(&mut w, Reply::err(400, e), false, &Cors::None).await;
                 return;
             }
         };
-        let upgrade = req
-            .header("upgrade")
-            .is_some_and(|u| u.eq_ignore_ascii_case("websocket"));
-        if !upgrade {
+        if !is_upgrade(req) {
             let head = "HTTP/1.1 200 OK\r\nContent-Type: application/x-ndjson; charset=utf-8\r\n\
                         Transfer-Encoding: chunked\r\nCache-Control: no-store\r\n\
                         X-Content-Type-Options: nosniff\r\nConnection: close\r\n\r\n";
@@ -238,8 +499,8 @@ impl Api {
             return;
         }
         let Some(key) = req.header("sec-websocket-key") else {
-            let body = json!({ "error": "WebSocket: нет Sec-WebSocket-Key" });
-            let _ = respond(&mut w, 400, &body, false).await;
+            let reply = Reply::err(400, "WebSocket: нет Sec-WebSocket-Key");
+            let _ = respond(&mut w, reply, false, &Cors::None).await;
             return;
         };
         let accept = async_tungstenite::tungstenite::handshake::derive_accept_key(key.as_bytes());
@@ -323,119 +584,268 @@ impl Api {
                 ))
             })
             .boxed(),
+            Feed::Connections => {
+                let ms = match req.query("interval") {
+                    Some(v) => v
+                        .parse::<u64>()
+                        .map_err(|_| format!("interval: «{v}» — миллисекунды"))?,
+                    None => 1000,
+                }
+                .clamp(100, 60_000);
+                let t = self.tracker.clone();
+                futures_util::stream::unfold((t, true), move |(t, first)| async move {
+                    if !first {
+                        tokio::time::sleep(Duration::from_millis(ms)).await;
+                    }
+                    Some((connections_json(&t), (t, false)))
+                })
+                .boxed()
+            }
         })
     }
 
-    fn authorized(&self, req: &Request) -> bool {
-        let got = req
-            .header("authorization")
-            .and_then(|v| v.strip_prefix("Bearer "))
-            .unwrap_or("");
-        // Сравнение за постоянное время.
-        let a = got.as_bytes();
-        let b = self.token.as_bytes();
-        let mut diff = (a.len() ^ b.len()) as u8;
-        for (i, x) in b.iter().enumerate() {
-            diff |= x ^ a.get(i).copied().unwrap_or(0);
-        }
-        diff == 0
-    }
-
-    /// Проверки до любого запроса: `Some` — отказ.
-    async fn gate(&self, req: &Request, local: SocketAddr) -> Option<(u16, Value)> {
-        // DNS rebinding: Host — только адрес самого API.
-        let host_ok = req.header("host").is_some_and(|h| {
-            let h = h.trim();
-            let port = local.port().to_string();
-            [
-                format!("{}:{port}", local.ip()),
-                format!("[{}]:{port}", local.ip()),
-                format!("localhost:{port}"),
-                format!("127.0.0.1:{port}"),
-            ]
-            .iter()
-            .any(|x| x.eq_ignore_ascii_case(h))
-        });
-        if !host_ok {
-            return Some((421, json!({ "error": "неверный Host" })));
-        }
-        if req.header("origin").is_some() {
-            return Some((403, json!({ "error": "запросы из браузера запрещены" })));
-        }
-        if !self.authorized(req) {
-            let n = self.failures.fetch_add(1, Ordering::Relaxed) + 1;
-            if n >= 10 {
-                // Подбор токена: пауза растёт, но не больше 5 с.
-                tokio::time::sleep(Duration::from_millis((n as u64 * 100).min(5000))).await;
-            }
-            tracing::warn!("api: неверный токен");
-            return Some((
-                401,
-                json!({ "error": "нужен токен: Authorization: Bearer …" }),
-            ));
-        }
-        self.failures.store(0, Ordering::Relaxed);
-        None
-    }
-
-    async fn route(&self, req: &Request) -> (u16, Value) {
-        let path: Vec<&str> = req
+    async fn route(&self, req: &Request) -> Reply {
+        let path: Vec<String> = req
             .path
             .split('?')
             .next()
             .unwrap_or("")
             .split('/')
             .filter(|s| !s.is_empty())
+            .map(pct_decode)
             .collect();
-        let path: Vec<String> = path.iter().map(|p| pct_decode(p)).collect();
         let p: Vec<&str> = path.iter().map(String::as_str).collect();
-        let ok = |v: Value| (200, v);
-        let err = |code: u16, e: String| (code, json!({ "error": e }));
+        let c = &self.control;
         match (req.method.as_str(), p.as_slice()) {
-            ("GET", ["version"]) => ok(json!({ "version": env!("CARGO_PKG_VERSION") })),
-            ("GET", ["stats"]) => {
-                ok(serde_json::to_value(self.tracker.summary()).unwrap_or_default())
+            // ── Clash API ──
+            ("GET", ["version"]) => Reply::ok(json!({
+                "version": format!("reality-core {}", env!("CARGO_PKG_VERSION")),
+                "premium": true,
+                "meta": true,
+            })),
+            ("GET", ["configs"]) => Reply::ok(c.configs()),
+            ("PATCH", ["configs"]) => self.patch_configs(&req.body),
+            ("PUT", ["configs"]) => {
+                #[derive(Deserialize, Default)]
+                struct Put {
+                    #[serde(default)]
+                    path: String,
+                    #[serde(default)]
+                    payload: String,
+                }
+                let put: Put = if req.body.is_empty() {
+                    Put::default()
+                } else {
+                    match serde_json::from_slice(&req.body) {
+                        Ok(p) => p,
+                        Err(e) => return Reply::err(400, format!("тело: {e}")),
+                    }
+                };
+                if !put.path.is_empty() || !put.payload.is_empty() {
+                    return Reply::err(
+                        400,
+                        "path и payload не поддерживаются: перечитывается файл, с которым \
+                         запущен клиент",
+                    );
+                }
+                match c.reload().await {
+                    Ok(_) => Reply::empty(),
+                    Err(e) => Reply::err(400, e.to_string()),
+                }
             }
-            ("GET", ["connections"]) => ok(json!({ "connections": self.tracker.connections() })),
-            ("DELETE", ["connections"]) => ok(json!({ "closed": self.tracker.close_all() })),
-            ("DELETE", ["connections", id]) => match id.parse::<u64>() {
-                Ok(id) if self.tracker.close(id) => ok(json!({ "closed": 1 })),
-                _ => err(404, "нет такого соединения".into()),
+            ("GET", ["proxies"]) => Reply::ok(c.proxies()),
+            ("GET", ["proxies", name]) => self.one_proxy(name),
+            ("PUT", ["proxies", name]) => {
+                #[derive(Deserialize)]
+                struct Sel {
+                    name: String,
+                }
+                match serde_json::from_slice::<Sel>(&req.body) {
+                    Ok(s) => match c.select(name, &s.name) {
+                        Ok(()) => Reply::empty(),
+                        Err(e) => Reply::err(400, e.to_string()),
+                    },
+                    Err(e) => Reply::err(400, format!("тело: {{\"name\": \"…\"}}: {e}")),
+                }
+            }
+            ("GET", ["proxies", name, "delay"]) => self.delay(req, name, false).await,
+            ("GET", ["group"]) => Reply::ok(c.clash_groups()),
+            ("GET", ["group", name]) => {
+                let v = c.clash_groups();
+                let found = v["proxies"]
+                    .as_array()
+                    .and_then(|a| a.iter().find(|g| g["name"] == *name).cloned());
+                match found {
+                    Some(g) => Reply::ok(g),
+                    None => Reply::err(404, format!("нет группы «{name}»")),
+                }
+            }
+            ("GET", ["group", name, "delay"]) => self.delay(req, name, true).await,
+            ("GET", ["connections"]) => Reply::ok(connections_json(&self.tracker)),
+            ("DELETE", ["connections"]) => {
+                self.tracker.close_all();
+                Reply::empty()
+            }
+            ("DELETE", ["connections", id]) => {
+                if let Ok(id) = id.parse::<u64>() {
+                    self.tracker.close(id);
+                }
+                Reply::empty()
+            }
+            ("GET", ["rules"]) => Reply::ok(c.rules()),
+            ("GET", ["providers", "proxies"]) => Reply::ok(c.providers()),
+            ("GET", ["providers", "proxies", name]) => {
+                match c.providers()["providers"].get(*name) {
+                    Some(p) => Reply::ok(p.clone()),
+                    None => Reply::err(404, format!("нет подписки «{name}»")),
+                }
+            }
+            ("PUT", ["providers", "proxies", name]) => match c.update_subscription(name).await {
+                Ok(_) => Reply::empty(),
+                Err(e) => Reply::err(502, e.to_string()),
             },
-            ("GET", ["groups"]) => ok(self.control.groups()),
+            ("GET", ["providers", "proxies", name, "healthcheck"]) => {
+                match c.provider_check(name).await {
+                    Ok(()) => Reply::empty(),
+                    Err(e) => Reply::err(404, e.to_string()),
+                }
+            }
+            ("GET", ["providers", "rules"]) => Reply::ok(json!({ "providers": {} })),
+            ("GET", ["dns", "query"]) => {
+                let Some(name) = req.query("name") else {
+                    return Reply::err(400, "нужен name");
+                };
+                let qtype = req.query("type").unwrap_or_else(|| "A".into());
+                match c.dns_query(&name, &qtype).await {
+                    Ok(v) => Reply::ok(v),
+                    Err(e) => Reply::err(400, e.to_string()),
+                }
+            }
+            // ── свои ──
+            ("GET", ["stats"]) => {
+                Reply::ok(serde_json::to_value(self.tracker.summary()).unwrap_or_default())
+            }
+            ("GET", ["groups"]) => Reply::ok(c.groups()),
             ("PUT", ["groups", tag]) => {
                 #[derive(Deserialize)]
                 struct Sel {
                     member: String,
                 }
                 match serde_json::from_slice::<Sel>(&req.body) {
-                    Ok(s) => match self.control.select(tag, &s.member) {
-                        Ok(()) => ok(json!({ "group": tag, "member": s.member })),
-                        Err(e) => err(400, e.to_string()),
+                    Ok(s) => match c.select(tag, &s.member) {
+                        Ok(()) => Reply::ok(json!({ "group": tag, "member": s.member })),
+                        Err(e) => Reply::err(400, e.to_string()),
                     },
-                    Err(e) => err(400, format!("тело: {{\"member\": \"…\"}}: {e}")),
+                    Err(e) => Reply::err(400, format!("тело: {{\"member\": \"…\"}}: {e}")),
                 }
             }
-            ("POST", ["groups", tag, "check"]) => match self.control.check(tag).await {
-                Ok(()) => ok(self.control.groups()),
-                Err(e) => err(404, e.to_string()),
+            ("POST", ["groups", tag, "check"]) => match c.check(tag).await {
+                Ok(()) => Reply::ok(c.groups()),
+                Err(e) => Reply::err(404, e.to_string()),
             },
-            ("POST", ["subscriptions", tag, "update"]) => {
-                match self.control.update_subscription(tag).await {
-                    Ok(n) => ok(json!({ "subscription": tag, "servers": n })),
-                    Err(e) => err(502, e.to_string()),
-                }
+            ("POST", ["subscriptions", tag, "update"]) => match c.update_subscription(tag).await {
+                Ok(n) => Reply::ok(json!({ "subscription": tag, "servers": n })),
+                Err(e) => Reply::err(502, e.to_string()),
+            },
+            ("POST", ["reload"]) => match c.reload().await {
+                Ok(notes) => Reply::ok(json!({ "reloaded": true, "notes": notes })),
+                Err(e) => Reply::err(400, e.to_string()),
+            },
+            _ => Reply::err(404, "нет такого запроса"),
+        }
+    }
+
+    fn one_proxy(&self, name: &str) -> Reply {
+        match self.control.proxies()["proxies"].get(name) {
+            Some(p) => Reply::ok(p.clone()),
+            None => Reply::err(404, format!("нет выхода «{name}»")),
+        }
+    }
+
+    /// `PATCH /configs`: сменить режим. Остальное из Clash (порты,
+    /// allow-lan, уровень журнала) меняется только в файле настроек.
+    fn patch_configs(&self, body: &[u8]) -> Reply {
+        let v: Value = match serde_json::from_slice(body) {
+            Ok(Value::Object(m)) => Value::Object(m),
+            Ok(_) | Err(_) => {
+                return Reply::err(400, "тело: JSON-объект, например {\"mode\": \"global\"}")
             }
-            ("POST", ["reload"]) => match self.control.reload().await {
-                Ok(notes) => ok(json!({ "reloaded": true, "notes": notes })),
-                Err(e) => err(400, e.to_string()),
+        };
+        let obj = v.as_object().expect("объект");
+        if let Some(k) = obj.keys().find(|k| *k != "mode") {
+            return Reply::err(
+                400,
+                format!("«{k}» через API не меняется — только в файле настроек; можно mode"),
+            );
+        }
+        if let Some(m) = obj.get("mode") {
+            let Some(mode) = m.as_str().and_then(Mode::parse) else {
+                return Reply::err(400, "mode: rule, global или direct");
+            };
+            self.tracker.set_mode(mode);
+        }
+        Reply::empty()
+    }
+
+    /// `GET /proxies/{имя}/delay` и `GET /group/{имя}/delay`.
+    async fn delay(&self, req: &Request, name: &str, group: bool) -> Reply {
+        let Some(url) = req.query("url") else {
+            return Reply::err(400, "нужен url — адрес проверки");
+        };
+        let timeout = match req.query("timeout") {
+            Some(t) => match t.parse::<u64>() {
+                Ok(ms) => Duration::from_millis(ms).min(DELAY_TIMEOUT_MAX),
+                Err(_) => return Reply::err(400, format!("timeout: «{t}» — миллисекунды")),
             },
-            _ => err(404, "нет такого запроса".into()),
+            None => DELAY_TIMEOUT,
+        };
+        if group {
+            return match self.control.group_delay(name, &url, timeout).await {
+                Ok(v) => Reply::ok(v),
+                Err(e) => Reply::err(404, e.to_string()),
+            };
+        }
+        match self.control.delay(name, &url, timeout).await {
+            Ok(Some(ms)) => Reply::ok(json!({ "delay": ms })),
+            Ok(None) => Reply::err(504, format!("не ответил за {} мс", timeout.as_millis())),
+            Err(e) => Reply::err(404, e.to_string()),
         }
     }
 }
 
-/// Запрос потока: `GET /events`, `/traffic`, `/memory`, `/logs`.
+/// Открытые соединения в формате Clash.
+fn connections_json(t: &Tracker) -> Value {
+    let (up, down) = t.totals();
+    json!({
+        "downloadTotal": down,
+        "uploadTotal": up,
+        "connections": t.clash_connections(),
+        "memory": events::memory_in_use(),
+    })
+}
+
+fn host_ok(req: &Request, local: SocketAddr) -> bool {
+    req.header("host").is_some_and(|h| {
+        let h = h.trim();
+        let port = local.port().to_string();
+        [
+            format!("{}:{port}", local.ip()),
+            format!("[{}]:{port}", local.ip()),
+            format!("localhost:{port}"),
+            format!("127.0.0.1:{port}"),
+        ]
+        .iter()
+        .any(|x| x.eq_ignore_ascii_case(h))
+    })
+}
+
+fn is_upgrade(req: &Request) -> bool {
+    req.header("upgrade")
+        .is_some_and(|u| u.eq_ignore_ascii_case("websocket"))
+}
+
+/// Запрос потока: `/events`, `/traffic`, `/memory`, `/logs`; `/connections`
+/// — только через WebSocket (без него — один снимок).
 fn feed_of(req: &Request) -> Option<Feed> {
     if req.method != "GET" {
         return None;
@@ -451,7 +861,59 @@ fn feed_of(req: &Request) -> Option<Feed> {
         "/traffic" => Some(Feed::Traffic),
         "/memory" => Some(Feed::Memory),
         "/logs" => Some(Feed::Logs),
+        "/connections" if is_upgrade(req) => Some(Feed::Connections),
         _ => None,
+    }
+}
+
+/// Файл панели из папки `root`; `rel` — путь после `/ui/`. Выйти за
+/// пределы папки нельзя: `..`, обратные косые и двоеточия отвергаются, а
+/// итоговый путь проверяется после разрешения ссылок.
+fn serve_file(root: &Path, rel: &str) -> Reply {
+    let mut path = root.to_path_buf();
+    for seg in rel.split('/').filter(|s| !s.is_empty()) {
+        let seg = pct_decode(seg);
+        if seg == ".." || seg == "." || seg.contains(['\\', ':', '\0']) {
+            return Reply::err(400, "недопустимый путь");
+        }
+        path.push(seg);
+    }
+    if path.is_dir() {
+        path.push("index.html");
+    }
+    let real = match path.canonicalize() {
+        Ok(p) if p.starts_with(root) => p,
+        // Нет файла — панели с маршрутизацией на клиенте (history API)
+        // ждут index.html.
+        _ => root.join("index.html"),
+    };
+    let Ok(body) = std::fs::read(&real) else {
+        return Reply::err(404, "нет такого файла");
+    };
+    let ctype = match real.extension().and_then(|e| e.to_str()).unwrap_or("") {
+        "html" | "htm" => "text/html; charset=utf-8",
+        "js" | "mjs" => "text/javascript; charset=utf-8",
+        "css" => "text/css; charset=utf-8",
+        "json" | "map" => "application/json",
+        "webmanifest" => "application/manifest+json",
+        "svg" => "image/svg+xml",
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "ico" => "image/x-icon",
+        "webp" => "image/webp",
+        "woff" => "font/woff",
+        "woff2" => "font/woff2",
+        "ttf" => "font/ttf",
+        "txt" => "text/plain; charset=utf-8",
+        "wasm" => "application/wasm",
+        _ => "application/octet-stream",
+    };
+    Reply {
+        code: 200,
+        ctype,
+        body,
+        headers: vec![("Cache-Control", "no-cache".into())],
     }
 }
 
@@ -613,12 +1075,16 @@ async fn read_request<R: tokio::io::AsyncBufRead + Unpin>(r: &mut R) -> Result<O
 
 async fn respond<W: tokio::io::AsyncWrite + Unpin>(
     w: &mut W,
-    code: u16,
-    body: &Value,
+    reply: Reply,
     keep: bool,
+    cors: &Cors,
 ) -> std::io::Result<()> {
+    let code = reply.code;
     let reason = match code {
         200 => "OK",
+        204 => "No Content",
+        301 => "Moved Permanently",
+        302 => "Found",
         400 => "Bad Request",
         401 => "Unauthorized",
         403 => "Forbidden",
@@ -629,12 +1095,25 @@ async fn respond<W: tokio::io::AsyncWrite + Unpin>(
         504 => "Gateway Timeout",
         _ => "Error",
     };
-    let body = serde_json::to_vec_pretty(body).unwrap_or_default();
-    let mut head = format!(
-        "HTTP/1.1 {code} {reason}\r\nContent-Type: application/json; charset=utf-8\r\n\
-         Content-Length: {}\r\nCache-Control: no-store\r\nX-Content-Type-Options: nosniff\r\n",
-        body.len()
-    );
+    let mut head = format!("HTTP/1.1 {code} {reason}\r\n");
+    if !reply.ctype.is_empty() {
+        head.push_str(&format!("Content-Type: {}\r\n", reply.ctype));
+    }
+    head.push_str(&format!(
+        "Content-Length: {}\r\nX-Content-Type-Options: nosniff\r\n",
+        reply.body.len()
+    ));
+    if !reply.headers.iter().any(|(k, _)| *k == "Cache-Control") {
+        head.push_str("Cache-Control: no-store\r\n");
+    }
+    for (k, v) in &reply.headers {
+        head.push_str(&format!("{k}: {v}\r\n"));
+    }
+    if let Cors::Allow(o) = cors {
+        head.push_str(&format!(
+            "Access-Control-Allow-Origin: {o}\r\nVary: Origin\r\n"
+        ));
+    }
     if code == 401 {
         head.push_str("WWW-Authenticate: Bearer\r\n");
     }
@@ -644,6 +1123,6 @@ async fn respond<W: tokio::io::AsyncWrite + Unpin>(
         "Connection: close\r\n\r\n"
     });
     w.write_all(head.as_bytes()).await?;
-    w.write_all(&body).await?;
+    w.write_all(&reply.body).await?;
     w.flush().await
 }

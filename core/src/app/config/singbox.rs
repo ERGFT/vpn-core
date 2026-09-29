@@ -626,6 +626,7 @@ fn conditions(r: &Obj<'_>, inbound: Vec<String>, outbound: String) -> Result<Rul
         network: None,
         inbound,
         outbound,
+        label: None,
     };
     for p in r.strs("port_range")? {
         c.port.push(PortSpec::Str(p.replace(':', "-")));
@@ -798,14 +799,14 @@ fn strategy(o: &Obj<'_>, key: &str) -> Result<Strategy> {
 }
 
 pub(super) fn clash_api(c: Obj<'_>) -> Result<Option<ApiConfig>> {
-    c.ignore(&[
-        "external_ui",
+    c.unsupported(
         "external_ui_download_url",
+        "скачивание панели — положите её файлы в папку external_ui",
+    )?;
+    c.unsupported(
         "external_ui_download_detour",
-        "default_mode",
-        "access_control_allow_origin",
-        "access_control_allow_private_network",
-    ]);
+        "скачивание панели — положите её файлы в папку external_ui",
+    )?;
     let Some(listen) = c.str("external_controller")? else {
         c.finish()?;
         return Ok(None);
@@ -821,6 +822,20 @@ pub(super) fn clash_api(c: Obj<'_>) -> Result<Option<ApiConfig>> {
         token: c.str("secret")?.filter(|s| !s.is_empty()),
         token_file: c.str("secret_file")?.map(PathBuf::from),
         allow_ip: ipnets(&c, "allow_ip")?,
+        allow_origin: c.strs("access_control_allow_origin")?,
+        allow_private_network: c
+            .bool("access_control_allow_private_network")?
+            .unwrap_or(false),
+        external_ui: c
+            .str("external_ui")?
+            .filter(|s| !s.is_empty())
+            .map(PathBuf::from),
+        default_mode: match c.str("default_mode")? {
+            None => None,
+            Some(m) => Some(crate::app::stats::Mode::parse(&m).ok_or_else(|| {
+                c.err("default_mode", format!("«{m}» — rule, global или direct"))
+            })?),
+        },
     };
     c.finish()?;
     Ok(Some(api))

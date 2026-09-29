@@ -48,6 +48,19 @@ pub enum InboundKind {
     Tun,
 }
 
+impl InboundKind {
+    /// Имя вида, как в настройках: `socks`, `http`, `mixed`, `dns`, `tun`.
+    pub fn name(self) -> &'static str {
+        match self {
+            InboundKind::Socks => "socks",
+            InboundKind::Http => "http",
+            InboundKind::Mixed => "mixed",
+            InboundKind::Dns => "dns",
+            InboundKind::Tun => "tun",
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct InboundConfig {
     pub kind: InboundKind,
@@ -437,6 +450,7 @@ impl Config {
         }
         if let Some(a) = &mut cfg.api {
             fix(&mut a.token_file);
+            fix(&mut a.external_ui);
         }
         let r = &mut cfg.route;
         r.geosite_file.get_or_insert_with(|| "geosite.dat".into());
