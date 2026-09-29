@@ -398,6 +398,28 @@
   трафик против настоящего Xray-core через настройки обоих форматов,
   tun_netns.sh — TUN с настройками sing-box.
 
+### Фаза 15 — режим библиотеки (2026-09-28) ✅
+
+- Крейт `ffi/` (`reality-ffi`, библиотека `libreality`: cdylib + staticlib)
+  с C ABI и заголовком `ffi/include/reality.h`; описание —
+  `docs/LIBRARY.md`. Выбран C ABI, а не UniFFI и подобные: подходит любому
+  языку (JNI, Swift, cgo, P/Invoke), без генераторов в сборке.
+- `rc_request` — весь HTTP API вызовом функции (`Api::embedded`,
+  `Api::local`): один разбор путей и одни ответы с сервером, ничего не
+  дублируется. Потоки — обратными вызовами (`rc_set_event_callback`,
+  `rc_set_log_callback`), подписка создаётся до возврата, события не
+  теряются.
+- Мобильные платформы: `InboundConfig::tun_fd` (только программно) →
+  `AsyncDevice::from_fd`, маршруты и kill switch — у системы;
+  `net_protect::set_callback` — обратный вызов для каждого нового сокета
+  (Android `VpnService.protect`).
+- Проверено: `scripts/ffi_smoke.sh` — программа на C собирается с
+  `libreality.so`, гоняет трафик через SOCKS5-вход ядра, управляет через
+  `rc_request`, получает события, проверяет защиту сокетов, `rc_reload`,
+  `rc_stop`, а под root — запуск с готовым дескриптором TUN;
+  `cargo test -p reality-ffi` — те же вызовы из Rust (и на Windows в CI).
+  Не проверено: сборка под Android/iOS (нужны NDK и Xcode) — описаны шаги.
+
 ### Фаза 14 — kill switch на Windows (2026-09-28)
 
 - `strict_route` на Windows — стойкие фильтры WFP (`tun/wfp.rs`), по

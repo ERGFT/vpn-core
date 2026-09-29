@@ -58,6 +58,8 @@ pub struct TunSettings {
     pub sniff: bool,
     pub sniff_override: bool,
     pub max_conns: usize,
+    /// Готовый дескриптор TUN от системы (режим библиотеки, Android/iOS).
+    pub fd: Option<i32>,
 }
 
 pub struct TunInbound {
@@ -135,6 +137,9 @@ impl TunInbound {
     /// Создать интерфейс (нужны права администратора / root).
     pub fn create_device(&self) -> Result<TunDevice> {
         let s = &self.settings;
+        if let Some(fd) = s.fd {
+            return self.device_from_fd(fd);
+        }
         let err = |e: std::io::Error| {
             Error::Config(format!(
                 "tun: не удалось создать интерфейс {}: {e}{}",
@@ -207,6 +212,29 @@ impl TunInbound {
             if_index,
             dev,
         })
+    }
+
+    /// Устройство из готового дескриптора (режим библиотеки).
+    #[cfg(unix)]
+    fn device_from_fd(&self, fd: i32) -> Result<TunDevice> {
+        // SAFETY: дескриптор передан владельцем (приложение отдало его
+        // ядру) и дальше закрывается только устройством.
+        let dev = unsafe { tun_rs::AsyncDevice::from_fd(fd) }
+            .map_err(|e| Error::Config(format!("tun: дескриптор {fd}: {e}")))?;
+        tracing::info!(fd, "tun: устройство из готового дескриптора");
+        Ok(TunDevice {
+            name: self.settings.name.clone(),
+            has_v6: self.settings.inet6.is_some(),
+            if_index: None,
+            dev,
+        })
+    }
+
+    #[cfg(not(unix))]
+    fn device_from_fd(&self, _fd: i32) -> Result<TunDevice> {
+        Err(Error::Config(
+            "tun: готовый дескриптор — только на Unix (Android, iOS, Linux)".into(),
+        ))
     }
 
     /// Принимать соединения из интерфейса.
@@ -466,13 +494,16 @@ pub fn settings(i: &super::config::InboundConfig) -> Result<TunSettings> {
         inet6,
         inet6_explicit: i.inet6_address.is_some(),
         mtu,
-        auto_route: i.auto_route.unwrap_or(true),
+        // С готовым дескриптором маршруты и kill switch — забота системы
+        // (у Android — VpnService).
+        auto_route: i.tun_fd.is_none() && i.auto_route.unwrap_or(true),
         route_exclude: i.route_exclude.clone(),
-        strict_route: i.strict_route.unwrap_or(false),
+        strict_route: i.tun_fd.is_none() && i.strict_route.unwrap_or(false),
         dns_hijack: i.dns_hijack.unwrap_or(true),
         sniff: i.sniff,
         sniff_override: i.sniff_override_destination,
         max_conns: i.max_conns.unwrap_or(4096),
+        fd: i.tun_fd,
     })
 }
 

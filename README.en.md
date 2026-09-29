@@ -15,9 +15,11 @@ proxy goes to a VLESS server (Xray-core and compatible servers).
 
 The project was written from scratch in stages — the history, decisions and
 risks of every stage are in [`PLAN.md`](PLAN.md) (in Russian); how the core
-works inside is in [`docs/ARCHITECTURE.en.md`](docs/ARCHITECTURE.en.md). It
-is a learning and research project, not a replacement for mature clients:
-what works and what does not is listed honestly below.
+works inside is in [`docs/ARCHITECTURE.en.md`](docs/ARCHITECTURE.en.md), and
+how to embed the core in an app (Android, iOS, desktop) is in
+[`docs/LIBRARY.en.md`](docs/LIBRARY.en.md). It is a learning and research
+project, not a replacement for mature clients: what works and what does not
+is listed honestly below.
 
 **Contents:** [Features](#features) · [Building](#building) ·
 [Running](#running) · [Config file](#config-file) ·
@@ -705,10 +707,12 @@ vendor/rustls-reality-patch/
 interop/go-reality-server/
                        REALITY test server on the XTLS/REALITY library
 bin/fpcheck/           JA3/JA4 capture
+ffi/                   the core as a library: C ABI (reality.h), a C example
 bench/                 benchmarks (criterion) and memory measurement (memwatch, Linux)
 scripts/               ci, interop, smoke, Xray build, fingerprint check,
                        Windows build, instructions for Stages 2 and 8
-docs/                  ARCHITECTURE.md (how the core works), WINDOWS.md,
+docs/                  ARCHITECTURE.md (how the core works), LIBRARY.md
+                       (the core in an app), WINDOWS.md,
                        crypto review checklist (Stage 5)
 examples/              example configs: sing-box.json, xray.json, systemd
 PLAN.md                stage plan, decision history, open risks (in Russian)

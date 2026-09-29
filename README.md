@@ -16,9 +16,10 @@
 
 Проект написан с нуля по этапам — история, решения и риски по каждому
 этапу в [`PLAN.md`](PLAN.md), как устроено ядро изнутри — в
-[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md). Это учебно-исследовательский
-проект, а не замена зрелым клиентам: ниже честно перечислено, что работает
-и чего нет.
+[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md), как встроить ядро в
+приложение (Android, iOS, десктоп) — в [`docs/LIBRARY.md`](docs/LIBRARY.md).
+Это учебно-исследовательский проект, а не замена зрелым клиентам: ниже
+честно перечислено, что работает и чего нет.
 
 **Содержание:** [Возможности](#что-умеет-и-чего-нет) ·
 [Сборка](#сборка) · [Запуск](#запуск) ·
@@ -700,10 +701,12 @@ vendor/rustls-reality-patch/
 interop/go-reality-server/
                        тестовый REALITY-сервер на библиотеке XTLS/REALITY
 bin/fpcheck/           снятие JA3/JA4
+ffi/                   ядро как библиотека: C ABI (reality.h), пример на C
 bench/                 бенчмарки (criterion) и замер памяти (memwatch, Linux)
 scripts/               ci, интероп, smoke, сборка Xray, сверка отпечатка,
                        сборка под Windows, инструкции для Этапов 2 и 8
-docs/                  ARCHITECTURE.md (как устроено ядро), WINDOWS.md,
+docs/                  ARCHITECTURE.md (как устроено ядро), LIBRARY.md
+                       (ядро в приложении), WINDOWS.md,
                        чек-лист крипто-ревью (Этап 5)
 examples/              примеры настроек: sing-box.json, xray.json, systemd
 PLAN.md                план по этапам, история решений, открытые риски

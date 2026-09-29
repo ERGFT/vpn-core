@@ -8,12 +8,16 @@
 //!   отправляет такие пакеты мимо таблицы с TUN;
 //! - Windows: `IP_UNICAST_IF` — сокет привязан к физическому интерфейсу.
 //!
+//! - Android (`VpnService`), iOS — обратный вызов приложения
+//!   ([`set_callback`]): оно само «защищает» сокет системным вызовом
+//!   (`VpnService.protect(fd)`).
+//!
 //! Без TUN защита не включена и сокеты создаются как обычно.
 
 use std::io;
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::RwLock;
+use std::sync::{Arc, RwLock};
 
 use tokio::net::{TcpSocket, UdpSocket};
 
@@ -25,13 +29,30 @@ pub enum Protect {
     Interface { v4: u32, v6: Option<u32> },
 }
 
+/// Обратный вызов защиты: получает дескриптор (Unix) или сокет (Windows);
+/// `false` — защитить не удалось.
+pub type ProtectFn = dyn Fn(i64) -> bool + Send + Sync;
+
 static PROTECT: RwLock<Option<Protect>> = RwLock::new(None);
+static PROTECT_FN: RwLock<Option<Arc<ProtectFn>>> = RwLock::new(None);
 static TUN_ACTIVE: AtomicBool = AtomicBool::new(false);
+
+fn update_active() {
+    let on = PROTECT.read().unwrap().is_some() || PROTECT_FN.read().unwrap().is_some();
+    TUN_ACTIVE.store(on, Ordering::SeqCst);
+}
 
 /// Включить (или выключить — `None`) защиту для всех новых сокетов.
 pub fn set(p: Option<Protect>) {
     *PROTECT.write().unwrap() = p;
-    TUN_ACTIVE.store(p.is_some(), Ordering::SeqCst);
+    update_active();
+}
+
+/// Защищать новые сокеты обратным вызовом приложения (Android
+/// `VpnService.protect`); `None` — перестать.
+pub fn set_callback(f: Option<Arc<ProtectFn>>) {
+    *PROTECT_FN.write().unwrap() = f;
+    update_active();
 }
 
 pub fn current() -> Option<Protect> {
@@ -45,6 +66,16 @@ pub fn tun_active() -> bool {
 }
 
 fn apply(sock: socket2::SockRef<'_>, v6: bool) -> io::Result<()> {
+    let cb = PROTECT_FN.read().unwrap().clone();
+    if let Some(f) = cb {
+        #[cfg(unix)]
+        let raw = std::os::fd::AsRawFd::as_raw_fd(&*sock) as i64;
+        #[cfg(windows)]
+        let raw = std::os::windows::io::AsRawSocket::as_raw_socket(&*sock) as i64;
+        if !f(raw) {
+            return Err(io::Error::other("приложение не защитило сокет (protect)"));
+        }
+    }
     match current() {
         None => Ok(()),
         #[cfg(any(target_os = "linux", target_os = "android"))]

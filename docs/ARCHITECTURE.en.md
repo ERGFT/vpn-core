@@ -78,6 +78,7 @@ The Cargo workspace:
 | `core/` | `reality-core` (library) | the whole core: protocols, transports, REALITY, the application |
 | `bin/client/` | `reality-client` | the program: command-line flags, startup, Windows service and system proxy |
 | `bin/fpcheck/` | `fpcheck` | captures the JA3/JA4 of the ClientHello the client actually sends |
+| `ffi/` | `reality-ffi` (`libreality`) | the core as a library: a C ABI for apps ([LIBRARY.en.md](LIBRARY.en.md)) |
 | `bench/` | `bench` | criterion benchmarks and `memwatch` (process memory under load, Linux) |
 | `vendor/rustls-reality-patch/` | patched `rustls` 0.23.45 | REALITY hook in the ClientHello, GREASE, Chrome extension order; wired in via `[patch.crates-io]` |
 | `interop/go-reality-server/` | Go | a REALITY test server on the XTLS/REALITY library |
@@ -1297,6 +1298,19 @@ PLAN.md):
   - TUN: Wintun, `/1` routes, `IP_UNICAST_IF`, WFP kill switch.
 - **Other OSes**: the core builds wherever tokio and rustls build; TUN and
   socket protection are Linux and Windows only.
+- **Embedded in an app** (`ffi/`, [LIBRARY.en.md](LIBRARY.en.md)):
+  - the C ABI: `rc_start`/`rc_request`/`rc_reload`/`rc_stop`, plus event and
+    log callbacks;
+  - `rc_request` is the same API as over HTTP (`Api::embedded` +
+    `Api::local`: path parsing and responses are shared, without the
+    network, a token or browser checks);
+  - on Android and iOS the app hands over a ready TUN descriptor
+    (`InboundConfig::tun_fd` → `AsyncDevice::from_fd`; the system then sets
+    routes and the kill switch);
+  - the core's sockets are "protected" by an app callback
+    (`net_protect::set_callback` → `VpnService.protect`);
+  - one tokio runtime per core (2 worker threads);
+  - a panic never crosses the C boundary.
 
 ## 21. Tests and verification
 

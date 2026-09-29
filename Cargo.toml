@@ -4,6 +4,7 @@ members = [
     "core",
     "bin/client",
     "bin/fpcheck",
+    "ffi",
     "bench",
 ]
 

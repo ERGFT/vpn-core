@@ -24,13 +24,14 @@ git commit -s -m "…"
 
 ```sh
 scripts/ci.sh --quick   # fmt, SPDX-метки, clippy без предупреждений, тесты
-scripts/ci.sh           # плюс release-сборка, интероп с Xray-core и Go-стендом
+scripts/ci.sh           # плюс release-сборка, интероп с Xray-core и Go-стендом,
+                        # режим библиотеки (C-программа через C ABI)
 ```
 
 То же запускает CI на GitHub — на Linux и на настоящей Windows.
 
-- У каждого нового исходника (`.rs`, `.go`, `.sh`, `.ps1`, `.py`) первая
-  строка (у скриптов — сразу после `#!`):
+- У каждого нового исходника (`.rs`, `.go`, `.sh`, `.ps1`, `.py`, `.c`, `.h`)
+  первая строка (у скриптов — сразу после `#!`):
   `// SPDX-License-Identifier: GPL-3.0-or-later` (или с `#`).
 - Новое поведение — с тестом; всё, что касается протокола, — по
   возможности с проверкой против настоящего Xray-core
@@ -76,12 +77,13 @@ describe them in `PLAN.md` (Stage 5).
 
 ```sh
 scripts/ci.sh --quick   # fmt, SPDX headers, clippy with no warnings, tests
-scripts/ci.sh           # plus release build, interop with Xray-core and the Go test server
+scripts/ci.sh           # plus release build, interop with Xray-core and the Go test server,
+                        # library mode (a C program over the C ABI)
 ```
 
 CI on GitHub runs the same — on Linux and on real Windows.
 
-- Every new source file (`.rs`, `.go`, `.sh`, `.ps1`, `.py`) starts with
+- Every new source file (`.rs`, `.go`, `.sh`, `.ps1`, `.py`, `.c`, `.h`) starts with
   (for scripts — right after `#!`):
   `// SPDX-License-Identifier: GPL-3.0-or-later` (or with `#`).
 - New behaviour comes with a test; anything protocol-related — where

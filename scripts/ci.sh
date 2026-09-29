@@ -25,6 +25,8 @@
 #      тесты и smoke — если есть wine64)
 #  11. сверка разбора наборов .srs с sing-box      (если есть sing-box:
 #      $SING_BOX_BIN или target/sing-box/sing-box — scripts/fetch_sing_box.sh)
+#  12. режим библиотеки: C-программа управляет ядром через C ABI
+#      (scripts/ffi_smoke.sh; если есть компилятор C)
 #
 # Код возврата ненулевой, если упал любой обязательный шаг или любой
 # необязательный, который был запущен.
@@ -101,6 +103,12 @@ if [[ $QUICK -eq 0 ]]; then
             cargo test -q -p reality-core --test app_ruleset -- --nocapture
     else
         skip "наборы правил .srs против sing-box" "нет sing-box ($SB) — scripts/fetch_sing_box.sh"
+    fi
+
+    if command -v "${CC:-cc}" >/dev/null 2>&1; then
+        step "режим библиотеки (C ABI)" bash scripts/ffi_smoke.sh
+    else
+        skip "режим библиотеки (C ABI)" "нет компилятора C"
     fi
 
     if curl -fsS --max-time 10 -o /dev/null \
