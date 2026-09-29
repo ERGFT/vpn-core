@@ -98,6 +98,27 @@ function Wait-Tun {
 }
 if (-not (Wait-Tun)) { Fail 'служба не подняла TUN за 30 с' }
 
+function Show-Net {
+    Get-NetIPInterface -AddressFamily IPv4 | Format-Table ifIndex, InterfaceAlias, InterfaceMetric, AutomaticMetric, ConnectionState -AutoSize | Out-Host
+    Get-DnsClientServerAddress -AddressFamily IPv4 | Format-Table -AutoSize | Out-Host
+}
+# Маршрут к адресу. Сразу после появления интерфейса Windows ещё несколько
+# секунд его «опознаёт», и Find-NetRoute может ответить «network location
+# cannot be reached» — спрашиваем повторно, до 10 с.
+function Get-Route($addr) {
+    for ($i = 0; $i -lt 20; $i++) {
+        $r = $null
+        try {
+            $r = Find-NetRoute -RemoteIPAddress $addr -ErrorAction Stop |
+                Where-Object { $_.InterfaceAlias } | Select-Object -First 1
+        } catch { }
+        if ($r) { return $r }
+        Start-Sleep -Milliseconds 500
+    }
+    Show-Net
+    Fail "за 10 с не нашёлся маршрут к $addr"
+}
+
 # Подробный журнал для разбора: переменная окружения службы (читается при
 # запуске) и перезапуск; заодно проверяется штатная остановка службы.
 Stop-Service RealityClient
@@ -110,7 +131,7 @@ Write-Host 'OK: служба остановлена и запущена снов
 Get-NetAdapter | Format-Table Name, InterfaceDescription, Status -AutoSize | Out-Host
 
 $ip = (Resolve-DnsName $site -Type A | Where-Object { $_.IPAddress } | Select-Object -First 1).IPAddress
-$route = Find-NetRoute -RemoteIPAddress $ip | Where-Object { $_.InterfaceAlias } | Select-Object -First 1
+$route = Get-Route $ip
 Write-Host "маршрут к $ip — через $($route.InterfaceAlias)"
 if ($route.InterfaceAlias -ne 'reality-tun') { Fail "трафик к $ip идёт не через TUN" }
 
@@ -139,10 +160,6 @@ function Wait-Dns {
         Start-Sleep -Milliseconds 500
     }
     return $false
-}
-function Show-Net {
-    Get-NetIPInterface -AddressFamily IPv4 | Format-Table ifIndex, InterfaceAlias, InterfaceMetric, AutomaticMetric, ConnectionState -AutoSize | Out-Host
-    Get-DnsClientServerAddress -AddressFamily IPv4 | Format-Table -AutoSize | Out-Host
 }
 function Tun-Count {
     if (-not (Test-Path $log)) { return 0 }
@@ -188,7 +205,7 @@ $text = Get-Content $log -Raw -Encoding utf8
 if ($text -notmatch 'завершение по сигналу') { Fail 'служба остановлена не штатно' }
 if ($text -notmatch 'маршруты возвращены') { Fail 'маршруты TUN не сняты' }
 if ($text -notmatch 'kill switch снят') { Fail 'kill switch не снят при штатной остановке' }
-$route = Find-NetRoute -RemoteIPAddress $ip | Where-Object { $_.InterfaceAlias } | Select-Object -First 1
+$route = Get-Route $ip
 if ($route.InterfaceAlias -eq 'reality-tun') { Fail 'маршрут через TUN остался' }
 curl.exe -sS --max-time 20 -o NUL "https://$site/"
 if ($LASTEXITCODE) { Fail 'после удаления службы сеть не работает' }
