@@ -1330,6 +1330,52 @@ impl Controller {
         self.reload(cfg).await
     }
 
+    /// Текущий файл настроек: путь и текст.
+    pub fn config_text(&self) -> Result<(std::path::PathBuf, String)> {
+        let path = self.config_path.read().unwrap().clone().ok_or_else(|| {
+            Error::Config("настройки заданы ключами, а не файлом — показывать нечего".into())
+        })?;
+        let text = std::fs::read_to_string(&path)
+            .map_err(|e| Error::Config(format!("не удалось прочитать {}: {e}", path.display())))?;
+        Ok((path, text))
+    }
+
+    /// Новые настройки текстом (sing-box или Xray): проверить, применить
+    /// без разрыва соединений и, если `save`, записать в файл настроек
+    /// (прежний — в `.bak`). `check_only` — только проверить. Файлы в
+    /// таких настройках — только из папки настроек. Ошибка — ничего не
+    /// меняется.
+    pub async fn apply_text(&self, text: &str, check_only: bool, save: bool) -> Result<Applied> {
+        let path = self.config_path.read().unwrap().clone().ok_or_else(|| {
+            Error::Config(
+                "настройки заданы ключами, а не файлом — менять их через API нельзя".into(),
+            )
+        })?;
+        Config::parse(text)?.check_paths_confined()?;
+        let base = path.parent().unwrap_or(std::path::Path::new("."));
+        let cfg = Config::parse_at(text, base)?;
+        if check_only {
+            App::build(&cfg)?;
+            return Ok(Applied::default());
+        }
+        let notes = self.reload(cfg).await?;
+        let mut applied = Applied {
+            applied: true,
+            saved: false,
+            notes,
+        };
+        if save {
+            match save_config(&path, text) {
+                Ok(()) => applied.saved = true,
+                Err(e) => applied.notes.push(format!(
+                    "настройки применены, но не сохранены в {}: {e}",
+                    path.display()
+                )),
+            }
+        }
+        Ok(applied)
+    }
+
     /// Применить новые настройки: новые выходы, правила, DNS, группы и
     /// подписки — сразу для новых соединений; открытые соединения живут
     /// со старыми. Входы перезапускаются, только если их настройки
@@ -1578,6 +1624,50 @@ impl api::Control for Controller {
     ) -> futures_util::future::BoxFuture<'a, Result<serde_json::Value>> {
         Box::pin(self.clash_dns_query(name, qtype))
     }
+
+    fn config_text(&self) -> Result<(std::path::PathBuf, String)> {
+        Controller::config_text(self)
+    }
+
+    fn apply<'a>(
+        &'a self,
+        text: &'a str,
+        check: bool,
+        save: bool,
+    ) -> futures_util::future::BoxFuture<'a, Result<serde_json::Value>> {
+        Box::pin(async move {
+            let a = self.apply_text(text, check, save).await?;
+            Ok(serde_json::to_value(a).unwrap_or_default())
+        })
+    }
+}
+
+/// Итог [`Controller::apply_text`].
+#[derive(Debug, Default, serde::Serialize)]
+pub struct Applied {
+    pub applied: bool,
+    pub saved: bool,
+    /// Что вступит в силу только после перезапуска и прочие замечания.
+    pub notes: Vec<String>,
+}
+
+/// Записать файл настроек атомарно: сначала во временный рядом, потом
+/// переименовать; прежний остаётся в `<файл>.bak`. Права (Unix) — как
+/// у прежнего файла.
+fn save_config(path: &std::path::Path, text: &str) -> std::io::Result<()> {
+    let mut tmp = path.as_os_str().to_owned();
+    tmp.push(".tmp");
+    let tmp = std::path::PathBuf::from(tmp);
+    std::fs::write(&tmp, text)?;
+    if let Ok(meta) = std::fs::metadata(path) {
+        let _ = std::fs::set_permissions(&tmp, meta.permissions());
+        let mut bak = path.as_os_str().to_owned();
+        bak.push(".bak");
+        let _ = std::fs::copy(path, std::path::PathBuf::from(bak));
+    }
+    std::fs::rename(&tmp, path).inspect_err(|_| {
+        let _ = std::fs::remove_file(&tmp);
+    })
 }
 
 /// Узнать адреса серверов заранее (по 16 одновременно).

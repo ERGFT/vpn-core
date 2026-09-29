@@ -374,7 +374,7 @@ curl -H "$T" "http://127.0.0.1:9090/dns/query?name=example.com&type=A"
 | Request | What it does |
 |---|---|
 | `GET /configs`, `PATCH /configs` | inbound ports and the mode; change the mode (`mode`; ports and the rest — only in the config file) |
-| `PUT /configs` | reread the config file |
+| `PUT /configs` | reread the config file; with `payload` — apply a new config (without writing the file, as in Clash) |
 | `GET /proxies[/{name}]`, `PUT /proxies/{group}` | outbounds, groups (`now`, `all`), subscription servers; select a selector member |
 | `GET /proxies/{name}/delay`, `GET /group/{name}/delay` | test the latency of an outbound or of all group members |
 | `GET /connections`, `DELETE /connections[/{id}]` | open connections (outbound, chain, rule, traffic); close |
@@ -386,6 +386,30 @@ Own requests (not in the Clash API): `GET /stats` (traffic per outbound),
 `GET /groups`, `PUT /groups/{tag}`, `POST /groups/{tag}/check`,
 `POST /subscriptions/{tag}/update`, `POST /reload` (with notes in the
 response).
+
+**Changing the config via the API** — the client does not have to write the
+file and restart the core itself:
+
+```sh
+curl -H "$T" http://127.0.0.1:9090/config               # {"path", "format", "text"}
+curl -H "$T" -X PUT --data-binary @new.json "http://127.0.0.1:9090/config?check=1"   # validate only
+curl -H "$T" -X PUT --data-binary @new.json http://127.0.0.1:9090/config             # apply and save
+```
+
+- The `PUT /config` body is the whole config, sing-box or Xray (the format
+  is detected automatically). It is validated, applied without dropping
+  connections (like a reload) and written to the config file atomically,
+  the previous one kept as `<file>.bak`; `?save=0` applies without writing.
+  An error is a 400 and nothing changes. Response:
+  `{"applied", "saved", "notes"}` (`notes` — what takes effect only after a
+  restart, e.g. the API address or the TUN inbound).
+- Files in such a config (`link_file`, `rule_set`, databases,
+  certificates…) must come from the config folder, as a relative path
+  without `..`: otherwise anyone with the token could make the client (the
+  Windows service — as SYSTEM) read any file on the computer.
+- `GET /config` returns the whole file — including UUIDs and passwords, like
+  the rest of the API: the token gives full control of the client.
+- Works only if the client was started with a config file (`--config`).
 
 Streams — the client learns about changes immediately, without polling. The
 response does not end until the client closes the connection: one JSON

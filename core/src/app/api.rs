@@ -22,7 +22,7 @@
 //! |---|---|
 //! | `GET /`, `GET /version` | приветствие и версия |
 //! | `GET /configs`, `PATCH /configs` `{"mode": "global"}` | порты входов, режим; сменить режим (rule, global, direct) |
-//! | `PUT /configs` | перечитать файл настроек |
+//! | `PUT /configs` | перечитать файл настроек; с `payload` — применить новые настройки (без записи в файл, как у Clash) |
 //! | `GET /proxies`, `GET /proxies/{имя}` | выходы и серверы подписок: тип, `now`/`all` у групп, история задержки |
 //! | `PUT /proxies/{группа}` `{"name": "…"}` | выбрать участника (selector, в том числе `GLOBAL`) |
 //! | `GET /proxies/{имя}/delay?url=…&timeout=5000` | проверить задержку |
@@ -39,6 +39,8 @@
 //! | `GET /stats` | трафик всего и по выходам, время работы, число соединений |
 //! | `GET /groups`, `PUT /groups/{tag}` `{"member": "…"}`, `POST /groups/{tag}/check` | группы в своём формате |
 //! | `POST /subscriptions/{tag}/update`, `POST /reload` | обновить подписку, перечитать настройки (с ответом) |
+//! | `GET /config` | файл настроек: `path`, `format` (`sing-box`/`xray`), `text` |
+//! | `PUT /config[?check=1][&save=0]` | новые настройки (тело — JSON sing-box или Xray): проверить, применить без разрыва соединений, сохранить в файл (прежний — в `.bak`); файлы в них — только из папки настроек |
 //!
 //! Потоки — ответ не кончается, пока клиент не закроет соединение: по
 //! JSON-объекту на строку (`Transfer-Encoding: chunked`) или, с
@@ -117,7 +119,8 @@ pub struct ApiConfig {
 /// Минимальная длина токена.
 pub const MIN_TOKEN: usize = 16;
 const MAX_HEAD: usize = 16 * 1024;
-const MAX_BODY: usize = 64 * 1024;
+/// Тело запроса: файл настроек со списками правил бывает не маленьким.
+const MAX_BODY: usize = 1024 * 1024;
 /// Сколько ждать следующего запроса и ответа на обычный запрос.
 const IDLE: Duration = Duration::from_secs(60);
 /// Потоков (`/events`, `/logs`…) одновременно.
@@ -157,6 +160,11 @@ pub trait Control: Send + Sync {
     fn providers(&self) -> Value;
     fn provider_check<'a>(&'a self, name: &'a str) -> BoxFuture<'a, Result<()>>;
     fn dns_query<'a>(&'a self, name: &'a str, qtype: &'a str) -> BoxFuture<'a, Result<Value>>;
+    /// Файл настроек: путь и текст.
+    fn config_text(&self) -> Result<(PathBuf, String)>;
+    /// Новые настройки текстом: проверить (`check`), применить и
+    /// сохранить (`save`); ответ — `Applied`.
+    fn apply<'a>(&'a self, text: &'a str, check: bool, save: bool) -> BoxFuture<'a, Result<Value>>;
 }
 
 pub struct Api {
@@ -641,12 +649,20 @@ impl Api {
                         Err(e) => return Reply::err(400, format!("тело: {e}")),
                     }
                 };
-                if !put.path.is_empty() || !put.payload.is_empty() {
+                if !put.path.is_empty() {
                     return Reply::err(
                         400,
-                        "path и payload не поддерживаются: перечитывается файл, с которым \
-                         запущен клиент",
+                        "path не поддерживается: новые настройки — текстом в payload или \
+                         PUT /config",
                     );
+                }
+                // payload — новые настройки (JSON sing-box или Xray);
+                // применяются, но в файл не пишутся (как у Clash).
+                if !put.payload.is_empty() {
+                    return match c.apply(&put.payload, false, false).await {
+                        Ok(_) => Reply::empty(),
+                        Err(e) => Reply::err(400, e.to_string()),
+                    };
                 }
                 match c.reload().await {
                     Ok(_) => Reply::empty(),
@@ -722,6 +738,31 @@ impl Api {
                 }
             }
             // ── свои ──
+            ("GET", ["config"]) => match c.config_text() {
+                Ok((path, text)) => Reply::ok(json!({
+                    "path": path.display().to_string(),
+                    "format": super::config::Config::format_name(&text),
+                    "text": text,
+                })),
+                Err(e) => Reply::err(404, e.to_string()),
+            },
+            ("PUT", ["config"]) => {
+                let Ok(text) = std::str::from_utf8(&req.body) else {
+                    return Reply::err(400, "тело — текст настроек в UTF-8");
+                };
+                let flag = |k: &str, default: bool| match req.query(k).as_deref() {
+                    Some("1" | "true") => true,
+                    Some("0" | "false") => false,
+                    _ => default,
+                };
+                match c
+                    .apply(text, flag("check", false), flag("save", true))
+                    .await
+                {
+                    Ok(v) => Reply::ok(v),
+                    Err(e) => Reply::err(400, e.to_string()),
+                }
+            }
             ("GET", ["stats"]) => {
                 Reply::ok(serde_json::to_value(self.tracker.summary()).unwrap_or_default())
             }

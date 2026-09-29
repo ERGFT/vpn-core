@@ -35,6 +35,8 @@
   `GLOBAL`; проверка задержки; своя панель из папки (`external_ui`), CORS
   для панелей из интернета. Выбор в группах переживает перечитывание
   настроек.
+- Смена настроек через API: `GET /config`, `PUT /config` — проверить,
+  применить без разрыва соединений, сохранить (с `.bak`).
 - Файл настроек в форматах sing-box и Xray-core (JSON, формат
   определяется сам); неподдерживаемое — ошибка с путём до ключа. Свой
   формат TOML убран.
@@ -92,6 +94,8 @@ It will include:
   and the `GLOBAL` group; latency tests; your own dashboard from a folder
   (`external_ui`), CORS for dashboards hosted online. Group selections
   survive config reloads.
+- Changing the config via the API: `GET /config`, `PUT /config` — validate,
+  apply without dropping connections, save (with `.bak`).
 - Config file in the sing-box and Xray-core formats (JSON, detected
   automatically); anything unsupported is an error with the path to the
   key. The own TOML format has been removed.

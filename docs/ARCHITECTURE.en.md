@@ -241,8 +241,23 @@ instead of silently running without an inbound.
 
 ### 4.4. Config reload
 
-`Controller::reload(new)` is called by `POST /reload`, by SIGHUP, or
-directly (`Running::reload`). Only one reload runs at a time.
+`Controller::reload(new)` is called by `POST /reload`, `PUT /configs`,
+SIGHUP, `PUT /config` (a new config as text), or directly
+(`Running::reload`). Only one reload runs at a time.
+
+`Controller::apply_text` applies a new config sent through the API:
+
+1. The text is parsed as is, and every path in it
+   (`Config::for_each_path`) must be relative without `..`
+   (`check_paths_confined`). Otherwise a token holder could make the client
+   (the Windows service, running as SYSTEM) read other files.
+2. `Config::parse_at` resolves the paths against the config file's folder.
+3. With `?check=1`, only `App::build` runs.
+4. Otherwise the config is applied with `reload`.
+5. With `save`, the text is written atomically (`save_config`):
+   - a temporary file next to it, then `rename`;
+   - the previous file becomes `.bak`;
+   - permissions are copied from the previous file.
 
 1. Save the old DNS module's fake-IP table.
 2. Run `build_core` and `build_inbounds` on the new config. Any error is
@@ -1051,7 +1066,7 @@ a browser (Playwright) against the core.
 - A minimal HTTP/1.1 implementation with no extra dependencies:
   keep-alive; request bodies only via `Content-Length` (chunked requests
   are not accepted).
-- Headers up to 16 KiB, body up to 64 KiB, up to 32 connections.
+- Headers up to 16 KiB, body up to 1 MiB, up to 32 connections.
 - For ordinary requests, 60 s to wait for a request and 60 s to answer.
 - **The order of checks on every request** (`handle`):
   1. `Host` must be the API's own address (`127.0.0.1:port`,
@@ -1096,9 +1111,19 @@ Clash requests:
 | `GET /providers/rules` | empty (rule sets are expanded at build time) |
 | `GET /dns/query?name=&type=` | the DNS module's answer (without a `dns` section — the system resolver) |
 
-Own requests: `GET /stats`, `GET /groups`, `PUT /groups/{tag}`,
-`POST /groups/{tag}/check`, `POST /subscriptions/{tag}/update`,
-`POST /reload`.
+Own requests:
+
+- `GET /stats`;
+- `GET /groups`, `PUT /groups/{tag}`, `POST /groups/{tag}/check`;
+- `POST /subscriptions/{tag}/update`;
+- `POST /reload`;
+- `GET /config` — the config file;
+- `PUT /config` — a new config: validate, apply, save
+  ([section 4.4](#44-config-reload)).
+
+`PUT /configs` with `payload` does the same without writing the file, as in
+Clash. Request bodies are limited to 1 MiB, enough for configs with rule
+lists.
 
 **Streams**:
 
@@ -1366,7 +1391,7 @@ for protocol changes (see [CONTRIBUTING](../CONTRIBUTING.md)).
 | DNS inbound | 256 concurrent queries, TCP 30 s | `dns_in.rs` |
 | Subscription | 4 MiB, 30 s, every 12 h ±10 % | `subscription.rs` |
 | Wrong passwords | 5 in a row → 60 s, growing to 1 h | `access.rs` |
-| API | 32 connections, 16 streams, 16 KiB headers, 64 KiB body, 60 s | `api.rs` |
+| API | 32 connections, 16 streams, 16 KiB headers, 1 MiB body, 60 s | `api.rs` |
 | Latency test via the API | 5 s by default, at most 30 s; a group — up to 8 members at once | `api.rs`, `clash.rs` |
 | Connection tracking | 65,536 | `stats.rs` |
 | Event bus | 1024 events per listener | `events.rs` |
