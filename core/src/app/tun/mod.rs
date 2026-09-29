@@ -19,6 +19,8 @@
 
 pub mod route;
 mod udp;
+#[cfg(windows)]
+pub mod wfp;
 
 use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;

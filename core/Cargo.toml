@@ -64,7 +64,7 @@ socket2.workspace = true
 tracing-subscriber.workspace = true
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Networking_WinSock", "Win32_NetworkManagement_IpHelper", "Win32_NetworkManagement_Ndis", "Win32_System_ProcessStatus", "Win32_System_Threading"] }
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Networking_WinSock", "Win32_NetworkManagement_IpHelper", "Win32_NetworkManagement_Ndis", "Win32_System_ProcessStatus", "Win32_System_Threading", "Win32_NetworkManagement_WindowsFilteringPlatform", "Win32_Security", "Win32_System_Rpc"] }
 
 [dev-dependencies]
 # В тестах серверу нужно уметь СЖИМАТЬ сертификат (проверка нашего

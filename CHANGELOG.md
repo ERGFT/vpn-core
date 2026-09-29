@@ -37,6 +37,8 @@
   настроек.
 - Смена настроек через API: `GET /config`, `PUT /config` — проверить,
   применить без разрыва соединений, сохранить (с `.bak`).
+- Kill switch (`strict_route`) на Windows — стойкие фильтры WFP: если
+  клиент упал, сеть закрыта до нового запуска или `--tun-cleanup`.
 - Файл настроек в форматах sing-box и Xray-core (JSON, формат
   определяется сам); неподдерживаемое — ошибка с путём до ключа. Свой
   формат TOML убран.
@@ -96,6 +98,9 @@ It will include:
   survive config reloads.
 - Changing the config via the API: `GET /config`, `PUT /config` — validate,
   apply without dropping connections, save (with `.bak`).
+- Kill switch (`strict_route`) on Windows — persistent WFP filters: if the
+  client crashes, the network stays closed until it restarts or
+  `--tun-cleanup` is run.
 - Config file in the sing-box and Xray-core formats (JSON, detected
   automatically); anything unsupported is an error with the path to the
   key. The own TOML format has been removed.

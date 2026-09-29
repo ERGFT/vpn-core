@@ -563,8 +563,27 @@ with protection, and `tun/route.rs` installs the routes.
     (`IP_UNICAST_IF`);
   - the interface's DNS is the neighbouring address in the TUN subnet, so
     queries to it enter TUN and are hijacked;
-  - routes live as long as the interface does; there is no kill switch on
-    Windows yet.
+  - routes live as long as the interface does;
+  - `strict_route` (kill switch) uses persistent WFP filters
+    (`tun/wfp.rs`), as WireGuard and Mullvad do. They live in our own
+    highest-weight sublayer on the ALE connect and recv-accept layers
+    (IPv4, IPv6). Filters by weight:
+    1. permit the client itself (by exe, `FWPM_CONDITION_ALE_APP_ID`);
+    2. permit loopback;
+    3. permit the TUN interface (by LUID);
+    4. permit `route_exclude`, DHCP, and for IPv6 ICMPv6 (NDP), DHCPv6 and
+       link-local;
+    5. block the rest.
+
+    `PERSISTENT` filters survive a crash and a reboot. Their keys are fixed
+    GUIDs, so they can be removed from anywhere without remembering
+    anything: on a normal stop (`RouteGuard`), on the next start (before
+    setting up) and by `--tun-cleanup`. After a crash TUN disappears, and
+    only `route_exclude` and essentials stay open. For the first few
+    seconds after it turns on, Windows is still "identifying" the TUN
+    interface and sends DNS queries to the physical adapter's servers —
+    the filters block them; after that names resolve through TUN (the live
+    test waits for this, `Wait-Dns`).
 - **Names while TUN is on.** The system resolver itself goes through TUN
   and could get fake-IPs. So:
   - server addresses are resolved in advance and cached: fresh for 120 s,
@@ -1200,7 +1219,7 @@ PLAN.md):
 | Browsing history | site addresses only at `debug` and in the API; the subscription URL is never logged |
 | Windows service running as SYSTEM | config and exe copied to a folder writable only by SYSTEM and administrators; a pre-existing folder owned by someone else is refused |
 | Secrets in memory | REALITY keys wiped (`zeroize`) |
-| Leaks around the tunnel | TUN + `auto_route`; `strict_route` (Linux); DNS hijacking; fake-IP |
+| Leaks around the tunnel | TUN + `auto_route`; `strict_route` (Linux — `unreachable`, Windows — WFP); DNS hijacking; fake-IP |
 
 ## 18. Performance and memory
 
@@ -1275,7 +1294,7 @@ PLAN.md):
   - autostart at logon: `HKCU\…\Run`, without a window;
   - the system proxy (`--system-proxy`): the `Internet Settings` registry
     and `InternetSetOption`; the previous values are restored on exit;
-  - TUN: Wintun, `/1` routes, `IP_UNICAST_IF`, no kill switch.
+  - TUN: Wintun, `/1` routes, `IP_UNICAST_IF`, WFP kill switch.
 - **Other OSes**: the core builds wherever tokio and rustls build; TUN and
   socket protection are Linux and Windows only.
 
