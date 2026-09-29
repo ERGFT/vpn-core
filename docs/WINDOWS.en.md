@@ -138,7 +138,9 @@ VPN: traffic goes through it only for programs that use this proxy.
   `"strict_route": true` on the tun inbound: if the client crashes, the
   network stays closed (Windows Filtering Platform filters) until it is
   started again; to open it manually run `reality-client.exe --tun-cleanup`
-  as administrator.
+  as administrator. For the first few seconds after the kill switch turns
+  on, site names may fail to resolve: Windows is still "identifying" the
+  new interface; after a few seconds everything works through the tunnel.
 - Own DNS (the `dns` section and a DNS inbound in the config,
   see the README): if you set `127.0.0.1` in "Settings → Network & Internet →
   Adapter properties → DNS", all programs' name lookups go through the

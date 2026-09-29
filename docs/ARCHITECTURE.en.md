@@ -579,7 +579,11 @@ with protection, and `tun/route.rs` installs the routes.
     GUIDs, so they can be removed from anywhere without remembering
     anything: on a normal stop (`RouteGuard`), on the next start (before
     setting up) and by `--tun-cleanup`. After a crash TUN disappears, and
-    only `route_exclude` and essentials stay open.
+    only `route_exclude` and essentials stay open. For the first few
+    seconds after it turns on, Windows is still "identifying" the TUN
+    interface and sends DNS queries to the physical adapter's servers —
+    the filters block them; after that names resolve through TUN (the live
+    test waits for this, `Wait-Dns`).
 - **Names while TUN is on.** The system resolver itself goes through TUN
   and could get fake-IPs. So:
   - server addresses are resolved in advance and cached: fresh for 120 s,
