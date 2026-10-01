@@ -496,14 +496,7 @@ impl Api {
             None
         };
         let got = header.map(str::to_string).or(query).unwrap_or_default();
-        // Сравнение за постоянное время.
-        let a = got.as_bytes();
-        let b = self.token.as_bytes();
-        let mut diff = (a.len() ^ b.len()) as u8;
-        for (i, x) in b.iter().enumerate() {
-            diff |= x ^ a.get(i).copied().unwrap_or(0);
-        }
-        if diff == 0 {
+        if token_eq(got.as_bytes(), self.token.as_bytes()) {
             self.failures.store(0, Ordering::Relaxed);
             return true;
         }
@@ -919,6 +912,15 @@ fn host_ok(req: &Request, local: SocketAddr) -> bool {
     })
 }
 
+/// Токен совпадает: длина — отдельной проверкой (длина токена не
+/// секрет), байты — за постоянное время.
+fn token_eq(got: &[u8], want: &[u8]) -> bool {
+    if got.len() != want.len() {
+        return false;
+    }
+    got.iter().zip(want).fold(0u8, |d, (a, b)| d | (a ^ b)) == 0
+}
+
 fn is_upgrade(req: &Request) -> bool {
     req.header("upgrade")
         .is_some_and(|u| u.eq_ignore_ascii_case("websocket"))
@@ -1205,4 +1207,23 @@ async fn respond<W: tokio::io::AsyncWrite + Unpin>(
     w.write_all(head.as_bytes()).await?;
     w.write_all(&reply.body).await?;
     w.flush().await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::token_eq;
+
+    #[test]
+    fn token_must_match_exactly() {
+        let t = b"secret";
+        assert!(token_eq(t, t));
+        assert!(!token_eq(b"secreT", t));
+        assert!(!token_eq(b"secre", t));
+        assert!(!token_eq(b"", t));
+        // Длиннее ровно на 256 байт: раньше разница длин, приведённая к
+        // u8, давала ноль, и лишний хвост не проверялся.
+        let mut long = t.to_vec();
+        long.extend([b'x'; 256]);
+        assert!(!token_eq(&long, t));
+    }
 }
