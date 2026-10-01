@@ -92,8 +92,8 @@ async fn full_reality_handshake_authenticates_and_completes_tls13() {
     //     тот же ключ, что настоящий TLS-сертификат сервера ниже — в
     //     реальном REALITY это тоже два разных объекта (публичный ключ
     //     REALITY против TLS-сертификата "сайта прикрытия"). ---
-    let mut rng = rand::rngs::OsRng;
-    let server_reality_static = StaticSecret::random_from_rng(rng);
+    let mut rng = rand::rand_core::UnwrapErr(rand::rngs::SysRng);
+    let server_reality_static = StaticSecret::random_from_rng(&mut rng);
     let server_reality_public = X25519PublicKey::from(&server_reality_static).to_bytes();
     let short_id: [u8; 4] = [0xde, 0xad, 0xbe, 0xef];
 
@@ -226,10 +226,10 @@ async fn full_reality_handshake_authenticates_and_completes_tls13() {
 
     let session_id: [u8; 32] = info.session_id.clone().try_into().unwrap();
     let cipher = Aes256Gcm::new_from_slice(&auth_key).unwrap();
-    let nonce = Nonce::from_slice(&info.random[20..32]);
+    let nonce = Nonce::try_from(&info.random[20..32]).unwrap();
     let plaintext = cipher
         .decrypt(
-            nonce,
+            &nonce,
             Payload {
                 msg: &session_id,
                 aad: &aad,

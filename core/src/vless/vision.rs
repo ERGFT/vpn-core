@@ -37,7 +37,7 @@ use std::task::{ready, Context, Poll};
 use std::time::Duration;
 
 use bytes::BytesMut;
-use rand::Rng;
+use rand::RngExt;
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use uuid::Uuid;
 
@@ -196,11 +196,11 @@ fn xtls_padding(
     out: &mut Vec<u8>,
 ) {
     let content_len = content.len();
-    let mut rng = rand::thread_rng();
+    let mut rng = rand::rng();
     let mut padding_len = if content_len < TESTSEED[0] && long_padding {
-        rng.gen_range(0..TESTSEED[1]) + TESTSEED[2] - content_len
+        rng.random_range(0..TESTSEED[1]) + TESTSEED[2] - content_len
     } else {
-        rng.gen_range(0..TESTSEED[3])
+        rng.random_range(0..TESTSEED[3])
     };
     let cap = (BUF_SIZE - BLOCK_OVERHEAD).saturating_sub(content_len);
     if padding_len > cap {

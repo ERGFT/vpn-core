@@ -66,7 +66,7 @@ There has been no third-party crypto review of the REALITY implementation
 
 ## Building
 
-You need Rust 1.88 or newer (stable). On Linux:
+You need Rust 1.89 or newer (stable). On Linux:
 
 ```sh
 cargo build --release -p reality-client

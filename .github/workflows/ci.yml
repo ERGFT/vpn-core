@@ -64,7 +64,7 @@ jobs:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
         with:
-          toolchain: "1.88" # = rust-version в Cargo.toml
+          toolchain: "1.89" # = rust-version в Cargo.toml
       - run: cargo check --locked --workspace --all-targets
 
   coverage:

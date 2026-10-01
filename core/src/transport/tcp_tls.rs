@@ -467,7 +467,7 @@ fn reality_client_config_inner(
     browser_fallback: Option<RootCertStore>,
     browser: crate::fingerprint::Browser,
 ) -> Result<(ClientConfig, Arc<RealityHook>)> {
-    let mut rng = rand::rngs::OsRng;
+    let mut rng = rand::rand_core::UnwrapErr(rand::rngs::SysRng);
     let hook = Arc::new(RealityHook::new(
         &reality.public_key,
         &reality.short_id,

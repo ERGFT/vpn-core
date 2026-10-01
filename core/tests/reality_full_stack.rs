@@ -38,7 +38,7 @@ use std::sync::Arc;
 
 use bytes::Bytes;
 use hkdf::Hkdf;
-use hmac::{Hmac, Mac};
+use hmac::{Hmac, KeyInit, Mac};
 use rcgen::{CertificateParams, KeyPair};
 use rustls::crypto::CryptoProvider;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
@@ -166,8 +166,8 @@ fn build_reality_server_config(alpn: Vec<Vec<u8>>) -> (ServerConfig, [u8; 32]) {
         "HMAC-SHA512 даёт 64 байта — ровно длина Ed25519-подписи, иначе патч сломает DER"
     );
 
-    let rng = rand::rngs::OsRng;
-    let server_reality_static = StaticSecret::random_from_rng(rng);
+    let mut rng = rand::rand_core::UnwrapErr(rand::rngs::SysRng);
+    let server_reality_static = StaticSecret::random_from_rng(&mut rng);
     let server_reality_public = X25519PublicKey::from(&server_reality_static).to_bytes();
 
     let resolver = Arc::new(RealityTestResolver {

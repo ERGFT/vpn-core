@@ -35,7 +35,7 @@ fn bench_encode_request(c: &mut Criterion) {
     group.bench_function("domain_addr", |b| {
         b.iter(|| {
             let buf = encode_request(&id, Command::Tcp, &addr, 443);
-            criterion::black_box(buf);
+            std::hint::black_box(buf);
         })
     });
     group.finish();

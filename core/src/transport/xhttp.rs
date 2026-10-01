@@ -51,7 +51,7 @@ use futures_util::FutureExt;
 use h2::client::{ResponseFuture, SendRequest};
 use h2::SendStream;
 use http::{Method, Request};
-use rand::Rng;
+use rand::RngExt;
 use tokio::io::{
     duplex, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader, DuplexStream, ReadBuf,
 };
@@ -103,7 +103,7 @@ impl Range {
         if self.from >= self.to {
             self.from
         } else {
-            rand::thread_rng().gen_range(self.from..=self.to)
+            rand::rng().random_range(self.from..=self.to)
         }
     }
 
