@@ -23,7 +23,7 @@ tokio = { version = "1", features = ["full"] }
 tokio-rustls = "0.26"
 rustls = "0.23"
 rustls-pki-types = "1"
-webpki-roots = "0.26"
+webpki-roots = "1"
 bytes = "1"
 uuid = { version = "1", features = ["v4"] }
 url = "2"
@@ -80,8 +80,8 @@ x25519-dalek = { version = "2", features = ["static_secrets", "zeroize"] }
 hkdf = "0.12"
 hmac = "0.12"
 aes-gcm = "0.10"
-base64 = "0.22"
-x509-parser = "0.16"
+base64 = "0.23"
+x509-parser = "0.18"
 # Крипто-ревью (см. PLAN.md, Этап 5): секреты, которые живут дольше
 # одной функции (эфемерный X25519-скаляр и общий секрет в
 # `reality/hook.rs`), должны сами стираться из памяти при Drop, а не
@@ -103,7 +103,7 @@ aws-lc-rs = "1"
 # браузера (решение пользователя: добавить зависимость). Только
 # распаковщик — фича "brotli" у rustls тащила бы ещё и компрессор
 # (+1,3 МБ к бинарнику при нулевой пользе для клиента).
-brotli-decompressor = "5"
+brotli-decompressor = "6"
 
 # Этап 5 — находка после первой "полной" версии REALITY: современные
 # серверы Xray-core (26.9.8+) требуют гибридную постквантовую группу

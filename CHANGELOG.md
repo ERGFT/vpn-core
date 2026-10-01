@@ -86,6 +86,8 @@
 - Документация на русском и английском; CONTRIBUTING, SECURITY,
   CODE_OF_CONDUCT, SUPPORT, шаблоны issue и PR; описание устройства ядра
   (`docs/ARCHITECTURE.md`).
+- Зависимости: webpki-roots 1.0, base64 0.23, x509-parser 0.18,
+  brotli-decompressor 6, criterion 0.8 (бенчмарки).
 
 [Не выпущено]: https://github.com/ERGFT/vpn-core/commits/main
 
@@ -180,5 +182,7 @@ It will include:
 - Documentation in Russian and English; CONTRIBUTING, SECURITY,
   CODE_OF_CONDUCT, SUPPORT, issue and PR templates; a description of how the
   core works (`docs/ARCHITECTURE.en.md`).
+- Dependencies: webpki-roots 1.0, base64 0.23, x509-parser 0.18,
+  brotli-decompressor 6, criterion 0.8 (benchmarks).
 
 [Unreleased]: https://github.com/ERGFT/vpn-core/commits/main
