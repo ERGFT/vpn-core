@@ -1,21 +1,24 @@
-# Обновления зависимостей раз в месяц, одним PR на экосистему.
+# Обновления зависимостей раз в неделю, одним PR на экосистему.
+# Обновления безопасности — сразу (Settings → Code security →
+# Dependabot security updates).
 version: 2
 updates:
   - package-ecosystem: github-actions
     directory: /
     schedule:
-      interval: monthly
+      interval: weekly
     groups:
       actions:
         patterns: ["*"]
   - package-ecosystem: cargo
     directory: /
     schedule:
-      interval: monthly
+      interval: weekly
     groups:
       cargo:
         patterns: ["*"]
     ignore:
       # rustls подменён патчем (vendor/rustls-reality-patch) и закреплён на
-      # его версии; обновляется только вместе с патчем, вручную.
+      # его версии; обновляется только вместе с патчем, вручную. Его
+      # уязвимости сверяет scripts/rustls_advisories.sh (CI, job audit).
       - dependency-name: rustls
