@@ -17,8 +17,11 @@ git commit -s -m "…"
 ```
 
 Код в `vendor/rustls-reality-patch` — патч rustls, он остаётся под
-лицензиями rustls (Apache-2.0 / ISC / MIT); правки в нём держите
-минимальными и описывайте в `PLAN.md` (Этап 5).
+лицензиями rustls (Apache-2.0 / ISC / MIT). Это код, критичный для
+безопасности: правки в нём держите минимальными, после каждой
+пересоздавайте `vendor/rustls-reality-patch.diff`
+(`scripts/rustls_patch.sh`) и обновляйте таблицу в
+[`docs/RUSTLS_PATCH.md`](docs/RUSTLS_PATCH.md).
 
 ## Перед pull request
 
@@ -70,8 +73,10 @@ git commit -s -m "…"
 ```
 
 The code in `vendor/rustls-reality-patch` is a patched rustls and stays under
-the rustls licenses (Apache-2.0 / ISC / MIT); keep changes there minimal and
-describe them in `PLAN.md` (Stage 5).
+the rustls licenses (Apache-2.0 / ISC / MIT). It is security-critical code:
+keep changes there minimal, regenerate `vendor/rustls-reality-patch.diff`
+(`scripts/rustls_patch.sh`) after each one and update the table in
+[`docs/RUSTLS_PATCH.en.md`](docs/RUSTLS_PATCH.en.md).
 
 ## Before a pull request
 

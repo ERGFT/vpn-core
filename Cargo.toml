@@ -120,15 +120,15 @@ brotli-decompressor = "5"
 # двух несовместимых версий rand_core.
 ml-kem = { version = "0.3", features = ["zeroize", "getrandom"] }
 
-# Этап 5 — спайк по решению "какой TLS-бэкенд": вместо публикации целого
-# форка rustls, здесь минимальный, целиком читаемый патч (3 маленьких
-# правки видимости в msgs/handshake.rs и msgs/persist.rs, ни одна
-# существующая логика не тронута — см. vendor/rustls-reality-patch и
-# PLAN.md, Этап 5), который открывает единственный недостающий публичный
-# API: возможность отдать `ClientSessionStore` заранее вычисленный
-# `SessionId` (нужно для REALITY). Патчит ВСЕ зависимости от
-# `rustls` в графе (включая транзитивную через tokio-rustls) — версия
-# та же (0.23.45), поэтому остальной код не заметил подмены.
+# Патченный rustls 0.23.45 (vendor/rustls-reality-patch): хук REALITY
+# (своя доля X25519MLKEM768, печать session_id), сборка ClientHello по
+# профилю браузера, GREASE, дополнительная доля P-256. Это существенная
+# правка логики рукопожатия (~800 строк в 13 файлах), а не только
+# видимости: весь объём — vendor/rustls-reality-patch.diff
+# (scripts/rustls_patch.sh), что изменено и как переносить обновления
+# безопасности rustls — docs/RUSTLS_PATCH.md. Подменяет rustls во всём
+# графе (включая tokio-rustls); версия закреплена, dependabot её не
+# обновляет.
 [patch.crates-io]
 rustls = { path = "vendor/rustls-reality-patch" }
 

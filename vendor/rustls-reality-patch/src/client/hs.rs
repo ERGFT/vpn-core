@@ -113,7 +113,9 @@ impl ActiveKeyExchange for RealityKeyExchange {
         // (mlkem || ecdh) — см. доку `RealityClientHook::complete_real_ecdh`
         // и `reality-core::reality::hook::RealityHook`.
         let shared = self.hook.complete_real_ecdh(peer_key_share)?;
-        Ok(SharedSecret::from(shared.as_slice()))
+        // Буфер переходит в SharedSecret целиком (он стирает его при
+        // удалении) — без лишней копии секрета, которую никто не обнулит.
+        Ok(SharedSecret::from(shared))
     }
 
     fn pub_key(&self) -> &[u8] {
@@ -139,7 +141,7 @@ impl ActiveKeyExchange for RealityKeyExchange {
         peer_pub_key: &[u8],
     ) -> Result<SharedSecret, Error> {
         let shared = self.hook.complete_x25519(peer_pub_key)?;
-        Ok(SharedSecret::from(shared.as_slice()))
+        Ok(SharedSecret::from(shared))
     }
 }
 

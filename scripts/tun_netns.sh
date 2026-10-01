@@ -16,7 +16,8 @@
 #   6. после Ctrl+C правила маршрутизации убраны, интерфейса нет;
 #   7. после kill -9 сеть работает (таблица TUN пуста);
 #   8. route_exclude — мимо TUN;
-#   9. strict_route (kill switch): после kill -9 сеть закрыта, после
+#   9. strict_route (kill switch): второй экземпляр и --tun-cleanup не
+#      трогают работающий; после kill -9 сеть закрыта, после
 #      --tun-cleanup — открыта;
 #  10. sniffing QUIC: настоящие Initial-пакеты Chromium к IP — домен
 #      найден, правило по домену отправляет их direct.
@@ -274,6 +275,18 @@ echo "OK: остатки прошлого запуска убраны"
 sed -i 's/"route_exclude_address": \[[^]]*\]/"strict_route": true/' "$TMP/client.json"
 start_client
 nsx python3 -c "import socket; s=socket.create_connection(('$HOST_IP',$ECHO),5); assert s.recv(64).startswith(b'PEER $HOST_IP')"
+# Один владелец auto_route: второй экземпляр не запускается,
+# --tun-cleanup отказывается, маршруты первого на месте.
+if nsx timeout 10 "$CLIENT_BIN" --config "$TMP/client.json" > "$TMP/second.log" 2>&1; then
+    echo "второй экземпляр с auto_route запустился"; exit 1
+fi
+grep -q 'уже держит другой' "$TMP/second.log" || { cat "$TMP/second.log"; exit 1; }
+if nsx "$CLIENT_BIN" --tun-cleanup 2> "$TMP/cleanup.log"; then
+    echo "--tun-cleanup снял маршруты работающего экземпляра"; exit 1
+fi
+grep -q 'уже держит другой' "$TMP/cleanup.log" || { cat "$TMP/cleanup.log"; exit 1; }
+nsx python3 -c "import socket; s=socket.create_connection(('$HOST_IP',$ECHO),5); assert s.recv(64).startswith(b'PEER $HOST_IP')"
+echo "OK: второй экземпляр и --tun-cleanup не тронули работающий auto_route"
 kill -9 "$CLIENT_PID"; wait "$CLIENT_PID" 2>/dev/null || true; sleep 0.3
 if nsx python3 -c "import socket; socket.create_connection(('$HOST_IP',$ECHO),3)" 2>/dev/null; then
     echo "strict_route: после kill -9 трафик пошёл мимо туннеля"; exit 1

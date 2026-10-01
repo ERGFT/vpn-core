@@ -179,6 +179,14 @@ curl.exe -sS --max-time 30 -o NUL "https://$site/"
 if ($LASTEXITCODE) { Show-Net; Fail 'HTTPS через TUN со strict_route не прошёл' }
 Write-Host 'OK: kill switch включён, трафик идёт через TUN'
 
+# Один владелец auto_route: --tun-cleanup не снимает фильтры работающей службы.
+$out = & $exePath --tun-cleanup 2>&1 | Out-String
+if (-not $LASTEXITCODE) { Fail '--tun-cleanup снял kill switch работающей службы' }
+if ($out -notmatch 'уже держит другой') { Write-Host $out; Fail '--tun-cleanup: нет сообщения о занятом auto_route' }
+curl.exe -sS --max-time 30 -o NUL "https://$site/"
+if ($LASTEXITCODE) { Show-Net; Fail 'после отказа --tun-cleanup HTTPS через TUN не прошёл' }
+Write-Host 'OK: --tun-cleanup не тронул работающую службу'
+
 # Сбой: процесс убит, интерфейс TUN исчез — мимо туннеля трафик не идёт.
 Stop-Process -Name reality-client -Force
 Start-Sleep -Milliseconds 500

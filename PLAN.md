@@ -1270,6 +1270,8 @@ interop-теста) — это следующий явно обозначенн�
 
 Вместо того чтобы форкать весь конвейер сборки ClientHello (как `craftls`, см. Этап 3 — 27 звёзд, статус "under active development", нестабильный API) — нашёлся путь МЕНЬШЕ: `rustls` уже публично (без всякого форка) даёt подключить свой `ClientSessionStore` (`ClientConfig::resumption`). Если он вернёт для TLS1.2 фейковую "сессию для резюмирования" с нужным нам `SessionId`, а тикет у неё пустой, то по коду `client/hs.rs` (прочитано построчно): (а) `ClientHelloInput::new()` берёт `session_id` именно из этой сессии и подставляет его в исходящий ClientHello как есть, не перегенерируя случайным, и (б) `prepare_resumption` ничего лишнего не добавляет в расширения, если конфиг явно ограничен TLS1.3 (без TLS1.2 в списке поддерживаемых версий). Проблема была только в том, что сам тип `Tls12ClientSessionValue` и его конструктор, и сам тип `SessionId` — были `pub(crate)`, ненаходимы снаружи крейта.
 
+> **Позднее:** описание ниже — первая версия патча. С тех пор он вырос до существенной правки логики рукопожатия (хук REALITY, гибридный X25519MLKEM768, ClientHello по профилю браузера, GREASE, доля P-256 — ~800 строк в 13 файлах). Актуальный объём — `vendor/rustls-reality-patch.diff`, описание и порядок переноса обновлений rustls — [`docs/RUSTLS_PATCH.md`](docs/RUSTLS_PATCH.md).
+
 **Патч:** `vendor/rustls-reality-patch/` — полная копия исходников rustls 0.23.45 с ТРЕМЯ точечными правками видимости, ни одна не трогает существующую логику:
 1. `msgs/handshake.rs`: `SessionId` стал `pub` + новый метод `SessionId::from_bytes_public(data: &[u8])`.
 2. `msgs/persist.rs`: `Tls12ClientSessionValue::new(...)` стал `pub` (было `pub(crate)`).

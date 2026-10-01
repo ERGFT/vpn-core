@@ -27,6 +27,8 @@
 #      $SING_BOX_BIN или target/sing-box/sing-box — scripts/fetch_sing_box.sh)
 #  12. режим библиотеки: C-программа управляет ядром через C ABI
 #      (scripts/ffi_smoke.sh; если есть компилятор C)
+#  13. vendor/rustls-reality-patch.diff совпадает с патчем rustls
+#      (scripts/rustls_patch.sh --check; если есть доступ к crates.io)
 #
 # Код возврата ненулевой, если упал любой обязательный шаг или любой
 # необязательный, который был запущен.
@@ -116,6 +118,12 @@ if [[ $QUICK -eq 0 ]]; then
         step "сверка эталона Chrome-отпечатка" bash scripts/check_chrome_fingerprint.sh
     else
         skip "сверка эталона Chrome-отпечатка" "нет доступа к raw.githubusercontent.com"
+    fi
+
+    if curl -fsS --max-time 10 -o /dev/null https://index.crates.io/config.json 2>/dev/null; then
+        step "патч rustls описан в .diff" bash scripts/rustls_patch.sh --check
+    else
+        skip "патч rustls описан в .diff" "нет доступа к crates.io"
     fi
 fi
 

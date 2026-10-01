@@ -163,10 +163,10 @@ pub struct Tls12ClientSessionValue {
 
 #[cfg(feature = "tls12")]
 impl Tls12ClientSessionValue {
-    /// REALITY-PATCH: was `pub(crate)`. Making this constructor public is
-    /// the second (and last) half of the patch alongside
-    /// `SessionId::from_bytes_public` — see the comment there. No other
-    /// logic in this file or in `client/hs.rs` was touched.
+    /// REALITY-PATCH: was `pub(crate)`. Made public together with
+    /// `SessionId::from_bytes_public` — see the comment there. The rest of
+    /// the patch (including `client/hs.rs`) is listed in
+    /// docs/RUSTLS_PATCH.md and vendor/rustls-reality-patch.diff.
     pub fn new(
         suite: &'static Tls12CipherSuite,
         session_id: SessionId,

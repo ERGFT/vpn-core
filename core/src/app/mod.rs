@@ -1197,6 +1197,16 @@ impl App {
         let mut tun_resolver = false;
         for i in built {
             if let InboundSvc::Tun(t) = &i.svc {
+                // Владение auto_route — до создания интерфейса: второй
+                // экземпляр не тронет ни адаптер, ни маршруты первого.
+                let lock = if t.settings.auto_route {
+                    Some(
+                        tun::route::HostLock::acquire()
+                            .map_err(|e| Error::Config(format!("tun: {e}")))?,
+                    )
+                } else {
+                    None
+                };
                 let dev = t.create_device()?;
                 tracing::info!(inbound = %t.tag, interface = %dev.name, "TUN создан");
                 let (dev_name, dev_index, dev_v6) = (dev.name.clone(), dev.if_index, dev.has_v6);
@@ -1206,7 +1216,7 @@ impl App {
                 // подписки и ставятся маршруты (иначе Windows запоминает
                 // неудачу, а с kill switch обойти её ей нечем).
                 let task = spawn_task(&errors_tx, t.clone().serve(dev, routers.clone()));
-                if t.settings.auto_route {
+                if let Some(lock) = lock {
                     // Пока системный DNS ещё работает напрямую: загрузить
                     // подписки без сохранённого списка и узнать адреса
                     // всех серверов.
@@ -1228,6 +1238,7 @@ impl App {
                     hosts.dedup();
                     pre_resolve(hosts).await;
                     let guard = tun::route::setup(
+                        lock,
                         &dev_name,
                         dev_index,
                         dev_v6,
@@ -1363,7 +1374,10 @@ impl Controller {
         })?;
         Config::parse(text)?.check_paths_confined()?;
         let base = path.parent().unwrap_or(std::path::Path::new("."));
-        let cfg = Config::parse_at(text, base)?;
+        let mut cfg = Config::parse_at(text, base)?;
+        // После подстановки путей по умолчанию (кеш подписки — по тегу) и
+        // с разрешением символических ссылок.
+        cfg.check_paths_inside(base)?;
         if check_only {
             App::build(&cfg)?;
             return Ok(Applied::default());
