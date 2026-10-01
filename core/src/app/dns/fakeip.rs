@@ -233,9 +233,7 @@ impl FakeIp {
         };
         // Сначала во временный файл, потом переименование: оборванная
         // запись не портит прежнюю таблицу.
-        let tmp = f.with_extension("tmp");
-        std::fs::write(&tmp, text)?;
-        std::fs::rename(&tmp, f)?;
+        crate::fsutil::write_atomic(f, text.as_bytes(), 0o600)?;
         Ok(())
     }
 
