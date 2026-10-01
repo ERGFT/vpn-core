@@ -82,3 +82,25 @@ fn start_request_reload_stop() {
     unsafe { rc_stop(core) };
     unsafe { rc_stop(ptr::null_mut()) };
 }
+
+/// catch_unwind на границе C работает только при panic = "unwind":
+/// с "abort" паника в ядре роняла бы приложение-хост. Сам `cargo test`
+/// всегда собирается с unwind, поэтому сторожим профиль release.
+#[test]
+fn release_profile_keeps_unwind() {
+    let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../Cargo.toml");
+    let text = std::fs::read_to_string(manifest).unwrap();
+    let release = text
+        .split("[profile.release]")
+        .nth(1)
+        .expect("в Cargo.toml есть [profile.release]");
+    let release = release.split("\n[").next().unwrap();
+    let abort = release
+        .lines()
+        .map(|l| l.split('#').next().unwrap().replace(' ', ""))
+        .any(|l| l == "panic=\"abort\"");
+    assert!(
+        !abort,
+        "panic = \"abort\" в [profile.release] отключает catch_unwind в ffi"
+    );
+}

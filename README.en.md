@@ -70,7 +70,7 @@ You need Rust (stable). On Linux:
 
 ```sh
 cargo build --release -p reality-client
-# -> target/release/reality-client  (~7 MB)
+# -> target/release/reality-client  (~14 MB)
 ```
 
 On Windows — see [`docs/WINDOWS.en.md`](docs/WINDOWS.en.md) or run

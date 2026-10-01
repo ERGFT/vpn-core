@@ -71,7 +71,7 @@
 
 ```sh
 cargo build --release -p reality-client
-# -> target/release/reality-client  (~7 МБ)
+# -> target/release/reality-client  (~14 МБ)
 ```
 
 На Windows — [`docs/WINDOWS.md`](docs/WINDOWS.md) или
