@@ -1,6 +1,17 @@
-# Обновления зависимостей раз в неделю, одним PR на экосистему.
-# Обновления безопасности — сразу (Settings → Code security →
-# Dependabot security updates).
+# Dependabot: раз в неделю, только то, что проходит CI без правок кода.
+#
+# cargo — только патч-обновления, одним PR. Минорные и мажорные — вручную:
+#   у крейтов 0.x (RustCrypto, rand, quinn/h3, x509-parser…) «минорное»
+#   0.12 → 0.13 уже несовместимо, а криптографию (hkdf, hmac, sha2,
+#   aes-gcm, x25519-dalek, rand) обновляют только вместе и с интероп-
+#   проверкой против Xray-core. Сборный PR из таких обновлений не
+#   собирается. Уязвимые версии не пропадут: CI раз в неделю гоняет
+#   cargo audit и cargo deny (job audit) — с уязвимой зависимостью он
+#   красный.
+# github-actions — минорные и патч-обновления одним PR, мажорные — другим.
+#
+# Обновления безопасности — Settings → Code security → Dependabot
+# security updates.
 version: 2
 updates:
   - package-ecosystem: github-actions
@@ -10,14 +21,22 @@ updates:
     groups:
       actions:
         patterns: ["*"]
+        update-types: [minor, patch]
+      actions-major:
+        patterns: ["*"]
+        update-types: [major]
   - package-ecosystem: cargo
     directory: /
     schedule:
       interval: weekly
     groups:
-      cargo:
+      cargo-patch:
         patterns: ["*"]
+        update-types: [patch]
     ignore:
+      # Минорные и мажорные — вручную (см. выше).
+      - dependency-name: "*"
+        update-types: ["version-update:semver-minor", "version-update:semver-major"]
       # rustls подменён патчем (vendor/rustls-reality-patch) и закреплён на
       # его версии; обновляется только вместе с патчем, вручную. Его
       # уязвимости сверяет scripts/rustls_advisories.sh (CI, job audit).
