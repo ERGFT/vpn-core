@@ -19,6 +19,11 @@
 //! пока жив интерфейс. `strict_route` (kill switch) — стойкие фильтры WFP
 //! ([`super::wfp`]): убитый клиент так же оставляет сеть закрытой до
 //! нового запуска или `--tun-cleanup`.
+//!
+//! Таблица, приоритеты правил и фильтры WFP у всех экземпляров общие,
+//! поэтому `auto_route` на компьютере (Linux — в сетевом пространстве)
+//! может держать только один процесс: [`HostLock`]. Второй не запустится,
+//! а `--tun-cleanup` не тронет маршруты работающего экземпляра.
 
 use crate::app::access::IpNet;
 use crate::error::{Error, Result};
@@ -37,6 +42,9 @@ const PREF_BLOCK: u32 = 9002;
 /// Пока жив — трафик идёт в TUN; при уничтожении маршруты снимаются.
 pub struct RouteGuard {
     down: Vec<Vec<String>>,
+    /// Владение `auto_route`; снимается после маршрутов (поля
+    /// уничтожаются после `Drop::drop`).
+    _lock: HostLock,
     /// Включён kill switch WFP (Windows).
     #[cfg(windows)]
     wfp: bool,
@@ -55,6 +63,64 @@ impl Drop for RouteGuard {
         }
         net_protect::set(None);
         tracing::info!("tun: маршруты возвращены");
+    }
+}
+
+/// Один владелец `auto_route` на компьютер. Держится, пока жив процесс:
+/// после аварии ОС снимает её сама, поэтому занятая блокировка всегда
+/// означает работающий экземпляр, а свободная — что маршруты и фильтры,
+/// если остались, никому не принадлежат.
+///
+/// Linux — абстрактный сокет Unix: он живёт в сетевом пространстве, как и
+/// сами маршруты, и не зависит от прав на файлы (служба с
+/// `ProtectSystem=strict`). Windows — файл в `%ProgramData%`, открытый без
+/// общего доступа.
+pub struct HostLock {
+    #[cfg(target_os = "linux")]
+    _sock: std::os::unix::net::UnixListener,
+    #[cfg(windows)]
+    _file: std::fs::File,
+}
+
+impl HostLock {
+    pub fn acquire() -> std::result::Result<HostLock, String> {
+        const BUSY: &str = "auto_route уже держит другой запущенный экземпляр reality-client";
+        #[cfg(target_os = "linux")]
+        {
+            use std::os::linux::net::SocketAddrExt;
+            use std::os::unix::net::{SocketAddr, UnixListener};
+            let addr = SocketAddr::from_abstract_name(b"reality-client/auto_route")
+                .map_err(|e| e.to_string())?;
+            match UnixListener::bind_addr(&addr) {
+                Ok(s) => Ok(HostLock { _sock: s }),
+                Err(e) if e.kind() == std::io::ErrorKind::AddrInUse => Err(BUSY.into()),
+                Err(e) => Err(format!("блокировка auto_route: {e}")),
+            }
+        }
+        #[cfg(windows)]
+        {
+            use std::os::windows::fs::OpenOptionsExt;
+            // ERROR_SHARING_VIOLATION: файл открыт другим процессом.
+            const SHARING_VIOLATION: i32 = 32;
+            let dir = std::env::var_os("ProgramData").unwrap_or_else(|| "C:\\ProgramData".into());
+            let path = std::path::Path::new(&dir).join("reality-client-auto_route.lock");
+            match std::fs::OpenOptions::new()
+                .read(true)
+                .write(true)
+                .create(true)
+                .truncate(false)
+                .share_mode(0)
+                .open(&path)
+            {
+                Ok(f) => Ok(HostLock { _file: f }),
+                Err(e) if e.raw_os_error() == Some(SHARING_VIOLATION) => Err(BUSY.into()),
+                Err(e) => Err(format!("блокировка auto_route ({}): {e}", path.display())),
+            }
+        }
+        #[cfg(not(any(target_os = "linux", windows)))]
+        {
+            Ok(HostLock {})
+        }
     }
 }
 
@@ -79,9 +145,10 @@ fn args(s: &str) -> Vec<String> {
     s.split_whitespace().map(str::to_string).collect()
 }
 
-/// Включить маршруты. `ifname` — имя TUN, `if_index` — его номер
-/// (нужен на Windows).
+/// Включить маршруты. `lock` — владение `auto_route` ([`HostLock`]),
+/// `ifname` — имя TUN, `if_index` — его номер (нужен на Windows).
 pub fn setup(
+    lock: HostLock,
     ifname: &str,
     if_index: Option<u32>,
     v6: bool,
@@ -91,15 +158,15 @@ pub fn setup(
     #[cfg(target_os = "linux")]
     {
         let _ = if_index;
-        linux(ifname, v6, exclude, strict)
+        linux(lock, ifname, v6, exclude, strict)
     }
     #[cfg(windows)]
     {
-        windows(ifname, if_index, v6, exclude, strict)
+        windows(lock, ifname, if_index, v6, exclude, strict)
     }
     #[cfg(not(any(target_os = "linux", windows)))]
     {
-        let _ = (ifname, if_index, v6, exclude, strict);
+        let _ = (lock, ifname, if_index, v6, exclude, strict);
         Err(Error::Config(
             "tun: auto_route есть только для Linux и Windows".into(),
         ))
@@ -110,6 +177,9 @@ pub fn setup(
 /// и таблицу TUN (в том числе блокировку `strict_route`), на Windows —
 /// kill switch WFP (маршруты там исчезают вместе с интерфейсом).
 pub fn cleanup() -> Result<()> {
+    // Живой экземпляр держит блокировку: его маршруты — не остатки.
+    let _lock = HostLock::acquire()
+        .map_err(|e| Error::Config(format!("--tun-cleanup: {e}; сначала остановите его")))?;
     #[cfg(target_os = "linux")]
     {
         for cmd in linux_down() {
@@ -145,7 +215,13 @@ fn linux_down() -> Vec<Vec<String>> {
 }
 
 #[cfg(target_os = "linux")]
-fn linux(ifname: &str, v6: bool, exclude: &[IpNet], strict: bool) -> Result<RouteGuard> {
+fn linux(
+    lock: HostLock,
+    ifname: &str,
+    v6: bool,
+    exclude: &[IpNet],
+    strict: bool,
+) -> Result<RouteGuard> {
     let fams: Vec<&str> = if v6 { vec!["-4", "-6"] } else { vec!["-4"] };
     let down = linux_down();
     // Остатки прошлого запуска (если его убили) — убрать.
@@ -154,7 +230,7 @@ fn linux(ifname: &str, v6: bool, exclude: &[IpNet], strict: bool) -> Result<Rout
     }
     // Метка — раньше правил: иначе первые же соединения клиента ушли бы в TUN.
     net_protect::set(Some(net_protect::Protect::Mark(MARK)));
-    let guard = RouteGuard { down };
+    let guard = RouteGuard { down, _lock: lock };
     let mut up = Vec::new();
     for f in &fams {
         up.push(args(&format!(
@@ -203,6 +279,7 @@ fn linux(ifname: &str, v6: bool, exclude: &[IpNet], strict: bool) -> Result<Rout
 
 #[cfg(windows)]
 fn windows(
+    lock: HostLock,
     ifname: &str,
     if_index: Option<u32>,
     v6: bool,
@@ -259,7 +336,11 @@ fn windows(
     if exclude.iter().any(|n| n.addr().is_ipv6()) {
         tracing::warn!("tun: route_exclude для IPv6 на Windows пока не поддерживается");
     }
-    let mut guard = RouteGuard { down, wfp: false };
+    let mut guard = RouteGuard {
+        down,
+        _lock: lock,
+        wfp: false,
+    };
     for cmd in &up {
         run(cmd, false)?;
     }
@@ -318,5 +399,18 @@ mod winapi {
         }
         let gw = Ipv4Addr::from(row.dwForwardNextHop.to_ne_bytes());
         (!gw.is_unspecified()).then_some(gw)
+    }
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod tests {
+    use super::HostLock;
+
+    #[test]
+    fn host_lock_is_exclusive() {
+        let first = HostLock::acquire().expect("свободна");
+        assert!(HostLock::acquire().is_err(), "второй владелец");
+        drop(first);
+        HostLock::acquire().expect("свободна снова");
     }
 }

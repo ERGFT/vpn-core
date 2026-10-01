@@ -21,7 +21,9 @@ After=network-online.target
 [Service]
 ExecStart=/usr/local/bin/reality-client --config /etc/reality-client/config.json
 ExecReload=/bin/kill -HUP $MAINPID
-# Снять правила TUN, если прошлый запуск завершился аварийно.
+# Снять правила TUN, если прошлый запуск завершился аварийно. Если
+# auto_route держит другой работающий экземпляр, --tun-cleanup ничего не
+# трогает и завершается с ошибкой (её гасит «-»), а служба не запустится.
 ExecStartPre=-/usr/local/bin/reality-client --tun-cleanup
 Restart=on-failure
 RestartSec=5
