@@ -205,7 +205,12 @@ impl XudpSession {
             tracing::info!("UDP: XUDP-поток открыт");
             let (mut r, mut w) = tokio::io::split(stream);
             let last = std::sync::Mutex::new(tokio::time::Instant::now());
-            let touch = || *last.lock().unwrap() = tokio::time::Instant::now();
+            let touch = || {
+                *last
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner) =
+                    tokio::time::Instant::now()
+            };
             let mut writer = xudp::XudpWriter::new(global_id);
             // Если сервер не указал источник ответа — считаем им первое назначение.
             let first_dest: std::sync::Mutex<Option<(Address, u16)>> = std::sync::Mutex::new(None);
@@ -214,7 +219,7 @@ impl XudpSession {
                     touch();
                     first_dest
                         .lock()
-                        .unwrap()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
                         .get_or_insert_with(|| (addr.clone(), port));
                     let Some(frame) = writer.encode(&addr, port, &data) else {
                         continue;
@@ -227,9 +232,12 @@ impl XudpSession {
             let down = async {
                 while let Ok(Some(p)) = xudp::read_packet(&mut r).await {
                     touch();
-                    let Some((addr, port)) =
-                        p.source.or_else(|| first_dest.lock().unwrap().clone())
-                    else {
+                    let Some((addr, port)) = p.source.or_else(|| {
+                        first_dest
+                            .lock()
+                            .unwrap_or_else(std::sync::PoisonError::into_inner)
+                            .clone()
+                    }) else {
                         continue;
                     };
                     if down_tx.send((addr, port, p.data)).await.is_err() {
@@ -239,7 +247,10 @@ impl XudpSession {
             };
             let idle = async {
                 loop {
-                    let deadline = *last.lock().unwrap() + UDP_IDLE;
+                    let deadline = *last
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
+                        + UDP_IDLE;
                     if tokio::time::Instant::now() >= deadline {
                         break;
                     }

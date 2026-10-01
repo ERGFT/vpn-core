@@ -202,7 +202,12 @@ impl MuxConn {
             let work = async {
                 while let Some(f) = read_frame(&mut r).await? {
                     let Some(conn) = weak.upgrade() else { break };
-                    let sender = conn.sessions.lock().unwrap().get(&f.id).cloned();
+                    let sender = conn
+                        .sessions
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
+                        .get(&f.id)
+                        .cloned();
                     match f.status {
                         STATUS_KEEP | STATUS_NEW => {
                             if let (Some(s), Some(d)) = (sender, f.data) {
@@ -217,7 +222,10 @@ impl MuxConn {
                             if let (Some(s), Some(d)) = (&sender, f.data) {
                                 let _ = s.send(Bytes::from(d)).await;
                             }
-                            conn.sessions.lock().unwrap().remove(&f.id);
+                            conn.sessions
+                                .lock()
+                                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                                .remove(&f.id);
                         }
                         STATUS_KEEPALIVE => {}
                         other => {
@@ -241,7 +249,10 @@ impl MuxConn {
             if let Some(conn) = weak.upgrade() {
                 conn.closed.store(true, Ordering::Relaxed);
                 // Все соединения получат конец потока.
-                conn.sessions.lock().unwrap().clear();
+                conn.sessions
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .clear();
             }
         });
         // Закрыть поток без соединений.
@@ -254,7 +265,11 @@ impl MuxConn {
                 }
                 let Some(c) = weak.upgrade() else { break };
                 if c.active.load(Ordering::Relaxed) == 0
-                    && c.idle_since.lock().unwrap().elapsed() >= IDLE
+                    && c.idle_since
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
+                        .elapsed()
+                        >= IDLE
                 {
                     c.closed.store(true, Ordering::Relaxed);
                     c.cancel.cancel();
@@ -292,7 +307,10 @@ impl MuxConn {
         }
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         let (dtx, drx) = mpsc::channel(QUEUE);
-        self.sessions.lock().unwrap().insert(id, dtx);
+        self.sessions
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert(id, dtx);
         self.active.fetch_add(1, Ordering::Relaxed);
         let s = MuxStream {
             id,
@@ -324,7 +342,10 @@ pub struct MuxStream {
 impl Drop for MuxStream {
     fn drop(&mut self) {
         let c = &self.conn;
-        c.sessions.lock().unwrap().remove(&self.id);
+        c.sessions
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .remove(&self.id);
         if !self.ended && !c.is_closed() {
             let f = frame_end(self.id);
             if let Err(mpsc::error::TrySendError::Full(f)) = c.tx.try_send(f) {
@@ -335,7 +356,9 @@ impl Drop for MuxStream {
             }
         }
         if c.active.fetch_sub(1, Ordering::Relaxed) == 1 {
-            *c.idle_since.lock().unwrap() = tokio::time::Instant::now();
+            *c.idle_since
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner) = tokio::time::Instant::now();
         }
     }
 }
@@ -433,9 +456,15 @@ impl MuxPool {
 
     /// Поток с местом или `None`.
     pub fn pick(&self) -> Option<Arc<MuxConn>> {
-        let mut keep = self.keep.lock().unwrap();
+        let mut keep = self
+            .keep
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         keep.retain(|c| !c.is_closed());
-        let mut conns = self.conns.lock().unwrap();
+        let mut conns = self
+            .conns
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         conns.retain(|w| w.upgrade().is_some_and(|c| !c.is_closed()));
         conns
             .iter()
@@ -447,15 +476,24 @@ impl MuxPool {
     /// Запустить новый поток поверх готового VLESS-потока.
     pub fn add(&self, stream: Box<dyn AsyncStream>) -> Arc<MuxConn> {
         let c = MuxConn::start(stream, self.concurrency);
-        self.conns.lock().unwrap().push(Arc::downgrade(&c));
-        self.keep.lock().unwrap().push(c.clone());
+        self.conns
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .push(Arc::downgrade(&c));
+        self.keep
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .push(c.clone());
         c
     }
 
     /// Сколько живых потоков (для тестов и журнала).
     pub fn len(&self) -> usize {
         self.pick();
-        self.keep.lock().unwrap().len()
+        self.keep
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .len()
     }
 
     pub fn is_empty(&self) -> bool {

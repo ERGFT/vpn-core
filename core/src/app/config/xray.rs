@@ -316,7 +316,9 @@ fn server(o: &Obj<'_>, s: Obj<'_>, out: &mut OutboundConfig) -> Result<()> {
         0 => s,
         1 => {
             let mut list = list;
-            let a = list.pop().unwrap();
+            let Some(a) = list.pop() else {
+                unreachable!("в списке ровно один элемент")
+            };
             s.finish()?;
             a
         }

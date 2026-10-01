@@ -498,14 +498,20 @@ impl Subscription {
         for g in self.groups.iter().filter_map(Weak::upgrade) {
             g.set_dynamic(&self.cfg.tag, built.clone());
         }
-        *self.current.lock().unwrap() = (built, super::stats::now_ms());
+        *self
+            .current
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = (built, super::stats::now_ms());
         Ok(n)
     }
 
     /// Серверы подписки и время, когда список применён (мс Unix; 0 — ещё
     /// не было).
     pub fn servers(&self) -> (Vec<Arc<dyn Outbound>>, u64) {
-        self.current.lock().unwrap().clone()
+        self.current
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
     }
 
     /// Прочитать сохранённый список (при запуске).

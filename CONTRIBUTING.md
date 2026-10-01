@@ -39,6 +39,10 @@ scripts/ci.sh           # плюс release-сборка, интероп с Xray-
 - Новое поведение — с тестом; всё, что касается протокола, — по
   возможности с проверкой против настоящего Xray-core
   (`scripts/interop_xray.sh`).
+- Разбор данных из сети или от провайдера (HTTP, SOCKS5, sniffing, `.srs`,
+  ссылки, подписки, Mux, XUDP) — с целью фаззинга в `fuzz/`
+  (`cargo +nightly fuzz run -O <цель>`; CI гоняет их каждую ночь,
+  `.github/workflows/fuzz.yml`).
 - Меняется то, что видит пользователь, — обновите `README.md` и
   `README.en.md` и допишите строку в `CHANGELOG.md` (раздел «Не выпущено»);
   меняется решение или открывается риск — `PLAN.md`; меняется устройство
@@ -93,6 +97,10 @@ CI on GitHub runs the same — on Linux and on real Windows.
   `// SPDX-License-Identifier: GPL-3.0-or-later` (or with `#`).
 - New behaviour comes with a test; anything protocol-related — where
   possible with a check against real Xray-core (`scripts/interop_xray.sh`).
+- Parsing of data from the network or a provider (HTTP, SOCKS5, sniffing,
+  `.srs`, links, subscriptions, Mux, XUDP) comes with a fuzz target in
+  `fuzz/` (`cargo +nightly fuzz run -O <target>`; CI runs them nightly,
+  `.github/workflows/fuzz.yml`).
 - If what the user sees changes, update both `README.md` and `README.en.md`
   and add a line to `CHANGELOG.md` (the "Unreleased" section);
   if a decision changes or a risk appears — `PLAN.md`; if the core's

@@ -201,6 +201,10 @@ impl RealityCertVerifier {
                 "REALITY: в ссылке задан pqv=, но сертификат сервера без подписи ML-DSA-65".into(),
             ));
         };
+        #[allow(
+            clippy::expect_used,
+            reason = "инвариант: HMAC принимает ключ любой длины"
+        )]
         let mut mac = <Hmac<sha2::Sha512> as Mac>::new_from_slice(auth_key)
             .expect("HMAC принимает ключ любой длины");
         mac.update(cert_pub);

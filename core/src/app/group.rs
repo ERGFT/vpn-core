@@ -128,13 +128,20 @@ impl Group {
     }
 
     pub fn set_fixed(&self, members: Vec<Arc<dyn Outbound>>) {
-        *self.fixed.write().unwrap() = members.into_iter().map(Member::new).collect();
+        *self
+            .fixed
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) =
+            members.into_iter().map(Member::new).collect();
     }
 
     /// Заменить серверы подписки `key` (новые участники — без истории
     /// проверок; прежние с тем же tag сохраняют задержку).
     pub fn set_dynamic(&self, key: &str, members: Vec<Arc<dyn Outbound>>) {
-        let mut g = self.dynamic.write().unwrap();
+        let mut g = self
+            .dynamic
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let old: HashMap<String, u32> = g
             .get(key)
             .map(|v| {
@@ -158,8 +165,15 @@ impl Group {
 
     /// Все участники по порядку: из настроек, затем из подписок.
     pub fn members(&self) -> Vec<Arc<Member>> {
-        let mut v = self.fixed.read().unwrap().clone();
-        let d = self.dynamic.read().unwrap();
+        let mut v = self
+            .fixed
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
+        let d = self
+            .dynamic
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let mut keys: Vec<&String> = d.keys().collect();
         keys.sort();
         for k in keys {
@@ -170,7 +184,11 @@ impl Group {
 
     /// Текущий участник; у `selector` без выбора — первый (он и работает).
     pub fn current(&self) -> Option<String> {
-        let c = self.current.read().unwrap().clone();
+        let c = self
+            .current
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
         if c.is_none() && self.settings.strategy == Strategy::Selector {
             return self.members().first().map(|m| m.tag().to_string());
         }
@@ -180,14 +198,20 @@ impl Group {
     /// Выбор, сделанный явно (вручную или по `default`), без подстановки
     /// первого участника.
     pub fn chosen(&self) -> Option<String> {
-        self.current.read().unwrap().clone()
+        self.current
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
     }
 
     /// Вернуть выбор после перечитывания настроек — молча, если такой
     /// участник ещё есть.
     pub fn restore(&self, tag: &str) {
         if self.members().iter().any(|m| m.tag() == tag) {
-            *self.current.write().unwrap() = Some(tag.to_string());
+            *self
+                .current
+                .write()
+                .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(tag.to_string());
         }
     }
 
@@ -210,7 +234,10 @@ impl Group {
             )));
         }
         let previous = self.current();
-        *self.current.write().unwrap() = Some(tag.to_string());
+        *self
+            .current
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(tag.to_string());
         tracing::info!(group = %self.tag, member = tag, "группа: выбран вручную");
         self.hub.events.emit(|| Event::GroupSwitch {
             group: self.tag.clone(),
@@ -274,7 +301,10 @@ impl Group {
         if self.settings.strategy == Strategy::Selector {
             return;
         }
-        let mut cur = self.current.write().unwrap();
+        let mut cur = self
+            .current
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         if cur.as_deref() != Some(m.tag()) {
             tracing::info!(
                 group = %self.tag,

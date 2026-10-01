@@ -124,7 +124,7 @@ impl<S: Send + Sync + 'static> AnyPool for Pool<S> {
     fn live(&self) -> usize {
         self.entries
             .lock()
-            .unwrap()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .iter()
             .filter(|e| !e.dead.load(Ordering::Relaxed))
             .count()
@@ -142,7 +142,9 @@ fn pools() -> &'static Mutex<HashMap<String, Arc<dyn AnyPool>>> {
 }
 
 fn pool_for<S: Send + Sync + 'static>(key: &str) -> Arc<Pool<S>> {
-    let mut all = pools().lock().unwrap();
+    let mut all = pools()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     if let Some(p) = all.get(key) {
         if let Ok(p) = p.clone().as_any().downcast::<Pool<S>>() {
             return p;
@@ -183,7 +185,11 @@ impl<S: Clone> Lease<S> {
 impl<S> Drop for Lease<S> {
     fn drop(&mut self) {
         if self.entry.open.fetch_sub(1, Ordering::Relaxed) == 1 {
-            *self.entry.idle_since.lock().unwrap() = Instant::now();
+            *self
+                .entry
+                .idle_since
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner) = Instant::now();
         }
     }
 }
@@ -234,7 +240,10 @@ where
 {
     let pool = pool_for::<S>(key);
     let entry = {
-        let mut entries = pool.entries.lock().unwrap();
+        let mut entries = pool
+            .entries
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         entries.retain(|e| e.usable() && !(e.send.initialized() && idle_expired(e)));
         let conc = limits.max_concurrency;
         let candidates: Vec<&Arc<Entry<S>>> = entries
@@ -306,7 +315,12 @@ where
 }
 
 fn idle_expired<S>(e: &Entry<S>) -> bool {
-    e.open.load(Ordering::Relaxed) == 0 && e.idle_since.lock().unwrap().elapsed() >= IDLE
+    e.open.load(Ordering::Relaxed) == 0
+        && e.idle_since
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .elapsed()
+            >= IDLE
 }
 
 /// Убрать из пула соединение, простоявшее без сессий [`IDLE`]: последний
@@ -318,7 +332,10 @@ async fn reaper<S>(pool: Weak<Pool<S>>, entry: Weak<Entry<S>>) {
             break;
         };
         if e.dead.load(Ordering::Relaxed) || idle_expired(&e) || !e.usable() {
-            p.entries.lock().unwrap().retain(|x| !Arc::ptr_eq(x, &e));
+            p.entries
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .retain(|x| !Arc::ptr_eq(x, &e));
             if e.dead.load(Ordering::Relaxed) || idle_expired(&e) {
                 break;
             }
@@ -346,7 +363,7 @@ impl<S> Drop for OpenGuard<S> {
 pub fn connections(key: &str) -> usize {
     pools()
         .lock()
-        .unwrap()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
         .get(key)
         .map(|p| p.live())
         .unwrap_or(0)

@@ -554,6 +554,10 @@ impl VisionStream {
             if n == 0 {
                 return Poll::Ready(Err(io::ErrorKind::WriteZero.into()));
             }
+            #[allow(
+                clippy::expect_used,
+                reason = "инвариант: элемент есть (while let выше), берётся заново из-за заимствования"
+            )]
             let front = self.out.front_mut().expect("есть элемент");
             front.pos += n;
             if front.pos == front.data.len() {

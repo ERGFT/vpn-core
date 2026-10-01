@@ -80,6 +80,10 @@ pub type HttpUpgradeVlessStream = HttpUpgradeStream<SecureStream>;
 /// `Host`, `User-Agent`, затем остальные по алфавиту.
 pub fn build_request(host: &str, path: &str, browser: crate::fingerprint::Browser) -> String {
     let mut headers = crate::transport::browser_headers::headers(browser, Variant::Ws);
+    #[allow(
+        clippy::expect_used,
+        reason = "инвариант: в заголовках браузера User-Agent есть всегда"
+    )]
     let ua = headers.remove(
         headers
             .iter()

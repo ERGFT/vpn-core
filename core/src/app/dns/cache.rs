@@ -72,7 +72,10 @@ impl Cache {
     /// Ответ из кеша с уменьшенными на прошедшее время TTL.
     pub fn get(&self, name: &str, qtype: RecordType) -> Option<Message> {
         let key = (name.to_ascii_lowercase(), qtype);
-        let mut g = self.inner.lock().unwrap();
+        let mut g = self
+            .inner
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let e = g.0.get(&key)?;
         let age = e.stored.elapsed().as_secs() as u32;
         if age >= e.ttl {
@@ -98,7 +101,10 @@ impl Cache {
         }
         let key = (name.to_ascii_lowercase(), qtype);
         let now = Instant::now();
-        let mut g = self.inner.lock().unwrap();
+        let mut g = self
+            .inner
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let (map, order) = &mut *g;
         if map.len() >= self.cap && !map.contains_key(&key) {
             // Просроченные — первыми.
@@ -131,7 +137,11 @@ impl Cache {
     }
 
     pub fn len(&self) -> usize {
-        self.inner.lock().unwrap().0.len()
+        self.inner
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .0
+            .len()
     }
 
     pub fn is_empty(&self) -> bool {

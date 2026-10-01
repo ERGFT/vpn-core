@@ -334,7 +334,9 @@ fn windows(
     let phys4 = winapi::best_interface(IpAddr::from([1, 1, 1, 1])).ok_or_else(|| {
         Error::Config("tun: не найден физический интерфейс с выходом в интернет".into())
     })?;
-    let phys6 = winapi::best_interface("2606:4700:4700::1111".parse().unwrap());
+    let phys6 = winapi::best_interface(IpAddr::from([
+        0x2606, 0x4700, 0x4700, 0, 0, 0, 0, 0x1111u16,
+    ]));
     net_protect::set(Some(net_protect::Protect::Interface {
         v4: phys4,
         v6: phys6,

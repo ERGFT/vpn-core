@@ -332,7 +332,7 @@ fn add_all(engine: &Engine, luid: u64, app: &AppId, exclude: &[IpNet]) -> Result
             ];
             a.add(layer, 12, true, &mut c, "DHCPv6")?;
             let mut ll = FWP_V6_ADDR_AND_MASK {
-                addr: "fe80::".parse::<std::net::Ipv6Addr>().unwrap().octets(),
+                addr: std::net::Ipv6Addr::new(0xfe80, 0, 0, 0, 0, 0, 0, 0).octets(),
                 prefixLength: 10,
             };
             let mut c = [FWPM_FILTER_CONDITION0 {

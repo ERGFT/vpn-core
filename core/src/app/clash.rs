@@ -32,7 +32,7 @@ impl Controller {
         }
         self.groups
             .read()
-            .unwrap()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .iter()
             .flat_map(|g| g.members())
             .find(|m| m.tag() == name)
@@ -78,7 +78,12 @@ impl Controller {
         for o in router.outbounds() {
             add(o.as_ref());
         }
-        for g in self.groups.read().unwrap().iter() {
+        for g in self
+            .groups
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .iter()
+        {
             for m in g.members() {
                 add(m.out.as_ref());
             }
@@ -91,7 +96,7 @@ impl Controller {
         let list: Vec<Value> = self
             .groups
             .read()
-            .unwrap()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .iter()
             .map(|g| self.proxy_json(g.as_ref()))
             .collect();
@@ -165,7 +170,10 @@ impl Controller {
 
     /// `GET /configs`: порты входов, режим.
     pub(super) fn clash_configs(&self) -> Value {
-        let st = self.state.lock().unwrap();
+        let st = self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let port = |k: InboundKind| {
             st.inbounds
                 .iter()
@@ -199,7 +207,12 @@ impl Controller {
     /// `GET /providers/proxies`: подписки как «поставщики серверов».
     pub(super) fn clash_providers(&self) -> Value {
         let mut map = Map::new();
-        for s in self.subs.read().unwrap().iter() {
+        for s in self
+            .subs
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .iter()
+        {
             let (servers, updated) = s.servers();
             let mut p = json!({
                 "name": s.cfg.tag,
@@ -221,7 +234,7 @@ impl Controller {
         let s = self
             .subs
             .read()
-            .unwrap()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .iter()
             .find(|s| s.cfg.tag == name)
             .cloned()

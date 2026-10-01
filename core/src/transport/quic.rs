@@ -49,19 +49,22 @@ pub fn client_config(
     let mut cc = quinn::ClientConfig::new(Arc::new(qc));
     let mut tr = quinn::TransportConfig::default();
     tr.keep_alive_interval(Some(Duration::from_secs(15)));
-    tr.max_idle_timeout(Some(
-        quinn::IdleTimeout::try_from(Duration::from_secs(30)).expect("30 с — допустимо"),
-    ));
+    #[allow(
+        clippy::expect_used,
+        reason = "константа: 30 с — допустимый таймаут QUIC"
+    )]
+    let idle = quinn::IdleTimeout::try_from(Duration::from_secs(30)).expect("30 с — допустимо");
+    tr.max_idle_timeout(Some(idle));
     cc.transport_config(Arc::new(tr));
     Ok(cc)
 }
 
 /// Точка QUIC на настоящем UDP-сокете (с меткой `net_protect`).
 pub fn direct_endpoint(ipv6: bool) -> Result<quinn::Endpoint> {
-    let bind: SocketAddr = if ipv6 {
-        "[::]:0".parse().unwrap()
+    let bind = if ipv6 {
+        SocketAddr::from((std::net::Ipv6Addr::UNSPECIFIED, 0))
     } else {
-        "0.0.0.0:0".parse().unwrap()
+        SocketAddr::from((std::net::Ipv4Addr::UNSPECIFIED, 0))
     };
     let sock = crate::net_protect::udp_bind(bind)?.into_std()?;
     let copy = sock.try_clone()?;
@@ -264,7 +267,10 @@ impl AsyncUdpSocket for SessionSocket {
         bufs: &mut [IoSliceMut<'_>],
         meta: &mut [RecvMeta],
     ) -> Poll<io::Result<usize>> {
-        let mut inbox = self.inbox.lock().unwrap();
+        let mut inbox = self
+            .inbox
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         match inbox.poll_recv(cx) {
             Poll::Ready(Some(d)) => {
                 let n = d.len().min(bufs[0].len());

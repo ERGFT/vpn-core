@@ -148,7 +148,10 @@ impl FakeIp {
     /// Номер для имени (новый или прежний).
     fn allocate(&self, name: &str) -> u32 {
         let name = name.trim_end_matches('.').to_ascii_lowercase();
-        let mut g = self.inner.lock().unwrap();
+        let mut g = self
+            .inner
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         if let Some(&off) = g.by_name.get(&name) {
             return off;
         }
@@ -208,7 +211,13 @@ impl FakeIp {
                 }
             }
         };
-        match self.inner.lock().unwrap().by_off.get(&off) {
+        match self
+            .inner
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .by_off
+            .get(&off)
+        {
             Some(n) => Reverse::Name(n.clone()),
             None => Reverse::Unknown,
         }
@@ -218,7 +227,10 @@ impl FakeIp {
     pub fn save(&self) -> Result<()> {
         let Some(f) = &self.file else { return Ok(()) };
         let text = {
-            let mut g = self.inner.lock().unwrap();
+            let mut g = self
+                .inner
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             if !g.dirty {
                 return Ok(());
             }
@@ -239,7 +251,10 @@ impl FakeIp {
 
     fn load(&self, f: &Path) -> Result<usize> {
         let text = std::fs::read_to_string(f)?;
-        let mut g = self.inner.lock().unwrap();
+        let mut g = self
+            .inner
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         for line in text.lines() {
             let Some((a, b)) = line.split_once(' ') else {
                 continue;

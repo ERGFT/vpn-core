@@ -571,7 +571,10 @@ impl Shared {
     fn fail(&self, msg: impl Into<String>) {
         let msg = msg.into();
         tracing::debug!(error = %msg, "xhttp: сессия прервана");
-        let mut e = self.err.lock().unwrap();
+        let mut e = self
+            .err
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         if e.is_none() {
             *e = Some(msg);
         }
@@ -580,7 +583,10 @@ impl Shared {
     }
 
     fn error(&self) -> Option<String> {
-        self.err.lock().unwrap().clone()
+        self.err
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
     }
 }
 
@@ -994,6 +1000,7 @@ mod h2c {
                 .ok()
                 .flatten()
             {
+                #[allow(clippy::unwrap_used, reason = "инвариант: семафор не закрывается")]
                 let permit = inflight.clone().acquire_owned().await.unwrap();
                 send = send
                     .ready()
@@ -1242,6 +1249,7 @@ mod h3c {
                 .ok()
                 .flatten()
             {
+                #[allow(clippy::unwrap_used, reason = "инвариант: семафор не закрывается")]
                 let permit = inflight.clone().acquire_owned().await.unwrap();
                 if let Some(l) = shared.lease3.get() {
                     l.note_request();
@@ -1446,6 +1454,10 @@ mod h1 {
                         );
                         fresh = true;
                     }
+                    #[allow(
+                        clippy::unwrap_used,
+                        reason = "инвариант: conn — прежнее живое соединение или открытое строкой выше"
+                    )]
                     let c = conn.as_mut().unwrap();
                     let res = async {
                         c.w.write_all(&req).await?;

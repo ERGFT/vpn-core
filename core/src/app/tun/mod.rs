@@ -485,7 +485,7 @@ async fn dns_over_tcp<S: AsyncRead + AsyncWrite + Unpin>(dns: &Dns, t: &mut S) -
 pub fn settings(i: &super::config::InboundConfig) -> Result<TunSettings> {
     let inet4 = i
         .inet4_address
-        .unwrap_or_else(|| "172.19.0.1/30".parse().unwrap());
+        .unwrap_or_else(|| crate::app::access::const_net("172.19.0.1/30"));
     if !inet4.addr().is_ipv4() || inet4.prefix() > 30 {
         return Err(Error::Config(
             "tun: inet4_address — IPv4-адрес с подсетью не меньше /30".into(),
@@ -496,7 +496,7 @@ pub fn settings(i: &super::config::InboundConfig) -> Result<TunSettings> {
             return Err(Error::Config("tun: inet6_address — IPv6-адрес".into()))
         }
         Some(a) => Some(a),
-        None => Some("fdfe:dcba:9876::1/126".parse().unwrap()),
+        None => Some(crate::app::access::const_net("fdfe:dcba:9876::1/126")),
     };
     let mtu = i.mtu.unwrap_or(1500);
     if !(1280..=65535).contains(&mtu) {

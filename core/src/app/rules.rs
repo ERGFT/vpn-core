@@ -489,7 +489,11 @@ pub fn compile(
 
     let mut nets: Vec<IpNet> = c.ip_cidr.clone();
     if c.ip_is_private {
-        nets.extend(PRIVATE_NETS.iter().map(|s| s.parse::<IpNet>().unwrap()));
+        nets.extend(
+            PRIVATE_NETS
+                .iter()
+                .map(|s| crate::app::access::const_net(s)),
+        );
     }
     for code in &c.geoip {
         nets.extend_from_slice(geo.ip(code));

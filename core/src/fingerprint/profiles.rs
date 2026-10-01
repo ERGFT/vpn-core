@@ -336,6 +336,10 @@ pub fn apply(config: &mut rustls::ClientConfig, b: Browser, reality: bool) {
     if b == Browser::Chrome {
         return;
     }
+    #[allow(
+        clippy::expect_used,
+        reason = "инвариант: apply_chrome_extensions ставит chrome_hello"
+    )]
     let ch = config
         .chrome_hello
         .as_mut()

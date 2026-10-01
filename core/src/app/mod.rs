@@ -213,7 +213,11 @@ impl Running {
 
     /// Откуда перечитывать настройки (`reload_from_file`, API, SIGHUP).
     pub fn set_config_path(&self, p: std::path::PathBuf) {
-        *self.ctl.config_path.write().unwrap() = Some(p);
+        *self
+            .ctl
+            .config_path
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(p);
     }
 
     /// Применить новые настройки без разрыва открытых соединений.
@@ -227,7 +231,7 @@ impl Running {
         self.ctl
             .state
             .lock()
-            .unwrap()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .inbounds
             .iter()
             .map(|l| (l.tag.clone(), l.kind, l.addr))
@@ -242,7 +246,11 @@ impl Drop for Running {
         if let Some(a) = &self.api_task {
             a.abort();
         }
-        let st = self.ctl.state.lock().unwrap();
+        let st = self
+            .ctl
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         for l in &st.inbounds {
             for t in &l.tasks {
                 t.abort();
@@ -1067,6 +1075,7 @@ async fn start_listener(
 ) -> Result<Live> {
     let bind_err =
         |a: SocketAddr, e: std::io::Error| Error::Config(format!("не удалось слушать {a}: {e}"));
+    #[allow(clippy::expect_used, reason = "инвариант: проверено при сборке")]
     let listen = i.listen.expect("проверено при сборке");
     let listener = TcpListener::bind(listen)
         .await
@@ -1283,6 +1292,10 @@ impl App {
                 continue;
             }
             let l = start_listener(i, &routers, &errors_tx).await?;
+            #[allow(
+                clippy::expect_used,
+                reason = "инвариант: у сетевого входа адрес есть всегда"
+            )]
             let addr = l.addr.expect("у входа есть адрес");
             listen_addrs.push(addr);
             inbounds.push((l.tag.clone(), l.kind, addr));
@@ -1336,7 +1349,7 @@ impl Controller {
     pub fn group(&self, tag: &str) -> Option<Arc<Group>> {
         self.groups
             .read()
-            .unwrap()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .iter()
             .find(|g| g.tag() == tag)
             .cloned()
@@ -1344,18 +1357,28 @@ impl Controller {
 
     /// Перечитать файл настроек, заданный `Running::set_config_path`.
     pub async fn reload_from_file(&self) -> Result<Vec<String>> {
-        let path = self.config_path.read().unwrap().clone().ok_or_else(|| {
-            Error::Config("настройки заданы не файлом — перечитывать нечего".into())
-        })?;
+        let path = self
+            .config_path
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+            .ok_or_else(|| {
+                Error::Config("настройки заданы не файлом — перечитывать нечего".into())
+            })?;
         let cfg = Config::load(&path)?;
         self.reload(cfg).await
     }
 
     /// Текущий файл настроек: путь и текст.
     pub fn config_text(&self) -> Result<(std::path::PathBuf, String)> {
-        let path = self.config_path.read().unwrap().clone().ok_or_else(|| {
-            Error::Config("настройки заданы ключами, а не файлом — показывать нечего".into())
-        })?;
+        let path = self
+            .config_path
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+            .ok_or_else(|| {
+                Error::Config("настройки заданы ключами, а не файлом — показывать нечего".into())
+            })?;
         let text = std::fs::read_to_string(&path)
             .map_err(|e| Error::Config(format!("не удалось прочитать {}: {e}", path.display())))?;
         Ok((path, text))
@@ -1367,11 +1390,16 @@ impl Controller {
     /// таких настройках — только из папки настроек. Ошибка — ничего не
     /// меняется.
     pub async fn apply_text(&self, text: &str, check_only: bool, save: bool) -> Result<Applied> {
-        let path = self.config_path.read().unwrap().clone().ok_or_else(|| {
-            Error::Config(
-                "настройки заданы ключами, а не файлом — менять их через API нельзя".into(),
-            )
-        })?;
+        let path = self
+            .config_path
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+            .ok_or_else(|| {
+                Error::Config(
+                    "настройки заданы ключами, а не файлом — менять их через API нельзя".into(),
+                )
+            })?;
         Config::parse(text)?.check_paths_confined()?;
         let base = path.parent().unwrap_or(std::path::Path::new("."));
         let mut cfg = Config::parse_at(text, base)?;
@@ -1408,7 +1436,10 @@ impl Controller {
         let _one = self.reload_lock.lock().await;
         let tags = inbound_tags(&new)?;
         let (old_dns, old_api) = {
-            let st = self.state.lock().unwrap();
+            let st = self
+                .state
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             (st.dns.clone(), st.config.api.clone())
         };
         if let Some(d) = &old_dns {
@@ -1430,24 +1461,40 @@ impl Controller {
             subs,
         } = core;
         // Выбор в группах (в том числе GLOBAL) переживает перечитывание.
-        for (old, new) in self.groups.read().unwrap().iter().flat_map(|o| {
-            groups
-                .iter()
-                .filter(move |n| n.tag() == o.tag())
-                .map(move |n| (o, n))
-        }) {
+        for (old, new) in self
+            .groups
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .iter()
+            .flat_map(|o| {
+                groups
+                    .iter()
+                    .filter(move |n| n.tag() == o.tag())
+                    .map(move |n| (o, n))
+            })
+        {
             if let Some(t) = old.chosen() {
                 new.restore(&t);
             }
         }
         let core_tasks = spawn_core(dns.as_ref(), &groups, subs.clone(), &self.errors);
-        *self.groups.write().unwrap() = groups.clone();
-        *self.subs.write().unwrap() = subs.into_iter().map(|(s, _)| s).collect();
+        *self
+            .groups
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = groups.clone();
+        *self
+            .subs
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) =
+            subs.into_iter().map(|(s, _)| s).collect();
 
         // Входы: остановить исчезнувшие и изменившиеся, открыть новые.
         let new_keys: Vec<String> = built.iter().map(|b| b.key.clone()).collect();
         let to_start: Vec<BuiltInbound> = {
-            let mut st = self.state.lock().unwrap();
+            let mut st = self
+                .state
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             for t in std::mem::replace(&mut st.core_tasks, core_tasks) {
                 t.abort();
             }
@@ -1510,8 +1557,18 @@ impl Controller {
                     }
                 }
             }
-            match res.expect("хотя бы одна попытка") {
-                Ok(l) => self.state.lock().unwrap().inbounds.push(l),
+            #[allow(
+                clippy::expect_used,
+                reason = "инвариант: цикл выше делает хотя бы одну попытку"
+            )]
+            let res = res.expect("хотя бы одна попытка");
+            match res {
+                Ok(l) => self
+                    .state
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .inbounds
+                    .push(l),
                 Err(e) => notes.push(format!("вход {tag}: {e}")),
             }
         }
@@ -1533,7 +1590,11 @@ impl Controller {
 
 impl api::Control for Controller {
     fn groups(&self) -> serde_json::Value {
-        let groups = self.groups.read().unwrap().clone();
+        let groups = self
+            .groups
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
         let list: Vec<serde_json::Value> = groups
             .iter()
             .map(|g| {
@@ -1581,7 +1642,7 @@ impl api::Control for Controller {
         let s = self
             .subs
             .read()
-            .unwrap()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .iter()
             .find(|s| s.cfg.tag == tag)
             .cloned();

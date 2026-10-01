@@ -260,6 +260,10 @@ impl Upstream {
         }
     }
 
+    #[allow(
+        clippy::expect_used,
+        reason = "инвариант: у серверов с detour он задан при создании"
+    )]
     fn detour(&self) -> &Arc<dyn Outbound> {
         self.detour.as_ref().expect("проверено при создании")
     }
@@ -327,12 +331,21 @@ impl Upstream {
                     continue;
                 }
                 let id = u16::from_be_bytes([data[0], data[1]]);
-                if let Some(tx) = reader.pending.lock().unwrap().remove(&id) {
+                if let Some(tx) = reader
+                    .pending
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .remove(&id)
+                {
                     let _ = tx.send(data);
                 }
             }
             reader.closed.store(true, Ordering::Relaxed);
-            reader.pending.lock().unwrap().clear();
+            reader
+                .pending
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .clear();
         });
         *g = Some(client.clone());
         Ok(client)
@@ -344,14 +357,22 @@ impl Upstream {
         for attempt in 0..2 {
             let client = self.udp_client().await?;
             let (tx, rx) = oneshot::channel();
-            client.pending.lock().unwrap().insert(id, tx);
+            client
+                .pending
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .insert(id, tx);
             if let Err(e) = client
                 .session
                 .send(self.host.clone(), self.port, bytes.clone())
                 .await
             {
                 client.closed.store(true, Ordering::Relaxed);
-                client.pending.lock().unwrap().remove(&id);
+                client
+                    .pending
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .remove(&id);
                 if attempt == 1 {
                     return Err(e);
                 }
@@ -366,7 +387,11 @@ impl Upstream {
                 }
                 Ok(Err(_)) => {} // сессия закрылась — попробуем новую
                 Err(_) => {
-                    client.pending.lock().unwrap().remove(&id);
+                    client
+                        .pending
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
+                        .remove(&id);
                 }
             }
         }
@@ -398,7 +423,11 @@ impl Upstream {
         tokio::time::timeout(STREAM_TIMEOUT, async {
             // Сначала — готовое соединение из запаса; если оно уже
             // закрыто сервером, — новое.
-            let pooled = self.tls_pool.lock().unwrap().pop();
+            let pooled = self
+                .tls_pool
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .pop();
             let mut last = None;
             for conn in [pooled.map(Ok), Some(Err(()))].into_iter().flatten() {
                 let mut conn = match conn {
@@ -412,7 +441,10 @@ impl Upstream {
                 .await;
                 match r {
                     Ok(data) => {
-                        let mut pool = self.tls_pool.lock().unwrap();
+                        let mut pool = self
+                            .tls_pool
+                            .lock()
+                            .unwrap_or_else(std::sync::PoisonError::into_inner);
                         if pool.len() < 4 {
                             pool.push(conn);
                         }

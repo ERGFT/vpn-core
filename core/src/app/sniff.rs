@@ -59,7 +59,9 @@ pub fn tls_sni(b: &[u8]) -> Sniff {
     if b[1] != 3 {
         return Sniff::No;
     }
-    let rec_len = u16_at(b, 3).unwrap();
+    let Some(rec_len) = u16_at(b, 3) else {
+        return Sniff::No;
+    };
     if b.len() < 5 + rec_len {
         return if 5 + rec_len <= MAX_SNIFF {
             Sniff::NeedMore

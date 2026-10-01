@@ -73,3 +73,7 @@ windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Network
 rustls = { workspace = true, features = ["brotli"] }
 tokio = { workspace = true, features = ["test-util", "macros", "rt-multi-thread"] }
 rcgen = "0.13"
+
+# cargo fuzz собирает с --cfg fuzzing (fuzz/, ruleset::parse_srs_for_fuzz).
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(fuzzing)"] }

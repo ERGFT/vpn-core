@@ -267,8 +267,8 @@ pub fn parse_ips(data: &[u8], codes: &[String]) -> Result<HashMap<String, Vec<Ip
                 match (n, w) {
                     (1, Wire::Bytes(b)) => {
                         ip = match b.len() {
-                            4 => Some(IpAddr::from(<[u8; 4]>::try_from(b).unwrap())),
-                            16 => Some(IpAddr::from(<[u8; 16]>::try_from(b).unwrap())),
+                            4 => Some(IpAddr::from(<[u8; 4]>::try_from(b).map_err(|_| bad(W))?)),
+                            16 => Some(IpAddr::from(<[u8; 16]>::try_from(b).map_err(|_| bad(W))?)),
                             _ => return Err(bad(W)),
                         }
                     }
