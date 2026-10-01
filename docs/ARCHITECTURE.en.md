@@ -1121,10 +1121,15 @@ a browser (Playwright) against the core.
        final path is checked after `canonicalize`. A missing file returns
        `index.html`, for dashboards with client-side routes.
   5. The token is `Authorization: Bearer <token>`, and for WebSocket also
-     `?token=`, because browsers cannot set WebSocket headers:
+     `?token=`, because browsers cannot set WebSocket headers — if allowed:
+     `allow_query_token`, by default only for an API on loopback (a URL
+     with the token ends up in logs and browser history):
      - compared in constant time;
-     - after 10 wrong tokens in a row, each request waits up to 5 s;
-     - a wrong token is logged as a warning.
+     - an `AuthGuard` per client address (IPv6 — per /64), as for inbounds:
+       5 wrong tokens block it from a minute, each next block twice as
+       long; a blocked address is closed in `serve` before the request is
+       read; loopback is never blocked;
+     - after a wrong token — a 250 ms pause and a warning in the log.
 - Listening on anything but loopback requires `allow_ip`; other addresses
   are closed before parsing.
 - Errors look like Clash's, `{"message": "…"}`; successful changes return
@@ -1229,7 +1234,7 @@ PLAN.md):
 | Unencrypted server | `security=none` only with `allow_insecure`; the same for subscriptions |
 | UDP DNS spoofing | ID, question and server address checks; DoH/DoT/DoQ with certificate verification |
 | Open resolver | a DNS inbound on the network only with `allow_ip` |
-| API | token always (without it — only dashboard files and `GET /`), constant-time comparison, delay after failures; `Host` check; from a browser — only your own dashboard and sites in `access_control_allow_origin`; dashboard files only inside their folder; non-loopback only with `allow_ip` |
+| API | token always (without it — only dashboard files and `GET /`), constant-time comparison, address blocking for guessing; `?token=` only on loopback or with `allow_query_token`; `Host` check; from a browser — only your own dashboard and sites in `access_control_allow_origin`; dashboard files only inside their folder; non-loopback only with `allow_ip` |
 | Tampered server list | subscriptions only over HTTPS with certificate verification |
 | Browsing history | site addresses only at `debug` and in the API; the subscription URL is never logged |
 | Windows service running as SYSTEM | config and exe copied to a folder writable only by SYSTEM and administrators; a pre-existing folder owned by someone else is refused |

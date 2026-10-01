@@ -830,6 +830,7 @@ pub(super) fn clash_api(c: Obj<'_>) -> Result<Option<ApiConfig>> {
             .str("external_ui")?
             .filter(|s| !s.is_empty())
             .map(PathBuf::from),
+        allow_query_token: c.bool("allow_query_token")?,
         default_mode: match c.str("default_mode")? {
             None => None,
             Some(m) => Some(crate::app::stats::Mode::parse(&m).ok_or_else(|| {

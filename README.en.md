@@ -358,6 +358,11 @@ tests, connections, rules, logs, mode.
   dashboard from `external_ui` is always allowed.
   `access_control_allow_private_network: true` — needed by Chrome for a
   dashboard hosted on the internet.
+- `allow_query_token` (extension) — accept the token in a WebSocket URL
+  (`?token=`), the way dashboards send it. By default only when the API
+  listens on 127.0.0.1: a URL with the token ends up in proxy logs and
+  browser history. An API on the network used from a browser dashboard
+  needs `"allow_query_token": true`.
 - `default_mode` — the mode at startup: `rule` (by rules), `global`
   (everything through the outbound selected in the `GLOBAL` group) or
   `direct` (everything direct). DNS hijacking works in every mode. The
@@ -441,7 +446,9 @@ While nobody listens to a stream, events are not even assembled. Up to 16
 streams at a time.
 
 - The token is always required (`Authorization: Bearer`; a WebSocket from a
-  browser — `?token=`). Only dashboard files and the `GET /` greeting are
+  browser — `?token=`, see `allow_query_token`). 5 wrong tokens from an
+  address (IPv6 — from a /64) block it for a minute and longer; 127.0.0.1
+  is never blocked. Only dashboard files and the `GET /` greeting are
   served without it, as in Clash. `Host` must be the API address (DNS
   rebinding protection); browser requests are accepted only from your own
   dashboard and sites in `access_control_allow_origin`; listening on
