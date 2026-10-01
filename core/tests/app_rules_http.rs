@@ -223,7 +223,7 @@ async fn mixed_serves_socks_and_http_with_auth() {
     assert!(read_response_head(&mut s).await.starts_with("HTTP/1.1 407"));
 
     // Верный пароль — туннель.
-    let auth = "dXNlcjpjb3JyZWN0LWhvcnNlLWJhdHRlcnk="; // user:correct-horse-battery
+    let auth = "dXNlcjpjb3JyZWN0LWhvcnNlLWJhdHRlcnk="; // user:correct-horse-battery (тест) gitleaks:allow
     let mut s = TcpStream::connect(proxy).await.unwrap();
     s.write_all(
         format!(

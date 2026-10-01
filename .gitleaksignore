@@ -1,0 +1,3 @@
+# Ложные срабатывания gitleaks (отпечаток: коммит:файл:правило:строка).
+# Тестовый Proxy-Authorization: base64 от user:correct-horse-battery.
+52b9ebb6eabf21914135867bb2e391fbd2d956b6:core/tests/app_rules_http.rs:generic-api-key:255

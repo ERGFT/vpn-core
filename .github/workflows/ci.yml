@@ -5,6 +5,8 @@
 #           с sing-box, эталон отпечатка Chrome; отдельно — TUN в netns (root).
 # windows — на настоящей Windows (не Wine): тесты, сборка .exe, служба и
 #           TUN (Wintun, маршруты) с настоящим трафиком.
+# secrets — gitleaks по всей истории git (ложные срабатывания —
+#           .gitleaksignore).
 # audit   — уязвимости и источники зависимостей (cargo deny, cargo audit)
 #           и отдельно патченного rustls; ещё и раз в неделю — новые
 #           advisories появляются без коммитов (тогда только он).
@@ -47,6 +49,25 @@ jobs:
       # Cargo.lock) — его версия сверяется с RustSec отдельно.
       - name: патченный rustls против RustSec
         run: bash scripts/rustls_advisories.sh
+
+  secrets:
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: stable
+          cache: false
+      # gitleaks — из исходников, закреплённая версия: готовому
+      # gitleaks-action нужен токен GitHub (и лицензия для организаций).
+      - run: go install github.com/zricethezav/gitleaks/v8@v8.28.0
+      - name: gitleaks по всей истории
+        run: "$(go env GOPATH)/bin/gitleaks git --log-opts=--all --redact ."
 
   linux:
     if: github.event_name != 'schedule'
