@@ -309,8 +309,23 @@ fn block_on<F: std::future::Future>(f: F) -> Result<F::Output> {
     Ok(r)
 }
 
+/// Секрет (ссылка сервера или логин:пароль) передан в командной строке —
+/// там его видят другие пользователи машины (`ps`, `/proc/*/cmdline`).
+fn secret_in_argv(argv: &[String]) -> bool {
+    argv.iter().skip(1).any(|a| {
+        a == "--server" || a.starts_with("--server=") || a == "--auth" || a.starts_with("--auth=")
+    })
+}
+
 fn main() -> Result<()> {
     let args = Args::parse();
+    if secret_in_argv(&std::env::args().collect::<Vec<_>>()) {
+        eprintln!(
+            "предупреждение: сервер/пароль в аргументах командной строки видны другим \
+             пользователям (ps). Используйте --server-file / --auth-file или переменные \
+             окружения REALITY_SERVER / REALITY_SOCKS_AUTH."
+        );
+    }
     init_logging(args.log_file.as_deref())?;
     #[cfg(windows)]
     {
@@ -487,3 +502,32 @@ signal_like!(
     tokio::signal::windows::CtrlShutdown,
     tokio::signal::windows::CtrlLogoff
 );
+
+#[cfg(test)]
+mod tests {
+    use super::secret_in_argv;
+
+    fn argv(a: &[&str]) -> Vec<String> {
+        a.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn warns_only_for_secrets_in_argv() {
+        for a in [
+            &["rc", "--server", "vless://x"][..],
+            &["rc", "--server=vless://x"],
+            &["rc", "--auth", "u:p"],
+            &["rc", "--listen", "0.0.0.0:1080", "--auth=u:p"],
+        ] {
+            assert!(secret_in_argv(&argv(a)), "{a:?}");
+        }
+        for a in [
+            &["rc", "--server-file", "server.txt"][..],
+            &["rc", "--auth-file", "auth.txt"],
+            &["rc", "--config", "c.json"],
+            &["--server"], // имя программы не в счёт
+        ] {
+            assert!(!secret_in_argv(&argv(a)), "{a:?}");
+        }
+    }
+}

@@ -79,14 +79,18 @@ On Windows — see [`docs/WINDOWS.en.md`](docs/WINDOWS.en.md) or run
 ## Running
 
 ```sh
-reality-client --server 'vless://UUID@host:443?encryption=none&security=reality&sni=site.example&pbk=KEY&sid=SHORTID&type=tcp&flow=xtls-rprx-vision' \
-               --listen 127.0.0.1:1080
+# the link on the first line of a file readable only by you
+printf '%s\n' 'vless://UUID@host:443?encryption=none&security=reality&sni=site.example&pbk=KEY&sid=SHORTID&type=tcp&flow=xtls-rprx-vision' > server.txt
+chmod 600 server.txt
+reality-client --server-file server.txt --listen 127.0.0.1:1080
 ```
 
-- `--server` — the whole link, in quotes (it contains `&`). ⚠️ Command-line
-  arguments are visible to every user of the machine (the process list), and
-  the link contains your UUID. Safer: `--server-file file` (the link on the
-  first line of the file) or the `REALITY_SERVER` environment variable.
+- `--server-file` — a file with the link (first non-empty line); the same
+  via the `REALITY_SERVER` environment variable. There is also
+  `--server 'vless://…'` (the whole link, in quotes: it contains `&`), but
+  ⚠️ command-line arguments are visible to every user of the machine (the
+  process list), and the link contains your UUID; the client then prints a
+  warning.
 - `--listen` — local proxy address, `127.0.0.1:1080` by default. The port
   serves both SOCKS5 and HTTP proxy (detected by the first byte).
 - `--auth user:password` — require a SOCKS5 username and password. The client

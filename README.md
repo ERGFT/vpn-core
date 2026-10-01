@@ -80,14 +80,17 @@ cargo build --release -p reality-client
 ## Запуск
 
 ```sh
-reality-client --server 'vless://UUID@host:443?encryption=none&security=reality&sni=site.example&pbk=KEY&sid=SHORTID&type=tcp&flow=xtls-rprx-vision' \
-               --listen 127.0.0.1:1080
+# ссылка — в первой строке файла, файл — только для себя
+printf '%s\n' 'vless://UUID@host:443?encryption=none&security=reality&sni=site.example&pbk=KEY&sid=SHORTID&type=tcp&flow=xtls-rprx-vision' > server.txt
+chmod 600 server.txt
+reality-client --server-file server.txt --listen 127.0.0.1:1080
 ```
 
-- `--server` — ссылка целиком, в кавычках (в ней есть `&`). ⚠️ Аргументы
-  командной строки видны всем пользователям машины (список процессов), а в
-  ссылке — ваш UUID. Надёжнее `--server-file файл` (ссылка в первой
-  строке файла) или переменная окружения `REALITY_SERVER`.
+- `--server-file` — файл со ссылкой (первая непустая строка); то же —
+  переменная окружения `REALITY_SERVER`. Есть и `--server 'vless://…'`
+  (ссылка целиком, в кавычках: в ней есть `&`), но ⚠️ аргументы командной
+  строки видны всем пользователям машины (список процессов), а в ссылке —
+  ваш UUID; клиент тогда печатает предупреждение.
 - `--listen` — адрес локального прокси, по умолчанию `127.0.0.1:1080`.
   На этом порту и SOCKS5, и HTTP-прокси (вид определяется по первому байту).
 - `--auth логин:пароль` — требовать логин и пароль на SOCKS5. Слушать не

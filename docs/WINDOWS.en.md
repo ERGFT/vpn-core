@@ -68,13 +68,14 @@ and tested.
 ## 3. Running
 
 ```powershell
-.\target\release\reality-client.exe --server "vless://UUID@host:443?encryption=none&security=reality&sni=site&pbk=KEY&sid=ID&type=tcp" --listen 127.0.0.1:1080
+Set-Content link.txt "vless://UUID@host:443?encryption=none&security=reality&sni=site&pbk=KEY&sid=ID&type=tcp"
+.\target\release\reality-client.exe --server-file link.txt --listen 127.0.0.1:1080
 ```
 
-Put the link in double quotes: it contains `&`, which the shell would
-otherwise interpret. It is safer to put the link in a file and run with
-`--server-file link.txt`: command-line arguments are visible to other
-programs and users of the computer, and the link contains your UUID. The
+The link goes in a file, not on the command line: arguments are visible
+to other programs and users of the computer, and the link contains your
+UUID (with `--server "vless://…"` the client works but prints a warning;
+then put the link in double quotes, it contains `&`). The
 console will show the lines `сервер загружен ...` ("server loaded") and
 `прокси слушает ... addr=127.0.0.1:1080` ("proxy listening"). For a more
 detailed log: `$env:RUST_LOG = "debug"` before starting.
