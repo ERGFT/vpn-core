@@ -594,7 +594,10 @@ with protection, and `tun/route.rs` installs the routes.
   priorities and filter GUIDs are shared by all instances, so one process
   holds them: on Linux an abstract Unix socket `reality-client/auto_route`
   (in the network namespace, like the routes), on Windows
-  `%ProgramData%\reality-client-auto_route.lock` opened with no sharing.
+  `auto_route.lock` in the service folder `%ProgramData%\RealityClient`
+  (writable only by SYSTEM and administrators; `route::set_lock_dir`, the
+  client prepares the folder only for `auto_route` and `--tun-cleanup`),
+  opened with no sharing.
   The lock is taken before the interface is created and lives in
   `RouteGuard`; the OS releases it with the process, so a held lock always
   means a live instance: a second one exits with an error and

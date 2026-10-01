@@ -496,7 +496,7 @@ pub fn settings(i: &super::config::InboundConfig) -> Result<TunSettings> {
         mtu,
         // С готовым дескриптором маршруты и kill switch — забота системы
         // (у Android — VpnService).
-        auto_route: i.tun_fd.is_none() && i.auto_route.unwrap_or(true),
+        auto_route: i.wants_auto_route(),
         route_exclude: i.route_exclude.clone(),
         strict_route: i.tun_fd.is_none() && i.strict_route.unwrap_or(false),
         dns_hijack: i.dns_hijack.unwrap_or(true),

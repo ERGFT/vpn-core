@@ -119,6 +119,12 @@ C-часть обёртки (`jni.c`) вызывает `rc_start`/`rc_request`/`
 права администратора или root), `mixed` — прокси. Управление —
 `rc_request`, без HTTP.
 
+На Windows до `rc_start` вызовите `rc_set_lock_dir(dir)` — каталог для
+файла блокировки `auto_route`, запись в который есть только у SYSTEM и
+администраторов (как `%ProgramData%\RealityClient` у `reality-client`).
+Без него вход `tun` с `auto_route` не запустится: в общем каталоге
+блокировку мог бы заранее занять любой пользователь.
+
 ## Проверка
 
 - `cargo test -p reality-ffi` — вызовы C ABI из Rust (на Linux и

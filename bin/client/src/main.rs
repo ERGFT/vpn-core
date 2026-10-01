@@ -372,6 +372,8 @@ fn main() -> Result<()> {
 
 async fn run(args: Args, stop: impl std::future::Future<Output = ()>) -> Result<()> {
     if args.tun_cleanup {
+        #[cfg(windows)]
+        set_lock_dir()?;
         reality_core::app::tun::route::cleanup()?;
         println!("правила TUN сняты");
         return Ok(());
@@ -392,6 +394,10 @@ async fn run(args: Args, stop: impl std::future::Future<Output = ()>) -> Result<
     if args.check {
         println!("настройки в порядке");
         return Ok(());
+    }
+    #[cfg(windows)]
+    if cfg.inbounds.iter().any(|i| i.wants_auto_route()) {
+        set_lock_dir()?;
     }
     let running = app.start().await?;
     if let Some(path) = &args.config {
@@ -414,6 +420,17 @@ async fn run(args: Args, stop: impl std::future::Future<Output = ()>) -> Result<
         _ = stop => tracing::info!("завершение по сигналу"),
     }
     // Здесь `_system_proxy` уничтожается и возвращает прежние настройки.
+    Ok(())
+}
+
+/// Блокировка `auto_route` — в папке службы (права только у SYSTEM и
+/// администраторов): в общем `%ProgramData%` её мог бы заранее занять
+/// любой пользователь. Только когда нужна: папку готовят права
+/// администратора, а прокси без TUN запускается и без них.
+#[cfg(windows)]
+fn set_lock_dir() -> Result<()> {
+    let d = winservice::ensure_data_dir().context("папка службы для блокировки auto_route")?;
+    reality_core::app::tun::route::set_lock_dir(d);
     Ok(())
 }
 

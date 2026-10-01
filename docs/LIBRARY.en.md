@@ -132,6 +132,12 @@ The simplest option is `rc_start(config, dir, -1, …)` with a config as for
 - `mixed` is the proxy;
 - control goes through `rc_request`, without HTTP.
 
+On Windows call `rc_set_lock_dir(dir)` before `rc_start`: the folder for
+the `auto_route` lock file, writable only by SYSTEM and administrators
+(like `%ProgramData%\RealityClient` for `reality-client`). Without it a
+`tun` inbound with `auto_route` will not start: in a shared folder any
+user could take the lock first.
+
 ## Verification
 
 - `cargo test -p reality-ffi` — C ABI calls from Rust (on Linux and Windows

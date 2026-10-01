@@ -4,7 +4,9 @@
 use std::ffi::{c_char, c_int, CStr, CString};
 use std::ptr;
 
-use reality::{rc_free_string, rc_reload, rc_request, rc_start, rc_stop, rc_version};
+use reality::{
+    rc_free_string, rc_reload, rc_request, rc_set_lock_dir, rc_start, rc_stop, rc_version,
+};
 
 const CONFIG: &str = r#"{
   "inbounds": [{ "type": "mixed", "tag": "in", "listen": "127.0.0.1", "listen_port": 0 }],
@@ -103,4 +105,13 @@ fn release_profile_keeps_unwind() {
         !abort,
         "panic = \"abort\" в [profile.release] отключает catch_unwind в ffi"
     );
+}
+
+#[test]
+fn set_lock_dir_checks_its_argument() {
+    assert_eq!(unsafe { rc_set_lock_dir(ptr::null()) }, -1);
+    let bad = [0xffu8, 0];
+    assert_eq!(unsafe { rc_set_lock_dir(bad.as_ptr().cast()) }, -1);
+    let dir = CString::new(std::env::temp_dir().to_string_lossy().into_owned()).unwrap();
+    assert_eq!(unsafe { rc_set_lock_dir(dir.as_ptr()) }, 0);
 }

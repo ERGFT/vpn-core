@@ -73,13 +73,29 @@ impl Drop for RouteGuard {
 ///
 /// Linux — абстрактный сокет Unix: он живёт в сетевом пространстве, как и
 /// сами маршруты, и не зависит от прав на файлы (служба с
-/// `ProtectSystem=strict`). Windows — файл в `%ProgramData%`, открытый без
-/// общего доступа.
+/// `ProtectSystem=strict`). Windows — файл `auto_route.lock`, открытый без
+/// общего доступа, в защищённом каталоге ([`set_lock_dir`]).
 pub struct HostLock {
     #[cfg(target_os = "linux")]
     _sock: std::os::unix::net::UnixListener,
     #[cfg(windows)]
     _file: std::fs::File,
+}
+
+#[cfg(windows)]
+static LOCK_DIR: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
+
+/// Каталог для файла блокировки `auto_route` на Windows: запись в него —
+/// только SYSTEM и администраторам (у клиента — `%ProgramData%\RealityClient`
+/// с таким DACL). Задаётся приложением до запуска ядра, один раз; без него
+/// `auto_route` на Windows не запускается. На других системах не нужен.
+pub fn set_lock_dir(dir: std::path::PathBuf) {
+    #[cfg(windows)]
+    {
+        let _ = LOCK_DIR.set(dir);
+    }
+    #[cfg(not(windows))]
+    let _ = dir;
 }
 
 impl HostLock {
@@ -102,8 +118,13 @@ impl HostLock {
             use std::os::windows::fs::OpenOptionsExt;
             // ERROR_SHARING_VIOLATION: файл открыт другим процессом.
             const SHARING_VIOLATION: i32 = 32;
-            let dir = std::env::var_os("ProgramData").unwrap_or_else(|| "C:\\ProgramData".into());
-            let path = std::path::Path::new(&dir).join("reality-client-auto_route.lock");
+            // Только в каталоге, куда пишут лишь SYSTEM и администраторы:
+            // в общем %ProgramData% любой пользователь открыл бы файл
+            // раньше службы и не дал бы ей запуститься.
+            let Some(dir) = LOCK_DIR.get() else {
+                return Err("не задан защищённый каталог для блокировки (set_lock_dir)".into());
+            };
+            let path = dir.join("auto_route.lock");
             match std::fs::OpenOptions::new()
                 .read(true)
                 .write(true)
