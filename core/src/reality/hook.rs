@@ -140,11 +140,7 @@ impl RealityHook {
     /// здесь ошибка неуместна, так как хук конструируется один раз при
     /// сборке конфига, а не на каждое рукопожатие — валидацию длины
     /// `short_id` стоит делать раньше, при разборе ссылки, а не здесь).
-    pub fn new(
-        server_public: &[u8; 32],
-        short_id: &[u8],
-        rng: &mut (impl rand::RngCore + rand::CryptoRng),
-    ) -> Self {
+    pub fn new(server_public: &[u8; 32], short_id: &[u8], rng: &mut impl rand::CryptoRng) -> Self {
         let ephemeral = StaticSecret::random_from_rng(rng);
         let client_public = X25519PublicKey::from(&ephemeral);
         let shared = ephemeral.diffie_hellman(&X25519PublicKey::from(*server_public));
@@ -157,9 +153,7 @@ impl RealityHook {
         // комментарий `RealityClientHook` в rustls-патче и PLAN.md,
         // Этап 5). `generate_keypair()` — с feature "getrandom" крейта
         // `ml_kem`, берёт случайность из ОС напрямую, не через `rng`
-        // выше: `ml_kem` требует rand_core 0.10, а `rng` здесь —
-        // rand_core 0.6 (через `rand` 0.8) — версии несовместимы на
-        // уровне трейтов, см. обоснование в корневом Cargo.toml.
+        // выше.
         let (mlkem_decap, mlkem_encap) = MlKem768::generate_keypair();
         let mut hybrid_key_share = Vec::with_capacity(MLKEM768_ENCAPSULATION_KEY_LEN + 32);
         hybrid_key_share.extend_from_slice(mlkem_encap.to_bytes().as_slice());

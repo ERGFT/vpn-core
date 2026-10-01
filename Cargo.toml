@@ -32,7 +32,7 @@ anyhow = "1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 clap = { version = "4", features = ["derive", "env"] }
-rand = "0.8"
+rand = "0.10"
 regex = "1"
 yaml_serde = "0.10"
 hickory-proto = { version = "0.26", default-features = false, features = ["std"] }
@@ -47,8 +47,8 @@ socket2 = { version = "0.6", features = ["all"] }
 # Этап 3: снятие/расчёт TLS-фингерпринта (JA3/JA4) — измерение того, что
 # реально уходит в сеть, а не подмена (см. PLAN.md, Этап 3: rustls не
 # даёт менять порядок cipher suite/extensions и не умеет GREASE).
-sha2 = "0.10"
-md-5 = "0.10"
+sha2 = "0.11"
+md-5 = "0.11"
 hex = "0.4"
 pin-project-lite = "0.2"
 
@@ -72,14 +72,14 @@ http = "1"
 
 # Этап 5: REALITY — крипто-примитивы клиентской части (X25519 ECDH,
 # HKDF-SHA256, AES-256-GCM, HMAC-SHA512) и разбор Ed25519-сертификата
-# сервера. Версии закреплены на major-ветках, совместимых с уже
-# используемым sha2 0.10 (digest 0.10-экосистема RustCrypto) — не самые
-# свежие мажоры (x25519-dalek 3, hkdf/hmac 0.13), у которых digest/rand_core
-# уже другого поколения и которые пришлось бы тянуть отдельно от sha2.
-x25519-dalek = { version = "2", features = ["static_secrets", "zeroize"] }
-hkdf = "0.12"
-hmac = "0.12"
-aes-gcm = "0.10"
+# сервера. Одно поколение RustCrypto (digest 0.11, rand_core 0.10 — как у
+# ml-kem ниже): sha2/md-5 0.11, hkdf/hmac 0.13, aes-gcm 0.11,
+# x25519-dalek 3, rand 0.10 обновляются только вместе, с интероп-тестами
+# против Xray-core (scripts/ci.sh).
+x25519-dalek = { version = "3", features = ["static_secrets", "zeroize"] }
+hkdf = "0.13"
+hmac = "0.13"
+aes-gcm = "0.11"
 base64 = "0.23"
 x509-parser = "0.18"
 # Крипто-ревью (см. PLAN.md, Этап 5): секреты, которые живут дольше
@@ -116,11 +116,7 @@ brotli-decompressor = "6"
 # сверены вручную против стандартных размеров FIPS 203 (1184/1088/32) —
 # см. `reality/hook.rs`. Feature "zeroize" — та же дисциплина, что и для
 # x25519-dalek выше (стирание DecapsulationKey при Drop); "getrandom" —
-# чтобы не тащить в проект второй, несовместимый rand_core (крейт `ml-kem`
-# требует rand_core 0.10, а весь остальной проект — 0.8 через `rand`);
-# с этой feature генерация ключей и encapsulate() берут случайность
-# напрямую из ОС, без необходимости прокидывать наш rng через границу
-# двух несовместимых версий rand_core.
+# генерация ключей и encapsulate() берут случайность напрямую из ОС.
 ml-kem = { version = "0.3", features = ["zeroize", "getrandom"] }
 
 # Патченный rustls 0.23.45 (vendor/rustls-reality-patch): хук REALITY

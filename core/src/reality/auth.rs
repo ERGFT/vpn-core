@@ -66,7 +66,7 @@ impl RealityAuth {
         short_id: &[u8],
         client_hello_random: &[u8; 32],
         client_hello_raw_with_placeholder: &[u8],
-        rng: &mut (impl rand::RngCore + rand::CryptoRng),
+        rng: &mut impl rand::CryptoRng,
     ) -> Result<Self> {
         if short_id.len() > SHORT_ID_LEN {
             return Err(Error::Protocol(format!(
@@ -169,6 +169,13 @@ pub(crate) fn derive_auth_key(
 /// (никакой части ShortId "в открытом виде" на проводе не остаётся —
 /// это резолвит неоднозначность между источниками, которая была на
 /// этапе исследования: plaintext-блок с ShortId — 16 байт, а не 24).
+/// Nonce AES-GCM для SessionId — последние 12 байт ClientHello.random.
+fn nonce_of(client_hello_random: &[u8; 32]) -> [u8; 12] {
+    let mut nonce = [0u8; 12];
+    nonce.copy_from_slice(&client_hello_random[20..32]);
+    nonce
+}
+
 pub(crate) fn seal_session_id(
     auth_key: &[u8; 32],
     client_hello_random: &[u8; 32],
@@ -177,10 +184,10 @@ pub(crate) fn seal_session_id(
 ) -> Result<[u8; SESSION_ID_LEN]> {
     let cipher = Aes256Gcm::new_from_slice(auth_key)
         .map_err(|_| Error::Protocol("некорректная длина AuthKey для AES-256-GCM".into()))?;
-    let nonce = Nonce::from_slice(&client_hello_random[20..32]);
+    let nonce = Nonce::from(nonce_of(client_hello_random));
     let sealed = cipher
         .encrypt(
-            nonce,
+            &nonce,
             Payload {
                 msg: plaintext,
                 aad,
@@ -214,10 +221,10 @@ fn open_session_id(
 ) -> Result<[u8; PLAINTEXT_LEN]> {
     let cipher = Aes256Gcm::new_from_slice(auth_key)
         .map_err(|_| Error::Protocol("некорректная длина AuthKey для AES-256-GCM".into()))?;
-    let nonce = Nonce::from_slice(&client_hello_random[20..32]);
+    let nonce = Nonce::from(nonce_of(client_hello_random));
     let opened = cipher
         .decrypt(
-            nonce,
+            &nonce,
             Payload {
                 msg: session_id,
                 aad,
@@ -234,7 +241,7 @@ fn open_session_id(
 /// подпись сертификата. См. `verifier.rs`, где это используется в
 /// реализации `rustls::client::danger::ServerCertVerifier`.
 pub fn verify_ed25519_hmac(auth_key: &[u8; 32], peer_pubkey: &[u8], signature: &[u8]) -> bool {
-    let mut mac = match <HmacSha512 as Mac>::new_from_slice(auth_key) {
+    let mut mac = match <HmacSha512 as KeyInit>::new_from_slice(auth_key) {
         Ok(m) => m,
         Err(_) => return false,
     };
@@ -305,8 +312,8 @@ mod tests {
         // TLS-структура.
         let fake_client_hello = b"\x01\x00\x00\x2a fake-client-hello-bytes-aad";
 
-        let mut rng = rand::rngs::OsRng;
-        let server_static = x25519_dalek::StaticSecret::random_from_rng(rng);
+        let mut rng = rand::rand_core::UnwrapErr(rand::rngs::SysRng);
+        let server_static = x25519_dalek::StaticSecret::random_from_rng(&mut rng);
         let server_public_key = x25519_dalek::PublicKey::from(&server_static);
 
         let auth = RealityAuth::compute(
@@ -365,8 +372,8 @@ mod tests {
 
     #[test]
     fn seal_open_fails_with_wrong_aad() {
-        let mut rng = rand::rngs::OsRng;
-        let server_static = x25519_dalek::StaticSecret::random_from_rng(rng);
+        let mut rng = rand::rand_core::UnwrapErr(rand::rngs::SysRng);
+        let server_static = x25519_dalek::StaticSecret::random_from_rng(&mut rng);
         let server_public_key = x25519_dalek::PublicKey::from(&server_static);
         let client_hello_random = [0x22u8; 32];
         let real_aad = b"correct-aad-bytes";
@@ -404,7 +411,7 @@ mod tests {
         let wrong_key = [4u8; 32];
         let peer_pubkey = [9u8; 32];
 
-        let mut mac = <HmacSha512 as Mac>::new_from_slice(&auth_key).unwrap();
+        let mut mac = <HmacSha512 as KeyInit>::new_from_slice(&auth_key).unwrap();
         mac.update(&peer_pubkey);
         let correct_signature = mac.finalize().into_bytes();
 
@@ -449,7 +456,7 @@ mod tests {
 
     #[test]
     fn compute_rejects_short_id_longer_than_8_bytes() {
-        let mut rng = rand::rngs::OsRng;
+        let mut rng = rand::rand_core::UnwrapErr(rand::rngs::SysRng);
         let too_long = [0u8; SHORT_ID_LEN + 1];
         let err =
             RealityAuth::compute(&[1u8; 32], &too_long, &[0u8; 32], b"aad", &mut rng).unwrap_err();

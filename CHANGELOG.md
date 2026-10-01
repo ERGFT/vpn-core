@@ -88,6 +88,9 @@
   (`docs/ARCHITECTURE.md`).
 - Зависимости: webpki-roots 1.0, base64 0.23, x509-parser 0.18,
   brotli-decompressor 6, criterion 0.8 (бенчмарки).
+- Криптография — новое поколение RustCrypto: sha2/md-5 0.11, hkdf/hmac
+  0.13, aes-gcm 0.11, x25519-dalek 3, rand 0.10; проверено интероп-тестами
+  против Xray-core.
 
 [Не выпущено]: https://github.com/ERGFT/vpn-core/commits/main
 
@@ -184,5 +187,8 @@ It will include:
   core works (`docs/ARCHITECTURE.en.md`).
 - Dependencies: webpki-roots 1.0, base64 0.23, x509-parser 0.18,
   brotli-decompressor 6, criterion 0.8 (benchmarks).
+- Cryptography moved to the new RustCrypto generation: sha2/md-5 0.11,
+  hkdf/hmac 0.13, aes-gcm 0.11, x25519-dalek 3, rand 0.10; checked by
+  interop tests against Xray-core.
 
 [Unreleased]: https://github.com/ERGFT/vpn-core/commits/main

@@ -205,7 +205,7 @@ impl RealityCertVerifier {
             clippy::expect_used,
             reason = "инвариант: HMAC принимает ключ любой длины"
         )]
-        let mut mac = <Hmac<sha2::Sha512> as Mac>::new_from_slice(auth_key)
+        let mut mac = <Hmac<sha2::Sha512> as hmac::KeyInit>::new_from_slice(auth_key)
             .expect("HMAC принимает ключ любой длины");
         mac.update(cert_pub);
         mac.update(ch);
@@ -299,7 +299,7 @@ impl ServerCertVerifier for RealityCertVerifier {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use hmac::{Hmac, Mac};
+    use hmac::{Hmac, KeyInit, Mac};
     use sha2::Sha512;
 
     fn install_crypto_provider_for_test() {

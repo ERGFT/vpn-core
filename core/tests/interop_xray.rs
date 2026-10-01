@@ -194,7 +194,7 @@ struct Keys {
 }
 
 fn reality_keys() -> Keys {
-    let secret = StaticSecret::random_from_rng(rand::rngs::OsRng);
+    let secret = StaticSecret::random_from_rng(&mut rand::rand_core::UnwrapErr(rand::rngs::SysRng));
     let public = PublicKey::from(&secret).to_bytes();
     Keys {
         private: b64(&secret.to_bytes()),

@@ -387,8 +387,10 @@ impl VlessConfig {
         // секрет с любым нашим ключом: AuthKey вычислим кем угодно, и
         // любой посредник подделает «REALITY-сертификат». Xray такие
         // ключи тоже отвергает.
-        let probe = x25519_dalek::StaticSecret::random_from_rng(rand::rngs::OsRng)
-            .diffie_hellman(&x25519_dalek::PublicKey::from(public_key));
+        let probe = x25519_dalek::StaticSecret::random_from_rng(&mut rand::rand_core::UnwrapErr(
+            rand::rngs::SysRng,
+        ))
+        .diffie_hellman(&x25519_dalek::PublicKey::from(public_key));
         if !probe.was_contributory() {
             return Err(Error::InvalidUri(
                 "pbk= — вырожденный ключ X25519 (точка малого порядка), такой ключ \
