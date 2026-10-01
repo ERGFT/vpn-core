@@ -682,7 +682,10 @@ build (downloadable from the run page, "Artifacts") and
 `scripts/windows_live_test.ps1`: the service, its folder permissions and TUN
 with real traffic. Release — `git tag v0.2.0 && git push origin v0.2.0`:
 `.github/workflows/release.yml` builds Windows and Linux binaries with
-SHA-256 sums, `LICENSE` and `THIRD-PARTY-LICENSES.html` into a draft release.
+SHA-256 sums, `LICENSE`, `THIRD-PARTY-LICENSES.html` and an SBOM
+(`reality-client.sbom.cdx.json`, CycloneDX) into a draft release; the
+binaries' provenance is signed (GitHub attestation) — to check:
+`gh attestation verify reality-client-linux-x86_64 --repo ERGFT/vpn-core`.
 
 Xray-core for tests: `scripts/fetch_xray.sh` (download a release) or
 `scripts/build_xray_from_source.sh` (build from source via git — for

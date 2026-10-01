@@ -3,8 +3,10 @@
 # вместе с LICENSE и лицензиями зависимостей (THIRD-PARTY-LICENSES.html).
 #
 # Права: сборка (чужие actions, зависимости, build.rs) — только чтение;
-# запись в репозиторий есть лишь у отдельного шага публикации, который
-# ничего не собирает. Сторонние actions закреплены на коммитах (тег —
+# запись в репозиторий и подпись происхождения (attestation, keyless
+# через OIDC GitHub) есть лишь у отдельного шага публикации, который
+# ничего не собирает. К релизу — SBOM (CycloneDX) клиента; проверка
+# подписи: gh attestation verify <файл> --repo ERGFT/vpn-core. Сторонние actions закреплены на коммитах (тег —
 # в комментарии; обновляет dependabot).
 name: Release
 
@@ -47,12 +49,20 @@ jobs:
       - uses: taiki-e/install-action@83ac0ad63c0167e6f06796fab0fce28db1bf3db0 # v2
         if: runner.os == 'Linux'
         with:
-          tool: cargo-about@0.9.2
+          tool: cargo-about@0.9.2,cargo-cyclonedx@0.5.9
       - name: LICENSE и лицензии зависимостей
         if: runner.os == 'Linux'
         run: |
           bash scripts/third_party_licenses.sh dist/THIRD-PARTY-LICENSES.html
           cp LICENSE dist/
+      # SBOM — один на обе сборки (--target all: зависимости и Linux, и
+      # Windows); cargo-cyclonedx пишет файл рядом с Cargo.toml.
+      - name: SBOM (CycloneDX)
+        if: runner.os == 'Linux'
+        run: |
+          cargo cyclonedx -q --manifest-path bin/client/Cargo.toml --format json \
+            --target all --spec-version 1.5 --override-filename reality-client.sbom
+          mv bin/client/reality-client.sbom.json dist/reality-client.sbom.cdx.json
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: dist-${{ runner.os }}
@@ -64,11 +74,18 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      id-token: write # keyless-подпись происхождения
+      attestations: write
     steps:
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           path: dist
           merge-multiple: true
+      - uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2
+        with:
+          subject-path: |
+            dist/reality-client-*-x86_64*
+            dist/reality-client.sbom.cdx.json
       - uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
           draft: true

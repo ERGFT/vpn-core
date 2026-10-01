@@ -673,8 +673,11 @@ scripts/ci.sh --quick  # только fmt, SPDX-метки, clippy, тесты
 страницы запуска, «Artifacts») и `scripts/windows_live_test.ps1`: служба,
 права её папки и TUN с настоящим трафиком. Выпуск —
 `git tag v0.2.0 && git push origin v0.2.0`: `.github/workflows/release.yml`
-собирает бинарники для Windows и Linux с SHA-256, `LICENSE` и
-`THIRD-PARTY-LICENSES.html` в черновик релиза.
+собирает бинарники для Windows и Linux с SHA-256, `LICENSE`,
+`THIRD-PARTY-LICENSES.html` и SBOM (`reality-client.sbom.cdx.json`,
+CycloneDX) в черновик релиза; происхождение бинарников подписано
+(GitHub attestation) — проверка:
+`gh attestation verify reality-client-linux-x86_64 --repo ERGFT/vpn-core`.
 
 Xray-core для тестов: `scripts/fetch_xray.sh` (скачать релиз) или
 `scripts/build_xray_from_source.sh` (собрать из исходников по git — для
