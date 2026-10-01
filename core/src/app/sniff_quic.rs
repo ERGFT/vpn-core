@@ -17,8 +17,8 @@
 use std::collections::BTreeMap;
 
 use aes_gcm::aead::{Aead, KeyInit, Payload};
-use aes_gcm::aes::cipher::{generic_array::GenericArray, BlockEncrypt};
-use aes_gcm::aes::Aes128;
+use aes_gcm::aes::cipher::BlockCipherEncrypt;
+use aes_gcm::aes::{Aes128, Block};
 use aes_gcm::{Aes128Gcm, Nonce};
 use hkdf::Hkdf;
 use sha2::Sha256;
@@ -323,8 +323,8 @@ pub async fn read_and_sniff<R: AsyncRead + Unpin>(
 /// Снять защиту заголовка и расшифровать; вернуть открытые кадры.
 fn decrypt(k: &InitialKeys, p: &[u8], pn_offset: usize) -> Option<Vec<u8>> {
     let sample = p.get(pn_offset + 4..pn_offset + 20)?;
-    let mut mask = GenericArray::clone_from_slice(sample);
-    Aes128::new(GenericArray::from_slice(&k.hp)).encrypt_block(&mut mask);
+    let mut mask = Block::try_from(sample).ok()?;
+    Aes128::new(&k.hp.into()).encrypt_block(&mut mask);
     let mut header = p[..pn_offset + 4].to_vec();
     header[0] ^= mask[0] & 0x0f;
     let pn_len = usize::from(header[0] & 3) + 1;
@@ -338,9 +338,9 @@ fn decrypt(k: &InitialKeys, p: &[u8], pn_offset: usize) -> Option<Vec<u8>> {
     for (j, b) in pn.to_be_bytes().iter().enumerate() {
         nonce[4 + j] ^= b;
     }
-    Aes128Gcm::new(GenericArray::from_slice(&k.key))
+    Aes128Gcm::new(&k.key.into())
         .decrypt(
-            Nonce::from_slice(&nonce),
+            &Nonce::from(nonce),
             Payload {
                 msg: &p[pn_offset + pn_len..],
                 aad: &header,
@@ -456,9 +456,9 @@ mod tests {
         for (j, b) in u64::from(pn).to_be_bytes().iter().enumerate() {
             nonce[4 + j] ^= b;
         }
-        let ct = Aes128Gcm::new(GenericArray::from_slice(&k.key))
+        let ct = Aes128Gcm::new(&k.key.into())
             .encrypt(
-                Nonce::from_slice(&nonce),
+                &Nonce::from(nonce),
                 Payload {
                     msg: &payload,
                     aad: &hdr,
@@ -467,8 +467,8 @@ mod tests {
             .unwrap();
         let mut pkt = hdr;
         pkt.extend_from_slice(&ct);
-        let mut mask = GenericArray::clone_from_slice(&pkt[pn_offset + 4..pn_offset + 20]);
-        Aes128::new(GenericArray::from_slice(&k.hp)).encrypt_block(&mut mask);
+        let mut mask = Block::try_from(&pkt[pn_offset + 4..pn_offset + 20]).unwrap();
+        Aes128::new(&k.hp.into()).encrypt_block(&mut mask);
         pkt[0] ^= mask[0] & 0x0f;
         for j in 0..4 {
             pkt[pn_offset + j] ^= mask[1 + j];

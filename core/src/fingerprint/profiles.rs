@@ -30,7 +30,7 @@
 
 use std::sync::OnceLock;
 
-use rand::Rng;
+use rand::RngExt;
 use rustls::crypto::CryptoProvider;
 use rustls::{CipherSuite, SignatureScheme};
 
@@ -78,7 +78,7 @@ impl Browser {
 }
 
 fn pick() -> Browser {
-    ALL[rand::thread_rng().gen_range(0..ALL.len())]
+    ALL[rand::rng().random_range(0..ALL.len())]
 }
 
 use CipherSuite as C;

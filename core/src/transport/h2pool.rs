@@ -26,7 +26,7 @@ use std::time::{Duration, Instant};
 use bytes::Bytes;
 use futures_util::future::BoxFuture;
 use h2::client::SendRequest;
-use rand::Rng;
+use rand::RngExt;
 use tokio::sync::OnceCell;
 
 use crate::error::{Error, Result};
@@ -267,7 +267,7 @@ where
             entries.push(e.clone());
             e
         } else {
-            candidates[rand::thread_rng().gen_range(0..candidates.len())].clone()
+            candidates[rand::rng().random_range(0..candidates.len())].clone()
         };
         dec_if_positive(&e.left_reuse);
         e.open.fetch_add(1, Ordering::Relaxed);
