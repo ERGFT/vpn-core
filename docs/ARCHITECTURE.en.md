@@ -80,7 +80,7 @@ The Cargo workspace:
 | `bin/fpcheck/` | `fpcheck` | captures the JA3/JA4 of the ClientHello the client actually sends |
 | `ffi/` | `reality-ffi` (`libreality`) | the core as a library: a C ABI for apps ([LIBRARY.en.md](LIBRARY.en.md)) |
 | `bench/` | `bench` | criterion benchmarks and `memwatch` (process memory under load, Linux) |
-| `vendor/rustls-reality-patch/` | patched `rustls` 0.23.45 | REALITY hook in the ClientHello, GREASE, Chrome extension order; wired in via `[patch.crates-io]` |
+| `vendor/rustls-reality-patch/` | patched `rustls` 0.23.45 | REALITY hook in the ClientHello, GREASE, Chrome extension order; wired in via `[patch.crates-io]`; scope and porting updates — [`RUSTLS_PATCH.en.md`](RUSTLS_PATCH.en.md) |
 | `interop/go-reality-server/` | Go | a REALITY test server on the XTLS/REALITY library |
 
 Inside `core/src/`:

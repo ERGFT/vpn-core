@@ -1,0 +1,1426 @@
+diff -ruN a/Cargo.toml b/Cargo.toml
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -232,3 +232,5 @@
+     "cfg(read_buf)",
+     "cfg(rustls_docsrs)",
+ ]
++
++[workspace]
+diff -ruN a/src/client/builder.rs b/src/client/builder.rs
+--- a/src/client/builder.rs
++++ b/src/client/builder.rs
+@@ -186,6 +186,8 @@
+             cert_decompressors: compress::default_cert_decompressors().to_vec(),
+             ech_mode: self.state.client_ech_mode,
+             send_ticket_request: None,
++            reality: None,
++            chrome_hello: None,
+         }
+     }
+ }
+diff -ruN a/src/client/client_conn.rs b/src/client/client_conn.rs
+--- a/src/client/client_conn.rs
++++ b/src/client/client_conn.rs
+@@ -132,6 +132,115 @@
+     fn has_certs(&self) -> bool;
+ }
+ 
++/// REALITY (см. Xray-core/XTLS): точка расширения, позволяющая внешнему
++/// крейту (в нашем случае — `reality-core`) взять под контроль два места
++/// в исходящем ClientHello, которые обычный rustls не даёт настроить —
++/// (а) X25519 key_share (тот же эфемерный секрет нужен дважды: для
++/// REALITY-аутентификации ниже и позже для настоящего TLS1.3 ECDH с
++/// сервером) и (б) содержимое поля `legacy_session_id`. Без установленного
++/// `ClientConfig::reality` ничего не меняется — обычный путь как раньше.
++///
++/// Это не универсальный API поверх rustls, а точечный хук под конкретный
++/// протокол: сознательно минимальная поверхность (3 метода), а не попытка
++/// сделать TLS-стек программируемым в целом.
++///
++/// # Обновление: гибридный X25519MLKEM768
++/// Текущие серверы Xray-core REALITY (26.9.8+) требуют, чтобы key_share
++/// в ClientHello был не голым X25519 (32 байта), а гибридной группой
++/// `X25519MLKEM768` (rustls уже знает этот codepoint нативно, `0x11ec`,
++/// см. `msgs::enums::NamedGroup`) — конкатенация ML-KEM-768
++/// encapsulation key (1184 байта) и X25519-ключа (32 байта) = 1216 байт
++/// (`draft-ietf-tls-ecdhe-mlkem-02` §4.1: для X25519MLKEM768 именно
++/// ML-KEM-часть идёт первой). Поэтому `client_public_key()` заменён на
++/// `client_hybrid_key_share()`, а `complete_real_ecdh` теперь получает
++/// ПОЛНЫЙ key_share сервера для этой группы (1120 байт: ML-KEM768
++/// ciphertext + X25519-ключ сервера), а не голые 32 байта.
++/// REALITY-аутентификация (AuthKey) этого не касается — она как была,
++/// так и осталась чистым X25519 ECDH с REALITY-сервером (см.
++/// `reality-core::reality::hook::RealityHook`); гибрид нужен только для
++/// НАСТОЯЩЕГО TLS1.3-рукопожатия, которое видит сервер.
++pub trait RealityClientHook: fmt::Debug + Send + Sync {
++    /// Гибридный key_share этого рукопожатия для группы
++    /// `NamedGroup::X25519MLKEM768`: ML-KEM-768 encapsulation key (1184
++    /// байта) || X25519 публичный ключ (32 байта) = 1216 байт.
++    fn client_hybrid_key_share(&self) -> Vec<u8>;
++
++    /// Запечатать SessionId AEAD'ом. `client_hello_random` — точные 32
++    /// байта поля `random`, которые реально уйдут в этом ClientHello.
++    /// `aad` — точные байты всего Handshake-сообщения ClientHello (тип +
++    /// длина(u24) + тело), в том виде, в котором оно уйдёт на сервер, но
++    /// с полем SessionId, временно обнулённым (32 нулевых байта) — той
++    /// самой позицией, куда затем встанет результат этой функции. Байт-в-
++    /// байт повторяет `aead.Seal(hello.SessionId[:0], hello.Random[20:],
++    /// hello.SessionId[:16], hello.Raw)` из `reality.go` в Xray-core.
++    fn seal_session_id(&self, client_hello_random: &[u8; 32], aad: &[u8]) -> [u8; 32];
++
++    /// Завершить НАСТОЯЩИЙ TLS1.3-обмен ключами с сервером из
++    /// ServerHello. `peer_key_share` — ПОЛНЫЙ key_share сервера для
++    /// группы X25519MLKEM768: ML-KEM-768 ciphertext (1088 байт) || X25519
++    /// публичный ключ сервера (32 байта) = 1120 байт. Реализация обязана
++    /// вернуть `mlkem_shared_secret(32) || ecdh_shared_secret(32)` = 64
++    /// байта, в этом порядке — именно так комбинирует секреты сам Go
++    /// (`crypto/tls`, `hybridKeyExchange.clientSharedSecret`, ветка
++    /// `X25519MLKEM768`), и именно этот порядок ожидает остальной TLS1.3
++    /// key schedule. X25519-часть использует тот же эфемерный секрет,
++    /// чья ML-KEM+X25519-пара была отдана в `client_hybrid_key_share()`
++    /// — поэтому не `x25519_dalek::EphemeralSecret` (запрещает повторное
++    /// использование), а `StaticSecret`.
++    fn complete_real_ecdh(&self, peer_key_share: &[u8]) -> Result<Vec<u8>, Error>;
++
++    /// Получен ServerHello: `raw` — всё Handshake-сообщение (тип + длина
++    /// + тело), как `ServerHello.Raw` в Go. Нужен клиенту REALITY для
++    /// проверки подписи ML-DSA-65 (она покрывает ClientHello и
++    /// ServerHello). По умолчанию ничего не делает.
++    fn server_hello_received(&self, _raw: &[u8]) {}
++
++    /// Сервер выбрал классическую группу X25519 вместо гибридной
++    /// (сайт-приманка без поддержки ML-KEM): завершить обычный X25519 ECDH
++    /// тем же эфемерным ключом, что лежит в X25519-части гибридной доли.
++    /// Должен вернуть 32-байтный общий секрет. По умолчанию — ошибка.
++    fn complete_x25519(&self, _peer_key_share: &[u8]) -> Result<Vec<u8>, Error> {
++        Err(Error::General("REALITY: сервер выбрал X25519, хук этого не умеет".into()))
++    }
++}
++
++/// reality-core: ClientHello, похожий на Chrome, — то, что не выражается
++/// обычными настройками rustls. `None` в [`ClientConfig::chrome_hello`] —
++/// поведение исходного rustls.
++#[derive(Clone, Debug, Default)]
++pub struct ChromeHello {
++    /// Что заявлять в `signature_algorithms` (проверка подписи сервера
++    /// по-прежнему идёт через верификатор и может принимать больше).
++    pub signature_schemes: Vec<SignatureScheme>,
++    /// Кодпоинты cipher suite'ов, которые дописываются в конец списка,
++    /// не будучи реализованными (сервер, выбравший такой, получит отказ).
++    pub extra_cipher_suites: Vec<u16>,
++    /// Заявлять TLS 1.2 в `supported_versions`, даже если конфиг только
++    /// TLS 1.3 (выбор 1.2 сервером всё равно будет отвергнут).
++    pub advertise_tls12: bool,
++    /// Пустое расширение `session_ticket`, если rustls сам его не шлёт.
++    pub session_ticket: bool,
++    /// `renegotiation_info` (пустое) вместо псевдо-suite'а SCSV.
++    pub renegotiation_info: bool,
++    /// Дополнительные расширения как есть: (тип, тело). Участвуют в
++    /// перемешивании порядка наравне с остальными.
++    pub raw_extensions: Vec<(u16, Vec<u8>)>,
++    /// reality-core (Фаза 7): без GREASE нигде (Firefox).
++    pub no_grease: bool,
++    /// supported_groups кодпоинтами, без GREASE (его патч ставит сам);
++    /// пусто — по провайдеру. Группы, которых провайдер не умеет, только
++    /// заявляются: сервер выбирает группу из присланных долей ключа.
++    pub named_groups: Vec<u16>,
++    /// Порядок расширений (типы); пусто — случайный на каждое соединение,
++    /// как у Chrome. Неперечисленные идут следом в случайном порядке;
++    /// ECH и PSK — всегда последними.
++    pub extension_order: Vec<u16>,
++    /// Не слать `psk_key_exchange_modes` (Firefox без возобновления).
++    pub no_psk_modes: bool,
++    /// Ещё одна доля ключа — P-256, настоящая (Firefox).
++    pub extra_p256_share: bool,
++}
++
+ /// Common configuration for (typically) all connections made by a program.
+ ///
+ /// Making one of these is cheap, though one of the inputs may be expensive: gathering trust roots
+@@ -294,6 +403,13 @@
+     ///
+     /// [RFC 9149]: https://datatracker.ietf.org/doc/html/rfc9149
+     pub send_ticket_request: Option<TicketRequest>,
++
++    /// REALITY-хук (см. [`RealityClientHook`]). `None` (по умолчанию) —
++    /// поведение полностью как в исходном rustls, ничего не меняется.
++    pub reality: Option<Arc<dyn RealityClientHook>>,
++
++    /// reality-core: ClientHello как у Chrome (см. [`ChromeHello`]).
++    pub chrome_hello: Option<ChromeHello>,
+ }
+ 
+ /// Desired session ticket counts for the RFC 9149 `ticket_request` extension.
+@@ -306,6 +422,18 @@
+ }
+ 
+ impl ClientConfig {
++    /// reality-core: включить ECH GREASE, не ограничивая конфиг TLS 1.3
++    /// (в отличие от `with_ech`): GREASE-расширение ничего не шифрует и
++    /// шлётся Chrome'ом при любом наборе версий.
++    pub fn set_ech_grease(&mut self, grease: crate::client::EchGreaseConfig) {
++        self.ech_mode = Some(EchMode::Grease(grease));
++    }
++
++    /// reality-core: без ECH (и без ECH GREASE).
++    pub fn clear_ech(&mut self) {
++        self.ech_mode = None;
++    }
++
+     /// Create a builder for a client configuration with
+     /// [the process-default `CryptoProvider`][CryptoProvider#using-the-per-process-default-cryptoprovider]
+     /// and safe protocol version defaults.
+diff -ruN a/src/client/common.rs b/src/client/common.rs
+--- a/src/client/common.rs
++++ b/src/client/common.rs
+@@ -6,7 +6,7 @@
+ use crate::msgs::enums::ExtensionType;
+ use crate::msgs::handshake::{CertificateChain, DistinguishedName, ProtocolName, ServerExtensions};
+ use crate::sync::Arc;
+-use crate::{CipherSuite, SignatureScheme, compress, sign};
++use crate::{compress, sign, CipherSuite, SignatureScheme};
+ 
+ #[derive(Debug)]
+ pub(super) struct ServerCertDetails<'a> {
+@@ -38,16 +38,79 @@
+     pub(super) alpn_protocols: Vec<ProtocolName>,
+     pub(super) sent_extensions: Vec<ExtensionType>,
+     pub(super) extension_order_seed: u16,
++    // reality-core (Этап 3): GREASE-значения (RFC 8701) этого соединения.
++    // Генерируются ровно один раз в `ClientHelloInput::new`, по той же
++    // причине, что и `extension_order_seed` строкой выше:
++    // HelloRetryRequest — это второй ClientHello ТОГО ЖЕ соединения, и
++    // GREASE-значения там должны быть те же, что и в первом (в
++    // BoringSSL/uTLS они тоже живут на соединении — `greaseSeed` в
++    // `u_conn.go`, — а не генерируются заново на каждый hello).
++    pub(super) grease: GreaseValues,
+     pub(super) offered_cert_compression: bool,
+     pub(super) offered_cipher_suites: Vec<CipherSuite>,
+ }
+ 
++/// reality-core (Этап 3): по одному GREASE-значению на каждое место в
++/// ClientHello, где его ставит Chrome (раскладка — как у BoringSSL,
++/// `ssl_grease_index_t`; сверено по `u_parrots.go` utls, профиль
++/// `HelloChrome_133`): cipher suite, группа (одна и та же в
++/// supported_groups и key_share), два пустых расширения (первое и
++/// последнее в списке) и версия в supported_versions. Разные места —
++/// независимые значения, а не одно на всё.
++#[derive(Clone, Copy, Debug)]
++pub(super) struct GreaseValues {
++    pub(super) cipher: u16,
++    pub(super) group: u16,
++    pub(super) extension1: u16,
++    pub(super) extension2: u16,
++    pub(super) version: u16,
++}
++
++impl GreaseValues {
++    pub(super) fn generate(
++        secure_random: &dyn crate::crypto::SecureRandom,
++    ) -> Result<Self, crate::rand::GetRandomFailed> {
++        let next = || crate::rand::random_u16(secure_random).map(grease_value);
++        let cipher = next()?;
++        let group = next()?;
++        let extension1 = next()?;
++        let mut extension2 = next()?;
++        // Два GREASE-расширения с одинаковым типом — это дубликат
++        // расширения, который сервер обязан отвергнуть (RFC 8446 §4.2).
++        // BoringSSL в этом случае делает `^= 0x1010` — результат остаётся
++        // GREASE-формы (0x?A?A), но гарантированно отличается.
++        if extension2 == extension1 {
++            extension2 ^= 0x1010;
++        }
++        let version = next()?;
++        Ok(Self {
++            cipher,
++            group,
++            extension1,
++            extension2,
++            version,
++        })
++    }
++}
++
++/// Случайные 16 бит → одно из 16 GREASE-значений вида `0x?A?A`
++/// (RFC 8701 §2: 0x0A0A, 0x1A1A, …, 0xFAFA).
++fn grease_value(raw: u16) -> u16 {
++    let nibble = raw & 0x0f;
++    (nibble << 12) | 0x0a00 | (nibble << 4) | 0x0a
++}
++
+ impl ClientHelloDetails {
+-    pub(super) fn new(alpn_protocols: Vec<ProtocolName>, extension_order_seed: u16) -> Self {
++    pub(super) fn new(
++        alpn_protocols: Vec<ProtocolName>,
++        extension_order_seed: u16,
++        grease: GreaseValues,
++    ) -> Self {
+         Self {
+             alpn_protocols,
+             sent_extensions: Vec::new(),
+             extension_order_seed,
++            grease,
+             offered_cert_compression: false,
+             offered_cipher_suites: Vec::new(),
+         }
+diff -ruN a/src/client/hs.rs b/src/client/hs.rs
+--- a/src/client/hs.rs
++++ b/src/client/hs.rs
+@@ -9,17 +9,16 @@
+ #[cfg(feature = "tls12")]
+ use super::tls12;
+ use super::{ResolvesClientCert, Tls12Resumption};
+-use crate::SupportedCipherSuite;
+ #[cfg(feature = "logging")]
+ use crate::bs_debug;
+ use crate::check::inappropriate_handshake_message;
+-use crate::client::client_conn::ClientConnectionData;
+-use crate::client::common::ClientHelloDetails;
++use crate::client::client_conn::{ClientConnectionData, RealityClientHook};
++use crate::client::common::{ClientHelloDetails, GreaseValues};
+ use crate::client::ech::EchState;
+-use crate::client::{ClientConfig, EchMode, EchStatus, tls13};
++use crate::client::{tls13, ClientConfig, EchMode, EchStatus};
+ use crate::common_state::{CommonState, HandshakeKind, KxState, State};
+ use crate::conn::ConnectionRandoms;
+-use crate::crypto::{ActiveKeyExchange, KeyExchangeAlgorithm};
++use crate::crypto::{ActiveKeyExchange, KeyExchangeAlgorithm, SharedSecret};
+ use crate::enums::{
+     AlertDescription, CertificateType, CipherSuite, ContentType, HandshakeType, ProtocolVersion,
+ };
+@@ -27,7 +26,8 @@
+ use crate::hash_hs::HandshakeHashBuffer;
+ use crate::log::{debug, trace};
+ use crate::msgs::base::Payload;
+-use crate::msgs::enums::{Compression, ExtensionType};
++use crate::msgs::codec::Codec;
++use crate::msgs::enums::{Compression, ExtensionType, NamedGroup};
+ use crate::msgs::handshake::{
+     CertificateStatusRequest, ClientExtensions, ClientExtensionsInput, ClientHelloPayload,
+     ClientSessionTicket, ClientTicketRequest, EncryptedClientHello, HandshakeMessagePayload,
+@@ -40,6 +40,7 @@
+ use crate::sync::Arc;
+ use crate::tls13::key_schedule::KeyScheduleEarly;
+ use crate::verify::ServerCertVerifier;
++use crate::SupportedCipherSuite;
+ 
+ pub(super) type NextState<'a> = Box<dyn State<ClientConnectionData> + 'a>;
+ pub(super) type NextStateOrError<'a> = Result<NextState<'a>, Error>;
+@@ -66,6 +67,131 @@
+     extra_exts: ClientExtensionsInput<'static>,
+ }
+ 
++/// Обёртка `Box<dyn ActiveKeyExchange>` вокруг `RealityClientHook`: наш
++/// единственный "настоящий" эфемерный секрет (гибрид X25519+ML-KEM-768)
++/// для этого рукопожатия и он же — key_share, который пойдёт в
++/// исходящий ClientHello. `complete()` вызывается rustls ровно один раз,
++/// когда придёт ServerHello с настоящим key_share сервера — это обычное
++/// завершение TLS1.3-обмена ключами, ничего не знает про
++/// REALITY-аутентификацию (та уже была посчитана раньше, в
++/// `emit_client_hello_for_retry`, через `seal_session_id`, с тем же
++/// секретом внутри хука).
++///
++/// Группа жёстко зашита в `X25519MLKEM768`: текущие серверы Xray-core
++/// REALITY (26.9.8+) требуют именно её — голый X25519 они принимают
++/// молча неверно (REALITY-аутентификация проваливается без явной
++/// ошибки), см. `PLAN.md`, Этап 5. `key_share_bytes` кэшируется один раз
++/// в `new()` (1216 байт: `hook.client_hybrid_key_share()` уже отдаёт их
++/// в нужном порядке — ML-KEM768 encapsulation key, затем X25519), чтобы
++/// `pub_key()` могло вернуть `&[u8]` без пересчёта на каждый вызов.
++struct RealityKeyExchange {
++    hook: Arc<dyn RealityClientHook>,
++    key_share_bytes: Vec<u8>,
++}
++
++impl RealityKeyExchange {
++    fn new(hook: Arc<dyn RealityClientHook>) -> Self {
++        let key_share_bytes = hook.client_hybrid_key_share();
++        Self {
++            hook,
++            key_share_bytes,
++        }
++    }
++}
++
++impl core::fmt::Debug for RealityKeyExchange {
++    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
++        f.debug_struct("RealityKeyExchange").finish_non_exhaustive()
++    }
++}
++
++impl ActiveKeyExchange for RealityKeyExchange {
++    fn complete(self: Box<Self>, peer_key_share: &[u8]) -> Result<SharedSecret, Error> {
++        // `peer_key_share` — полный key_share сервера для X25519MLKEM768
++        // (1120 байт: ML-KEM768 ciphertext + X25519-ключ сервера). Хук
++        // сам разбирает эти байты и комбинирует секреты в нужном порядке
++        // (mlkem || ecdh) — см. доку `RealityClientHook::complete_real_ecdh`
++        // и `reality-core::reality::hook::RealityHook`.
++        let shared = self.hook.complete_real_ecdh(peer_key_share)?;
++        // Буфер переходит в SharedSecret целиком (он стирает его при
++        // удалении) — без лишней копии секрета, которую никто не обнулит.
++        Ok(SharedSecret::from(shared))
++    }
++
++    fn pub_key(&self) -> &[u8] {
++        &self.key_share_bytes
++    }
++
++    fn group(&self) -> NamedGroup {
++        NamedGroup::X25519MLKEM768
++    }
++
++    // reality-core: X25519-часть гибридной доли уходит ещё и отдельной
++    // записью key_share (как у Chrome: `[GREASE, X25519MLKEM768, X25519]`).
++    // Нужно для сайтов-приманок без ML-KEM: они выбирают X25519, и без
++    // этой записи рукопожатие не складывалось вовсе (сервер REALITY
++    // отвечал "target sent incorrect server hello").
++    fn hybrid_component(&self) -> Option<(NamedGroup, &[u8])> {
++        let n = self.key_share_bytes.len();
++        (n >= 32).then(|| (NamedGroup::X25519, &self.key_share_bytes[n - 32..]))
++    }
++
++    fn complete_hybrid_component(
++        self: Box<Self>,
++        peer_pub_key: &[u8],
++    ) -> Result<SharedSecret, Error> {
++        let shared = self.hook.complete_x25519(peer_pub_key)?;
++        Ok(SharedSecret::from(shared))
++    }
++}
++
++/// reality-core (Фаза 7): основная доля ключа и ещё одна, независимая
++/// (у Firefox — P-256). Сервер выбирает одну из них; какую — решает
++/// `KeyExchangeChoice` (`tls13.rs`).
++struct WithExtraShare {
++    main: Box<dyn ActiveKeyExchange>,
++    extra: Box<dyn ActiveKeyExchange>,
++}
++
++impl core::fmt::Debug for WithExtraShare {
++    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
++        f.debug_struct("WithExtraShare").finish_non_exhaustive()
++    }
++}
++
++impl ActiveKeyExchange for WithExtraShare {
++    fn complete(self: Box<Self>, peer_pub_key: &[u8]) -> Result<SharedSecret, Error> {
++        self.main.complete(peer_pub_key)
++    }
++
++    fn pub_key(&self) -> &[u8] {
++        self.main.pub_key()
++    }
++
++    fn group(&self) -> NamedGroup {
++        self.main.group()
++    }
++
++    fn hybrid_component(&self) -> Option<(NamedGroup, &[u8])> {
++        self.main.hybrid_component()
++    }
++
++    fn complete_hybrid_component(
++        self: Box<Self>,
++        peer_pub_key: &[u8],
++    ) -> Result<SharedSecret, Error> {
++        self.main.complete_hybrid_component(peer_pub_key)
++    }
++
++    fn extra_share(&self) -> Option<(NamedGroup, &[u8])> {
++        Some((self.extra.group(), self.extra.pub_key()))
++    }
++
++    fn complete_extra(self: Box<Self>, peer_pub_key: &[u8]) -> Result<SharedSecret, Error> {
++        self.extra.complete(peer_pub_key)
++    }
++}
++
+ pub(super) struct ClientHelloInput {
+     pub(super) config: Arc<ClientConfig>,
+     pub(super) resuming: Option<persist::Retrieved<ClientSessionValue>>,
+@@ -119,12 +245,24 @@
+             None => SessionId::random(config.provider.secure_random)?,
+         };
+ 
++        // REALITY: игнорируем всё вышеперечисленное и всегда стартуем с
++        // 32 нулевых байт. Это ровно тот же плейсхолдер, что и в
++        // `reality.go` Xray-core (`hello.SessionId = make([]byte, 32)`,
++        // затем `copy(hello.Raw[39:], hello.SessionId)` ДО заполнения
++        // plaintext-полей) — по этим байтам в `emit_client_hello_for_retry`
++        // считается AAD, а затем это же поле перезаписывается результатом
++        // AEAD-печати (см. `RealityClientHook::seal_session_id`). Никакого
++        // резюмирования при активном REALITY нет и не должно быть.
++        let session_id = if config.reality.is_some() {
++            SessionId::from_bytes_public(&[0u8; 32])
++        } else {
++            session_id
++        };
++
+         let hello = ClientHelloDetails::new(
+-            extra_exts
+-                .protocols
+-                .clone()
+-                .unwrap_or_default(),
++            extra_exts.protocols.clone().unwrap_or_default(),
+             crate::rand::random_u16(config.provider.secure_random)?,
++            GreaseValues::generate(config.provider.secure_random)?,
+         );
+ 
+         Ok(Self {
+@@ -145,11 +283,7 @@
+         cx: &mut ClientContext<'_>,
+     ) -> NextStateOrError<'static> {
+         let mut transcript_buffer = HandshakeHashBuffer::new();
+-        if self
+-            .config
+-            .client_auth_cert_resolver
+-            .has_certs()
+-        {
++        if self.config.client_auth_cert_resolver.has_certs() {
+             transcript_buffer.set_client_auth_enabled();
+         }
+ 
+@@ -199,6 +333,41 @@
+     mut ech_state: Option<EchState>,
+ ) -> NextStateOrError<'static> {
+     let config = &input.config;
++
++    // REALITY: подменяем key_share на свой ТОЛЬКО для самого первого
++    // ClientHello (retryreq.is_none()) — HelloRetryRequest-ретраи с
++    // REALITY не поддерживаем (как и Xray-core: сервер-подделка выбран
++    // так, чтобы не слать HRR на X25519). Один и тот же эфемерный секрет
++    // используется дважды: сейчас, ниже, для AuthKey (ECDH с
++    // REALITY-сервером), и позже, при получении настоящего ServerHello —
++    // для обычного TLS1.3 ECDH (`RealityKeyExchange::complete`).
++    let key_share: Option<Box<dyn ActiveKeyExchange>> = match (&config.reality, retryreq) {
++        (Some(hook), None) => Some(Box::new(RealityKeyExchange::new(hook.clone()))),
++        _ => key_share,
++    };
++
++    // reality-core (Фаза 7): профиль браузера из `ChromeHello`.
++    let profile = config.chrome_hello.as_ref();
++    let no_grease = profile.is_some_and(|p| p.no_grease);
++    // Ещё одна настоящая доля ключа — P-256 (Firefox), только в первом
++    // ClientHello.
++    let key_share: Option<Box<dyn ActiveKeyExchange>> = match key_share {
++        Some(ks)
++            if retryreq.is_none()
++                && profile.is_some_and(|p| p.extra_p256_share)
++                && ks.group() != NamedGroup::secp256r1 =>
++        {
++            match config
++                .find_kx_group(NamedGroup::secp256r1, ProtocolVersion::TLSv1_3)
++                .map(|g| g.start())
++            {
++                Some(Ok(extra)) => Some(Box::new(WithExtraShare { main: ks, extra })),
++                _ => Some(ks),
++            }
++        }
++        ks => ks,
++    };
++
+     // Defense in depth: the ECH state should be None if ECH is disabled based on config
+     // builder semantics.
+     let forbids_tls12 = cx.common.is_quic() || ech_state.is_some();
+@@ -207,28 +376,104 @@
+         tls12: config.supports_version(ProtocolVersion::TLSv1_2, cx.common.protocol)
+             && !forbids_tls12,
+         tls13: config.supports_version(ProtocolVersion::TLSv1_3, cx.common.protocol),
++        grease: None,
+     };
+ 
+     // should be unreachable thanks to config builder
+     assert!(supported_versions.any(|_| true));
+ 
++    // reality-core (Этап 3): GREASE (RFC 8701) — значения этого соединения
++    // (`ClientHelloDetails::grease`, генерируются один раз в
++    // `ClientHelloInput::new`, так что второй ClientHello после
++    // HelloRetryRequest получает те же значения, что и первый — как у
++    // BoringSSL/Chrome). Раскладка по местам — как у Chrome 133 (сверено
++    // по `u_parrots.go` utls): cipher suite, группа (supported_groups и
++    // key_share — одно и то же значение), два пустых расширения, версия.
++    //
++    // Для REALITY-пути тоже (раньше было сознательно отложено — см.
++    // PLAN.md, Этап 3, "поправка" про REALITY и GREASE): по исходнику
++    // сервера (`XTLS/REALITY`, `tls.go`, цикл по `clientHello.keyShares`)
++    // неизвестная группа в key_share просто пропускается; настоящий
++    // TLS-сервер сайта-приманки, которому REALITY пересылает наш
++    // ClientHello, видит GREASE от каждого Chrome в мире; а собственный
++    // REALITY-клиент Xray-core по умолчанию — это utls с отпечатком
++    // `HelloChrome_Auto` (= `HelloChrome_133`), т.е. REALITY-серверы
++    // штатно получают ровно эти GREASE-значения. И наоборот: GREASE в
++    // cipher suites без GREASE в группах/расширениях — сочетание, которого
++    // нет ни у одного браузера, само по себе примета.
++    let grease = input.hello.grease;
++    let group_grease = NamedGroup::Unknown(grease.group);
++
+     let mut exts = Box::new(ClientExtensions {
+         // offer groups which are usable for any offered version
+-        named_groups: Some(
+-            config
++        //
++        // REALITY: список групп ОБЯЗАН совпадать с тем, что мы реально
++        // положим в key_share ниже — теперь это ВСЕГДА `X25519MLKEM768`
++        // (см. override `key_share` выше и `RealityKeyExchange::group()`
++        // в этом же файле): современные серверы Xray-core REALITY
++        // (26.9.8+) требуют именно эту гибридную группу, а не голый
++        // X25519 (см. PLAN.md, Этап 5). Если оставить полный список
++        // провайдера, сервер видит несоответствие своего предпочтения и
++        // законно шлёт HelloRetryRequest — а мы его не обрабатываем (см.
++        // соответствующий комментарий про session_id ниже), поймано
++        // именно так: тест `reality_handshake.rs` падал с
++        // `PeerMisbehaved(IllegalHelloRetryRequestWithWrongSessionId)`
++        // до аналогичного исправления для X25519.
++        //
++        // GREASE-группа первой в обоих случаях (как у Chrome) — сервер её
++        // не знает и в выборе группы не учитывает, так что на анти-HRR
++        // логику выше она не влияет: реальная группа по-прежнему одна.
++        //
++        // reality-core: теперь, как у Chrome, `[GREASE, X25519MLKEM768,
++        // X25519, secp256r1, secp384r1]`, а в key_share — гибрид и его
++        // X25519-часть отдельной записью (`hybrid_component` выше). Сервер
++        // выбирает группу из тех, для которых есть доля, так что HRR не
++        // возникает ни с PQ-сайтом, ни с обычным.
++        named_groups: Some(if let Some(list) = profile
++            .map(|p| &p.named_groups)
++            .filter(|l| !l.is_empty())
++        {
++            let mut groups: Vec<NamedGroup> = list.iter().map(|g| NamedGroup::from(*g)).collect();
++            if !no_grease {
++                groups.insert(0, group_grease);
++            }
++            groups
++        } else if matches!((&config.reality, retryreq), (Some(_), None)) {
++            let mut g = vec![
++                group_grease,
++                NamedGroup::X25519MLKEM768,
++                NamedGroup::X25519,
++                NamedGroup::secp256r1,
++                NamedGroup::secp384r1,
++            ];
++            if no_grease {
++                g.remove(0);
++            }
++            g
++        } else {
++            let mut groups: Vec<NamedGroup> = config
+                 .provider
+                 .kx_groups
+                 .iter()
+                 .filter(|skxg| supported_versions.any(|v| skxg.usable_for_version(v)))
+                 .map(|skxg| skxg.name())
+-                .collect(),
+-        ),
+-        supported_versions: Some(supported_versions),
+-        signature_schemes: Some(
+-            config
+-                .verifier
+-                .supported_verify_schemes(),
+-        ),
++                .collect();
++            // GREASE первым, как у настоящего Chrome (см. `group_grease`
++            // выше и `u_parrots.go`, HelloChrome_133:
++            // `SupportedCurvesExtension{[]CurveID{GREASE_PLACEHOLDER, ...}}`).
++            if !no_grease {
++                groups.insert(0, group_grease);
++            }
++            groups
++        }),
++        // GREASE-версия первой (как у Chrome: `[GREASE, 1.3, 1.2]`) —
++        // только в копии, уходящей в расширение; сама `supported_versions`
++        // ниже по функции используется для логики и GREASE не содержит.
++        supported_versions: Some(SupportedProtocolVersions {
++            grease: (!no_grease).then_some(grease.version),
++            ..supported_versions
++        }),
++        signature_schemes: Some(config.verifier.supported_verify_schemes()),
+         extended_master_secret_request: Some(()),
+         certificate_status_request: Some(CertificateStatusRequest::build_ocsp()),
+         protocols: extra_exts.protocols.clone(),
+@@ -299,16 +544,47 @@
+             // algorithm is also supported separately by our provider for this version
+             // (`find_kx_group` looks that up).
+             if let Some((component_group, component_share)) =
+-                key_share
+-                    .hybrid_component()
+-                    .filter(|(group, _)| {
+-                        config
+-                            .find_kx_group(*group, ProtocolVersion::TLSv1_3)
+-                            .is_some()
+-                    })
++                key_share.hybrid_component().filter(|(group, _)| {
++                    config
++                        .find_kx_group(*group, ProtocolVersion::TLSv1_3)
++                        .is_some()
++                })
+             {
+                 shares.push(KeyShareEntry::new(component_group, component_share));
+             }
++            // reality-core (Фаза 7): доля P-256 (Firefox).
++            if let Some((g, pk)) = key_share.extra_share() {
++                shares.push(KeyShareEntry::new(g, pk));
++            }
++        }
++
++        // GREASE key_share, тем же кодпоинтом, что и в named_groups выше
++        // (`group_grease`) — иначе сервер увидел бы в key_share группу,
++        // которой нет среди заявленных supported_groups, а это
++        // рассогласование, которого у настоящего Chrome не бывает.
++        // Полезная нагрузка — один нулевой байт, как у Chrome (см.
++        // `u_parrots.go`: `{Group: CurveID(GREASE_PLACEHOLDER), Data:
++        // []byte{0}}`); ключ реально не используется ни одной стороной,
++        // RFC 8701 требует от сервера проигнорировать всю запись
++        // целиком, увидев непонятную группу. `PayloadU16<NonEmpty>`
++        // внутри `KeyShareEntry` требует непустой payload — один байт
++        // это условие соблюдает.
++        //
++        // НО не после HelloRetryRequest, указавшего группу: RFC 8446
++        // §4.1.2 требует тогда key_share ровно из ОДНОЙ записи — для
++        // запрошенной группы (Go `crypto/tls`, а значит и REALITY-сервер,
++        // проверяет `len(keyShares) != 1` и рвёт соединение). Условие —
++        // то же, что у "бесплатной" второй записи выше. Поймано тестом
++        // `hello_retry_request_path_still_completes_with_grease`
++        // (`core/tests/fingerprint_grease_groups.rs`): первая версия этого
++        // патча слала `[GREASE, secp256r1]` во втором hello, и сервер
++        // rustls это молча терпел.
++        if !no_grease
++            && !retryreq
++                .map(|rr| rr.key_share.is_some())
++                .unwrap_or_default()
++        {
++            shares.insert(0, KeyShareEntry::new(group_grease, vec![0u8]));
+         }
+ 
+         exts.key_shares = Some(shares);
+@@ -318,7 +594,7 @@
+         exts.cookie = Some(cookie.clone());
+     }
+ 
+-    if supported_versions.tls13 {
++    if supported_versions.tls13 && !profile.is_some_and(|p| p.no_psk_modes) {
+         // We could support PSK_KE here too. Such connections don't
+         // have forward secrecy, and are similar to TLS1.2 resumption.
+         exts.preshared_key_modes = Some(PskKeyExchangeModes {
+@@ -348,17 +624,11 @@
+             false
+         };
+ 
+-    if config
+-        .client_auth_cert_resolver
+-        .only_raw_public_keys()
+-    {
++    if config.client_auth_cert_resolver.only_raw_public_keys() {
+         exts.client_certificate_types = Some(vec![CertificateType::RawPublicKey]);
+     }
+ 
+-    if config
+-        .verifier
+-        .requires_raw_public_keys()
+-    {
++    if config.verifier.requires_raw_public_keys() {
+         exts.server_certificate_types = Some(vec![CertificateType::RawPublicKey]);
+     }
+ 
+@@ -388,9 +658,60 @@
+         })
+         .collect();
+ 
+-    if supported_versions.tls12 {
+-        // We don't do renegotiation at all, in fact.
+-        cipher_suites.push(CipherSuite::TLS_EMPTY_RENEGOTIATION_INFO_SCSV);
++    // reality-core (Этап 3): GREASE (RFC 8701) cipher suite — первым в
++    // списке, как у настоящего Chrome (см.
++    // `core/src/fingerprint/chrome_profile.rs`). Любой TLS-совместимый
++    // сервер обязан молча игнорировать неизвестный cipher suite.
++    // `CipherSuite::Unknown(..)` — штатный вариант `enum_builder!` для
++    // непонятных кодпоинтов, не workaround. Значение — из
++    // `input.hello.grease` (одно на соединение, см. выше), раньше
++    // генерировалось заново на каждый hello.
++    if !no_grease {
++        cipher_suites.insert(0, CipherSuite::Unknown(grease.cipher));
++    }
++
++    // И два GREASE-расширения — первым и последним (перед PSK) в списке
++    // расширений, с телом `[]` и `[0]` соответственно, как у
++    // BoringSSL/Chrome (см. `ClientExtensions::grease_extensions`).
++    exts.grease_extensions = (!no_grease).then_some((grease.extension1, grease.extension2));
++    if let Some(p) = profile {
++        exts.fixed_order = p.extension_order.clone();
++    }
++
++    match &config.chrome_hello {
++        // reality-core: как Chrome — пустое расширение renegotiation_info
++        // (0xff01) вместо псевдо-suite'а SCSV (0x00ff); оба по RFC 5746
++        // означают одно и то же для первого рукопожатия.
++        Some(ch) if ch.renegotiation_info => {
++            exts.renegotiation_info = Some(crate::msgs::base::PayloadU8::empty());
++        }
++        _ => {
++            if supported_versions.tls12 {
++                // We don't do renegotiation at all, in fact.
++                cipher_suites.push(CipherSuite::TLS_EMPTY_RENEGOTIATION_INFO_SCSV);
++            }
++        }
++    }
++
++    // reality-core: остальное из профиля Chrome (см. `ChromeHello`).
++    if let Some(ch) = &config.chrome_hello {
++        cipher_suites.extend(
++            ch.extra_cipher_suites
++                .iter()
++                .map(|c| CipherSuite::from(*c)),
++        );
++        if !ch.signature_schemes.is_empty() {
++            exts.signature_schemes = Some(ch.signature_schemes.clone());
++        }
++        if ch.advertise_tls12 {
++            if let Some(v) = &mut exts.supported_versions {
++                v.tls12 = true;
++            }
++        }
++        if ch.session_ticket && exts.session_ticket.is_none() {
++            exts.session_ticket = Some(ClientSessionTicket::Request);
++        }
++        exts.raw_extensions = ch.raw_extensions.clone();
+     }
+ 
+     let mut chp_payload = ClientHelloPayload {
+@@ -402,17 +723,14 @@
+         extensions: exts,
+     };
+ 
+-    let ech_grease_ext = config
+-        .ech_mode
+-        .as_ref()
+-        .and_then(|mode| match mode {
+-            EchMode::Grease(cfg) => Some(cfg.grease_ext(
+-                config.provider.secure_random,
+-                input.server_name.clone(),
+-                &chp_payload,
+-            )),
+-            _ => None,
+-        });
++    let ech_grease_ext = config.ech_mode.as_ref().and_then(|mode| match mode {
++        EchMode::Grease(cfg) => Some(cfg.grease_ext(
++            config.provider.secure_random,
++            input.server_name.clone(),
++            &chp_payload,
++        )),
++        _ => None,
++    });
+ 
+     match (cx.data.ech_status, &mut ech_state) {
+         // If we haven't offered ECH, or have offered ECH but got a non-rejecting HRR, then
+@@ -422,9 +740,7 @@
+             chp_payload = ech_state.ech_hello(chp_payload, retryreq, &tls13_session)?;
+             cx.data.ech_status = EchStatus::Offered;
+             // Store the ECH extension in case we need to carry it forward in a subsequent hello.
+-            input.prev_ech_ext = chp_payload
+-                .encrypted_client_hello
+-                .clone();
++            input.prev_ech_ext = chp_payload.encrypted_client_hello.clone();
+         }
+         // If we haven't offered ECH, and have no ECH state, then consider whether to use GREASE
+         // ECH.
+@@ -442,8 +758,37 @@
+         _ => {}
+     }
+ 
++    // REALITY: досюда `chp_payload.session_id` — все ещё 32 нулевых
++    // байта, поставленные в `ClientHelloInput::new()`. Сериализуем ИМЕННО
++    // этот, финальный (после ECH-обработки выше) payload — с нулевым
++    // SessionId на его законном месте — это и есть AAD, байт-в-байт то
++    // же самое, что `hello.Raw` в Xray-core в момент вызова `aead.Seal`
++    // (см. `RealityClientHook::seal_session_id`). Затем подставляем
++    // результат в `chp_payload.session_id` — дальше он идёт в общий путь
++    // как обычный (для rustls) session id.
++    if let (Some(hook), None) = (&config.reality, retryreq) {
++        let aad = HandshakeMessagePayload(HandshakePayload::ClientHello(chp_payload.clone()))
++            .get_encoding();
++        let sealed = hook.seal_session_id(&input.random.0, &aad);
++        chp_payload.session_id = SessionId::from_bytes_public(&sealed);
++        // RFC 8446 §4.1.2: если случится HelloRetryRequest, второй
++        // ClientHello ОБЯЗАН повторить тот же legacy_session_id, что и
++        // первый. `chp_payload` — локальная переменная, пересобираемая
++        // с нуля на каждый вызов этой функции; `input.session_id` — то,
++        // что переживает между первым вызовом и повторным (на HRR).
++        // Без этой строки повтор ушёл бы с обнулённым плейсхолдером
++        // вместо реально отправленного значения.
++        input.session_id = chp_payload.session_id;
++    }
++
+     // Note what extensions we sent.
+     input.hello.sent_extensions = chp_payload.collect_used();
++    input.hello.sent_extensions.extend(
++        chp_payload
++            .raw_extensions
++            .iter()
++            .map(|(t, _)| ExtensionType::from(*t)),
++    );
+     input.hello.offered_cipher_suites = chp_payload.cipher_suites.clone();
+ 
+     let mut chp = HandshakeMessagePayload(HandshakePayload::ClientHello(chp_payload));
+@@ -656,9 +1001,7 @@
+ ) -> Result<Option<(ExtensionType, CertificateType)>, Error> {
+     process_cert_type_extension(
+         common,
+-        config
+-            .verifier
+-            .requires_raw_public_keys(),
++        config.verifier.requires_raw_public_keys(),
+         server_cert_extension.copied(),
+         ExtensionType::ServerCertificateType,
+     )
+@@ -671,9 +1014,7 @@
+ ) -> Result<Option<(ExtensionType, CertificateType)>, Error> {
+     process_cert_type_extension(
+         common,
+-        config
+-            .client_auth_cert_resolver
+-            .only_raw_public_keys(),
++        config.client_auth_cert_resolver.only_raw_public_keys(),
+         client_cert_extension.copied(),
+         ExtensionType::ClientCertificateType,
+     )
+@@ -688,6 +1029,12 @@
+     where
+         Self: 'm,
+     {
++        // reality-core: отдать хуку REALITY сырой ServerHello (для ML-DSA-65).
++        if let (Some(hook), MessagePayload::Handshake { encoded, .. }) =
++            (&self.input.config.reality, &m.payload)
++        {
++            hook.server_hello_received(encoded.bytes());
++        }
+         let server_hello =
+             require_handshake_msg!(m, HandshakeType::ServerHello, HandshakePayload::ServerHello)?;
+         trace!("We got ServerHello {server_hello:#?}");
+@@ -763,10 +1110,7 @@
+             process_alpn_protocol(
+                 cx.common,
+                 &self.input.hello.alpn_protocols,
+-                server_hello
+-                    .selected_protocol
+-                    .as_ref()
+-                    .map(|s| s.as_ref()),
++                server_hello.selected_protocol.as_ref().map(|s| s.as_ref()),
+                 self.input.config.check_selected_alpn,
+             )?;
+         }
+@@ -821,9 +1165,7 @@
+         }
+ 
+         // Start our handshake hash, and input the server-hello.
+-        let mut transcript = self
+-            .transcript_buffer
+-            .start_hash(suite.hash_provider());
++        let mut transcript = self.transcript_buffer.start_hash(suite.hash_provider());
+         transcript.add_message(&m);
+ 
+         let randoms = ConnectionRandoms::new(self.input.random, server_hello.random);
+@@ -894,7 +1236,11 @@
+                 })
+                 .map(|skxg| skxg.name());
+ 
+-            if req_group == offered_key_share.group() || Some(req_group) == offered_hybrid {
++            let offered_extra = offered_key_share.extra_share().map(|(g, _)| g);
++            if req_group == offered_key_share.group()
++                || Some(req_group) == offered_hybrid
++                || Some(req_group) == offered_extra
++            {
+                 return Err({
+                     cx.common.send_fatal_alert(
+                         AlertDescription::IllegalParameter,
+@@ -1004,10 +1350,7 @@
+         };
+ 
+         // This is the draft19 change where the transcript became a tree
+-        let transcript = self
+-            .next
+-            .transcript_buffer
+-            .start_hash(cs.hash_provider());
++        let transcript = self.next.transcript_buffer.start_hash(cs.hash_provider());
+         let mut transcript_buffer = transcript.into_hrr_buffer();
+         transcript_buffer.add_message(&m);
+ 
+@@ -1063,9 +1406,7 @@
+             MessagePayload::Handshake {
+                 parsed: HandshakeMessagePayload(HandshakePayload::ServerHello(..)),
+                 ..
+-            } => self
+-                .into_expect_server_hello()
+-                .handle(cx, m),
++            } => self.into_expect_server_hello().handle(cx, m),
+             MessagePayload::Handshake {
+                 parsed: HandshakeMessagePayload(HandshakePayload::HelloRetryRequest(..)),
+                 ..
+@@ -1156,9 +1497,7 @@
+ 
+         if let Some(resuming) = &found {
+             if cx.common.is_quic() {
+-                cx.common.quic.params = resuming
+-                    .tls13()
+-                    .map(|v| v.quic_params());
++                cx.common.quic.params = resuming.tls13().map(|v| v.quic_params());
+             }
+         }
+ 
+diff -ruN a/src/client/tls13.rs b/src/client/tls13.rs
+--- a/src/client/tls13.rs
++++ b/src/client/tls13.rs
+@@ -252,6 +252,8 @@
+ enum KeyExchangeChoice {
+     Whole(Box<dyn ActiveKeyExchange>),
+     Component(Box<dyn ActiveKeyExchange>),
++    /// reality-core (Фаза 7): сервер выбрал дополнительную долю.
++    Extra(Box<dyn ActiveKeyExchange>),
+ }
+ 
+ impl KeyExchangeChoice {
+@@ -267,6 +269,16 @@
+             return Ok(Self::Whole(our_key_share));
+         }
+ 
++        if let Some((extra_group, _)) = our_key_share.extra_share() {
++            if extra_group == their_key_share.group {
++                let actual_skxg = config
++                    .find_kx_group(extra_group, ProtocolVersion::TLSv1_3)
++                    .ok_or(())?;
++                cx.common.kx_state = KxState::Start(actual_skxg);
++                return Ok(Self::Extra(our_key_share));
++            }
++        }
++
+         let (component_group, _) = our_key_share
+             .hybrid_component()
+             .ok_or(())?;
+@@ -289,6 +301,7 @@
+         match self {
+             Self::Whole(akx) => akx.complete(peer_pub_key),
+             Self::Component(akx) => akx.complete_hybrid_component(peer_pub_key),
++            Self::Extra(akx) => akx.complete_extra(peer_pub_key),
+         }
+     }
+ }
+diff -ruN a/src/crypto/mod.rs b/src/crypto/mod.rs
+--- a/src/crypto/mod.rs
++++ b/src/crypto/mod.rs
+@@ -550,6 +550,18 @@
+         None
+     }
+ 
++    /// reality-core (Фаза 7): ещё одна независимая доля ключа (группа и
++    /// открытый ключ), которую клиент кладёт в ClientHello после основной
++    /// (у Firefox — P-256). `None` — нет.
++    fn extra_share(&self) -> Option<(NamedGroup, &[u8])> {
++        None
++    }
++
++    /// Завершить обмен по доле из [`Self::extra_share`] (сервер выбрал её).
++    fn complete_extra(self: Box<Self>, _peer_pub_key: &[u8]) -> Result<SharedSecret, Error> {
++        Err(Error::General("нет дополнительной доли ключа".into()))
++    }
++
+     /// Completes the classical component of the key exchange, given the peer's public key.
+     ///
+     /// This is only called if `hybrid_component` returns `Some(_)`.
+diff -ruN a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -594,8 +594,8 @@
+ 
+     pub use builder::WantsClientCert;
+     pub use client_conn::{
+-        ClientConfig, ClientConnectionData, ClientSessionStore, EarlyDataError, ResolvesClientCert,
+-        Resumption, TicketRequest, Tls12Resumption, UnbufferedClientConnection,
++        ClientConfig, ClientConnectionData, ClientSessionStore, EarlyDataError, RealityClientHook, ChromeHello,
++        ResolvesClientCert, Resumption, TicketRequest, Tls12Resumption, UnbufferedClientConnection,
+     };
+     #[cfg(feature = "std")]
+     pub use client_conn::{ClientConnection, WriteEarlyData};
+@@ -612,6 +612,14 @@
+     }
+ 
+     pub use crate::msgs::persist::{Tls12ClientSessionValue, Tls13ClientSessionValue};
++    // REALITY-PATCH: `SessionId` and `CertificateChain` were made `pub`
++    // (see msgs/handshake.rs) so `Tls12ClientSessionValue::new()` could
++    // become callable from outside the crate at all, but neither had a
++    // public re-export path yet — without one they're `pub` in name only
++    // (unreachable). Re-exported here, next to the type that actually
++    // needs them, rather than at the crate root, to keep this patch's
++    // footprint small and its intent obvious at the call site.
++    pub use crate::msgs::handshake::{CertificateChain, SessionId};
+     pub use crate::webpki::{
+         ServerCertVerifierBuilder, VerifierBuilderError, WebPkiServerVerifier,
+         verify_server_cert_signed_by_trust_anchor, verify_server_name,
+diff -ruN a/src/msgs/handshake.rs b/src/msgs/handshake.rs
+--- a/src/msgs/handshake.rs
++++ b/src/msgs/handshake.rs
+@@ -117,7 +117,7 @@
+ }
+ 
+ #[derive(Copy, Clone)]
+-pub(crate) struct SessionId {
++pub struct SessionId {
+     len: usize,
+     data: [u8; 32],
+ }
+@@ -167,6 +167,25 @@
+ }
+ 
+ impl SessionId {
++    /// REALITY-PATCH: construct a `SessionId` from caller-chosen bytes
++    /// (at most 32), instead of only `random()`/`empty()`. This is the
++    /// entire behavioral change this fork makes to rustls: it does not
++    /// alter what bytes end up on the wire for a fresh (non-resuming)
++    /// connection, it only lets an external `ClientSessionStore` impl
++    /// hand back a `Tls12ClientSessionValue` carrying an
++    /// application-chosen id, which `ClientHelloInput::new()` (unmodified
++    /// upstream logic) then copies into `legacy_session_id`. See
++    /// `reality-core`'s PLAN.md, Этап 5, for why this is needed.
++    pub fn from_bytes_public(data: &[u8]) -> Self {
++        assert!(data.len() <= 32, "SessionId::from_bytes_public: at most 32 bytes");
++        let mut buf = [0u8; 32];
++        buf[..data.len()].copy_from_slice(data);
++        Self {
++            data: buf,
++            len: data.len(),
++        }
++    }
++
+     pub(crate) fn random(secure_random: &dyn SecureRandom) -> Result<Self, rand::GetRandomFailed> {
+         let mut data = [0u8; 32];
+         secure_random.fill(&mut data)?;
+@@ -698,6 +717,10 @@
+ pub(crate) struct SupportedProtocolVersions {
+     pub(crate) tls13: bool,
+     pub(crate) tls12: bool,
++    /// reality-core (Этап 3): GREASE-версия (RFC 8701), кодируется первой
++    /// (как у Chrome). Только для отправки; при разборе всегда `None` —
++    /// неизвестные версии игнорируются, как и раньше.
++    pub(crate) grease: Option<u16>,
+ }
+ 
+ impl SupportedProtocolVersions {
+@@ -720,6 +743,9 @@
+ impl Codec<'_> for SupportedProtocolVersions {
+     fn encode(&self, bytes: &mut Vec<u8>) {
+         let inner = LengthPrefixedBuffer::new(Self::LIST_LENGTH, bytes);
++        if let Some(grease) = self.grease {
++            ProtocolVersion::Unknown(grease).encode(inner.buf);
++        }
+         if self.tls13 {
+             ProtocolVersion::TLSv1_3.encode(inner.buf);
+         }
+@@ -740,7 +766,11 @@
+             };
+         }
+ 
+-        Ok(Self { tls13, tls12 })
++        Ok(Self {
++            tls13,
++            tls12,
++            grease: None,
++        })
+     }
+ }
+ 
+@@ -978,6 +1008,30 @@
+ 
+         /// Extensions that must appear contiguously.
+         pub(crate) contiguous_extensions: Vec<ExtensionType>,
++
++        /// reality-core (Этап 3): типы двух GREASE-расширений (RFC 8701)
++        /// — первое кодируется самым первым в списке с пустым телом,
++        /// второе — последним (после ECH, но перед PSK, которое обязано
++        /// быть последним) с телом из одного нулевого байта; так делает
++        /// BoringSSL/Chrome (см. `UtlsGREASEExtension` в utls). Сознательно
++        /// НЕ через типизированный слот `extension_struct!` (макрос знает
++        /// только известные `ExtensionType`), а прямо в `encode` ниже:
++        /// длина списка всё равно считается `LengthPrefixedBuffer`'ом, так
++        /// что ни правки макроса, ни дописывания сырых байт с ручным
++        /// пересчётом длины не нужно. В `collect_used()`/`sent_extensions`
++        /// эти типы не попадают — сервер и не должен их "отвечать".
++        /// Только для отправки: при разборе всегда `None`.
++        pub(crate) grease_extensions: Option<(u16, u16)>,
++
++        /// reality-core: дополнительные расширения «как есть» (тип, тело)
++        /// — те, для которых у rustls нет типизированного слота (SCT,
++        /// ALPS). Перемешиваются вместе с остальными. Только для отправки.
++        pub(crate) raw_extensions: Vec<(u16, Vec<u8>)>,
++
++        /// reality-core (Фаза 7): порядок расширений (типы) вместо
++        /// случайного — у Firefox и Safari он фиксированный. Пусто —
++        /// случайный. Только для отправки.
++        pub(crate) fixed_order: Vec<u16>,
+     }
+ }
+ 
+@@ -1010,6 +1064,9 @@
+             encrypted_client_hello_outer,
+             order_seed,
+             contiguous_extensions,
++            grease_extensions,
++            raw_extensions,
++            fixed_order,
+         } = self;
+         ClientExtensions {
+             server_name: server_name.map(|x| x.into_owned()),
+@@ -1038,6 +1095,9 @@
+             encrypted_client_hello_outer,
+             order_seed,
+             contiguous_extensions,
++            grease_extensions,
++            raw_extensions,
++            fixed_order,
+         }
+     }
+ 
+@@ -1085,28 +1145,72 @@
+                     | ExtensionType::EncryptedClientHelloOuterExtensions
+             ) || self.contiguous_extensions.contains(ext))
+         });
++        order.extend(
++            self.raw_extensions
++                .iter()
++                .map(|(t, _)| ExtensionType::from(*t)),
++        );
+ 
+         order.sort_by_cached_key(|new_ext| {
+             let seed = ((self.order_seed as u32) << 16) | (u16::from(*new_ext) as u32);
+-            low_quality_integer_hash(seed)
++            // reality-core: заданный порядок — первым ключом; не
++            // перечисленные — после, в случайном порядке.
++            let pos = self
++                .fixed_order
++                .iter()
++                .position(|t| *t == u16::from(*new_ext))
++                .unwrap_or(usize::MAX);
++            (pos, low_quality_integer_hash(seed))
+         });
+ 
+         order
+     }
+ }
+ 
++impl ClientExtensions<'_> {
++    fn encode_last_grease_extension(&self, out: &mut Vec<u8>) {
++        if let Some((_, last)) = self.grease_extensions {
++            ExtensionType::Unknown(last).encode(out);
++            1u16.encode(out); // длина тела
++            0u8.encode(out); // тело: один нулевой байт
++        }
++    }
++}
++
+ impl<'a> Codec<'a> for ClientExtensions<'a> {
+     fn encode(&self, bytes: &mut Vec<u8>) {
+         let order = self.used_extensions_in_encoding_order();
+ 
+-        if order.is_empty() {
++        if order.is_empty() && self.grease_extensions.is_none() {
+             return;
+         }
+ 
+         let body = LengthPrefixedBuffer::new(ListLength::U16, bytes);
++        if let Some((first, _)) = self.grease_extensions {
++            ExtensionType::Unknown(first).encode(body.buf);
++            0u16.encode(body.buf); // пустое тело
++        }
+         for item in order {
++            // Второе GREASE-расширение — последним, но строго перед PSK
++            // (RFC 8446 §4.2.11: pre_shared_key обязано быть последним).
++            if item == ExtensionType::PreSharedKey {
++                self.encode_last_grease_extension(body.buf);
++            }
++            if let Some((t, v)) = self
++                .raw_extensions
++                .iter()
++                .find(|(t, _)| ExtensionType::from(*t) == item)
++            {
++                t.encode(body.buf);
++                (v.len() as u16).encode(body.buf);
++                body.buf.extend_from_slice(v);
++                continue;
++            }
+             self.encode_one(item, body.buf);
+         }
++        if self.preshared_key_offer.is_none() {
++            self.encode_last_grease_extension(body.buf);
++        }
+     }
+ 
+     fn read(r: &mut Reader<'a>) -> Result<Self, InvalidMessage> {
+@@ -1680,9 +1784,19 @@
+ }
+ 
+ #[derive(Clone, Default, Debug)]
+-pub(crate) struct CertificateChain<'a>(pub(crate) Vec<CertificateDer<'a>>);
++pub struct CertificateChain<'a>(pub(crate) Vec<CertificateDer<'a>>);
+ 
+ impl CertificateChain<'_> {
++    /// REALITY-PATCH: third and last visibility change needed alongside
++    /// `SessionId::from_bytes_public` and `Tls12ClientSessionValue::new`
++    /// (see those for why) — a dummy `Tls12ClientSessionValue` with an
++    /// empty ticket never has its `server_cert_chain` read (checked
++    /// against this exact rustls version's `client/hs.rs`), so an empty
++    /// chain is a safe, meaningless placeholder here, not real cert data.
++    pub fn empty() -> Self {
++        Self(Vec::new())
++    }
++
+     pub(crate) fn into_owned(self) -> CertificateChain<'static> {
+         CertificateChain(
+             self.0
+diff -ruN a/src/msgs/persist.rs b/src/msgs/persist.rs
+--- a/src/msgs/persist.rs
++++ b/src/msgs/persist.rs
+@@ -163,7 +163,11 @@
+ 
+ #[cfg(feature = "tls12")]
+ impl Tls12ClientSessionValue {
+-    pub(crate) fn new(
++    /// REALITY-PATCH: was `pub(crate)`. Made public together with
++    /// `SessionId::from_bytes_public` — see the comment there. The rest of
++    /// the patch (including `client/hs.rs`) is listed in
++    /// docs/RUSTLS_PATCH.md and vendor/rustls-reality-patch.diff.
++    pub fn new(
+         suite: &'static Tls12CipherSuite,
+         session_id: SessionId,
+         ticket: Arc<PayloadU16>,
+diff -ruN a/src/server/hs.rs b/src/server/hs.rs
+--- a/src/server/hs.rs
++++ b/src/server/hs.rs
+@@ -438,6 +438,16 @@
+                 cipher_suites: &client_hello.cipher_suites,
+                 certificate_authorities,
+                 named_groups: client_hello.named_groups.as_deref(),
++                // REALITY (`reality-core`): см. докстринг полей в
++                // server_conn.rs. `client_hello.random`/`.key_shares`
++                // (через Deref на `ClientExtensions`) уже разобраны из
++                // проводных байт на этом этапе — просто открываем их
++                // резолверу сертификата, ничего заново не парсим.
++                client_random: &client_hello.random.0,
++                client_key_share_x25519: client_hello
++                    .key_shares
++                    .as_deref()
++                    .and_then(super::server_conn::extract_client_x25519),
+             };
+             trace!("Resolving server certificate: {client_hello:#?}");
+ 
+diff -ruN a/src/server/server_conn.rs b/src/server/server_conn.rs
+--- a/src/server/server_conn.rs
++++ b/src/server/server_conn.rs
+@@ -25,7 +25,7 @@
+ use crate::kernel::KernelConnection;
+ use crate::log::trace;
+ use crate::msgs::base::Payload;
+-use crate::msgs::handshake::{ClientHelloPayload, ProtocolName, ServerExtensionsInput};
++use crate::msgs::handshake::{ClientHelloPayload, KeyShareEntry, ProtocolName, ServerExtensionsInput};
+ use crate::msgs::message::Message;
+ use crate::suites::ExtractedSecrets;
+ use crate::sync::Arc;
+@@ -148,6 +148,55 @@
+     /// [certificate_authorities]: https://datatracker.ietf.org/doc/html/rfc8446#section-4.2.4
+     pub(super) certificate_authorities: Option<&'a [DistinguishedName]>,
+     pub(super) named_groups: Option<&'a [NamedGroup]>,
++    /// REALITY (`reality-core`): необработанные 32 байта поля
++    /// `ClientHello.random`, ещё до этого недоступные `ResolvesServerCert`.
++    /// Нужен серверу REALITY для той же роли, что и на клиенте (см.
++    /// `client/hs.rs` в этом же патче): HKDF-соль (`random[..20]`) и
++    /// nonce AES-GCM (`random[20..32]`) при выводе AuthKey — без этого
++    /// сервер не может проверить/расшифровать SessionId клиента заново.
++    /// Не влияет на поведение любого существующего `ResolvesServerCert`,
++    /// который это поле не читает.
++    pub(super) client_random: &'a [u8; 32],
++    /// REALITY (`reality-core`): X25519-часть `key_share`-расширения
++    /// клиента, если клиент его предложил. С переходом клиента на
++    /// гибридную группу `X25519MLKEM768` (см. PLAN.md, Этап 5 —
++    /// современные серверы Xray-core REALITY требуют именно её)
++    /// `named_groups` при активном REALITY сужен до неё, а не до голого
++    /// X25519 (`client/hs.rs`); X25519-компонент теперь достаётся ИЗ
++    /// этого гибридного key_share (последние 32 байта из 1216, ML-KEM768
++    /// encapsulation key — первые 1184, см. [`extract_client_x25519`]) —
++    /// AuthKey REALITY как считался чистым X25519 ECDH, так и считается,
++    /// ML-KEM-часть для него не нужна. Голый X25519 (`NamedGroup::X25519`)
++    /// остаётся резервным путём для прочих тестов вне REALITY. `None`,
++    /// если клиент не предложил ни того, ни другого — тогда REALITY на
++    /// этом соединении невозможен в принципе, это сигнал резолверу, а не
++    /// ошибка сама по себе.
++    pub(super) client_key_share_x25519: Option<[u8; 32]>,
++}
++
++/// REALITY (`reality-core`): достать X25519-компонент из key_share
++/// клиента — либо из голого `NamedGroup::X25519` (32 байта целиком),
++/// либо, в приоритете, из гибридного `NamedGroup::X25519MLKEM768`
++/// (последние 32 байта из 1216: `[ML-KEM768 encapsulation key(1184) ||
++/// X25519(32)]`, порядок подтверждён и по `draft-ietf-tls-ecdhe-mlkem-02`
++/// §4.1, и по этой же кодовой базе — см. `crypto/aws_lc_rs/pq/mod.rs`,
++/// `Layout { post_quantum_first: true, .. }` для этой группы). Делит
++/// логику между `Accepted::client_hello()` (путь `Acceptor`) и
++/// `with_certified_key` (обычный путь) — раньше не было причины её
++/// разделять, при переходе на гибрид разделять её было бы лишним
++/// дублированием одного и того же среза.
++pub(super) fn extract_client_x25519(shares: &[KeyShareEntry]) -> Option<[u8; 32]> {
++    shares
++        .iter()
++        .find(|s| s.group == NamedGroup::X25519MLKEM768)
++        .and_then(|s| s.payload.0.get(1184..))
++        .and_then(|tail| <[u8; 32]>::try_from(tail).ok())
++        .or_else(|| {
++            shares
++                .iter()
++                .find(|s| s.group == NamedGroup::X25519)
++                .and_then(|s| <[u8; 32]>::try_from(s.payload.0.as_slice()).ok())
++        })
+ }
+ 
+ impl<'a> ClientHello<'a> {
+@@ -240,6 +289,19 @@
+     pub fn named_groups(&self) -> Option<&'a [NamedGroup]> {
+         self.named_groups
+     }
++
++    /// REALITY (`reality-core`): полные 32 байта `ClientHello.random`.
++    /// См. поле `client_random` за обоснованием, зачем это вообще нужно
++    /// резолверу сертификата.
++    pub fn client_random(&self) -> &'a [u8; 32] {
++        self.client_random
++    }
++
++    /// REALITY (`reality-core`): X25519-`key_share` клиента, если он его
++    /// предложил. См. поле `client_key_share_x25519`.
++    pub fn client_key_share_x25519(&self) -> Option<[u8; 32]> {
++        self.client_key_share_x25519
++    }
+ }
+ 
+ /// Common configuration for a set of server sessions.
+@@ -1045,6 +1107,15 @@
+                 .certificate_authority_names
+                 .as_deref(),
+             named_groups: payload.named_groups.as_deref(),
++            // REALITY (`reality-core`): см. докстринг полей выше — тот
++            // же приём, что и в `server/hs.rs::with_certified_key`, для
++            // пути через `Acceptor`/`Accepted` (используется теми, кто
++            // делает async-выбор сертификата, см. `UnbufferedServerConnection`).
++            client_random: &payload.random.0,
++            client_key_share_x25519: payload
++                .key_shares
++                .as_deref()
++                .and_then(extract_client_x25519),
+         };
+ 
+         trace!("Accepted::client_hello(): {ch:#?}");
+diff -ruN a/src/server/test.rs b/src/server/test.rs
+--- a/src/server/test.rs
++++ b/src/server/test.rs
+@@ -484,6 +484,7 @@
+             supported_versions: Some(SupportedProtocolVersions {
+                 tls12: true,
+                 tls13: true,
++                grease: None,
+             }),
+             key_shares: Some(vec![KeyShareEntry {
+                 group: NamedGroup::X25519,

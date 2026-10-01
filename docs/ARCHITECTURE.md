@@ -78,7 +78,7 @@ httpupgrade, xhttp), напрямую или никуда. Сам графиче
 | `bin/fpcheck/` | `fpcheck` | снимает JA3/JA4 того ClientHello, что клиент реально отправляет |
 | `ffi/` | `reality-ffi` (`libreality`) | ядро как библиотека: C ABI для приложений ([LIBRARY.md](LIBRARY.md)) |
 | `bench/` | `bench` | criterion-замеры и `memwatch` (память процесса под нагрузкой, Linux) |
-| `vendor/rustls-reality-patch/` | `rustls` 0.23.45 с патчем | хук REALITY в ClientHello, GREASE, порядок расширений Chrome; подключается через `[patch.crates-io]` |
+| `vendor/rustls-reality-patch/` | `rustls` 0.23.45 с патчем | хук REALITY в ClientHello, GREASE, порядок расширений Chrome; подключается через `[patch.crates-io]`; объём и перенос обновлений — [`RUSTLS_PATCH.md`](RUSTLS_PATCH.md) |
 | `interop/go-reality-server/` | Go | тестовый REALITY-сервер на библиотеке XTLS/REALITY |
 
 Внутри `core/src/`:
