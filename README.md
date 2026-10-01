@@ -67,7 +67,7 @@
 
 ## Сборка
 
-Нужен Rust 1.88 или новее (stable). На Linux:
+Нужен Rust 1.89 или новее (stable). На Linux:
 
 ```sh
 cargo build --release -p reality-client

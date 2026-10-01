@@ -90,7 +90,7 @@
   brotli-decompressor 6, criterion 0.8 (бенчмарки).
 - Криптография — новое поколение RustCrypto: sha2/md-5 0.11, hkdf/hmac
   0.13, aes-gcm 0.11, x25519-dalek 3, rand 0.10; проверено интероп-тестами
-  против Xray-core.
+  против Xray-core. Минимальная версия Rust — 1.89 (её требует aes 0.9).
 
 [Не выпущено]: https://github.com/ERGFT/vpn-core/commits/main
 
@@ -189,6 +189,7 @@ It will include:
   brotli-decompressor 6, criterion 0.8 (benchmarks).
 - Cryptography moved to the new RustCrypto generation: sha2/md-5 0.11,
   hkdf/hmac 0.13, aes-gcm 0.11, x25519-dalek 3, rand 0.10; checked by
-  interop tests against Xray-core.
+  interop tests against Xray-core. Minimum Rust version is now 1.89 (aes 0.9
+  requires it).
 
 [Unreleased]: https://github.com/ERGFT/vpn-core/commits/main
