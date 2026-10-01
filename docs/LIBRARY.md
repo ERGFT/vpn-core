@@ -30,8 +30,11 @@ cargo ndk -t arm64-v8a -t armeabi-v7a -t x86_64 -o app/src/main/jniLibs \
     build --release -p reality-ffi
 ```
 
-Под iOS — `cargo build --release -p reality-ffi --target aarch64-apple-ios`
-(статическая `libreality.a` в XCFramework).
+Под iOS — `IPHONEOS_DEPLOYMENT_TARGET=13.0 cargo build --release -p
+reality-ffi --target aarch64-apple-ios` (статическая `libreality.a` в
+XCFramework). Минимальная версия iOS нужна одна для Rust и для C-кода
+aws-lc: без неё aws-lc собирается под iOS из SDK, а Rust линкует под
+10.0 — ошибка `___chkstk_darwin`.
 
 ## Жизненный цикл
 

@@ -119,8 +119,12 @@ jobs:
       - name: libreality под Android (NDK раннера)
         if: contains(matrix.target, 'android')
         run: cargo ndk -t arm64-v8a build --locked --release -p reality-ffi
+      # Одна минимальная iOS для Rust и для C-кода aws-lc (иначе он
+      # собирается под iOS из SDK и не линкуется: ___chkstk_darwin).
       - name: libreality под iOS
         if: contains(matrix.target, 'ios')
+        env:
+          IPHONEOS_DEPLOYMENT_TARGET: "13.0"
         run: cargo build --locked --release -p reality-ffi --target ${{ matrix.target }}
 
   secrets:
