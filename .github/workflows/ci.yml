@@ -5,6 +5,10 @@
 #           с sing-box, эталон отпечатка Chrome; отдельно — TUN в netns (root).
 # windows — на настоящей Windows (не Wine): тесты, сборка .exe, служба и
 #           TUN (Wintun, маршруты) с настоящим трафиком.
+# msrv    — сборка на минимальной версии Rust (rust-version в Cargo.toml).
+# coverage — покрытие тестами (cargo llvm-cov; отчёт lcov — артефакт).
+# mobile  — сборка библиотеки (ffi) под Android и iOS; необязательная:
+#           её падение не красит CI.
 # secrets — gitleaks по всей истории git (ложные срабатывания —
 #           .gitleaksignore).
 # audit   — уязвимости и источники зависимостей (cargo deny, cargo audit)
@@ -49,6 +53,75 @@ jobs:
       # Cargo.lock) — его версия сверяется с RustSec отдельно.
       - name: патченный rustls против RustSec
         run: bash scripts/rustls_advisories.sh
+
+  msrv:
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+        with:
+          toolchain: "1.88" # = rust-version в Cargo.toml
+      - run: cargo check --locked --workspace --all-targets
+
+  coverage:
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+        with:
+          toolchain: stable
+          components: llvm-tools-preview
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      - uses: taiki-e/install-action@83ac0ad63c0167e6f06796fab0fce28db1bf3db0 # v2
+        with:
+          tool: cargo-llvm-cov
+      # Порога пока нет — его ставят после первых замеров.
+      - run: cargo llvm-cov --locked --workspace --lcov --output-path lcov.info
+      - run: cargo llvm-cov report --summary-only
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: coverage-lcov
+          path: lcov.info
+
+  mobile:
+    if: github.event_name != 'schedule'
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: aarch64-linux-android
+          - os: macos-latest
+            target: aarch64-apple-ios
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+        with:
+          toolchain: stable
+          targets: ${{ matrix.target }}
+      - uses: taiki-e/install-action@83ac0ad63c0167e6f06796fab0fce28db1bf3db0 # v2
+        if: contains(matrix.target, 'android')
+        with:
+          tool: cargo-ndk
+      - name: libreality под Android (NDK раннера)
+        if: contains(matrix.target, 'android')
+        run: cargo ndk -t arm64-v8a build --locked --release -p reality-ffi
+      - name: libreality под iOS
+        if: contains(matrix.target, 'ios')
+        run: cargo build --locked --release -p reality-ffi --target ${{ matrix.target }}
 
   secrets:
     if: github.event_name != 'schedule'
