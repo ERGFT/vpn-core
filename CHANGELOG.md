@@ -60,6 +60,21 @@
   закреплены на коммитах.
 - Патч rustls описан честно: `vendor/rustls-reality-patch.diff` и
   `docs/RUSTLS_PATCH.md` с порядком переноса обновлений.
+- API: подбор токена блокирует адрес (5 неверных; IPv6 — по подсети
+  /64; 127.0.0.1 — никогда); `?token=` для WebSocket по умолчанию только
+  при API на loopback, в сеть — с `clash_api.allow_query_token`.
+- `direct`: клиентам из сети закрыты и link-local адреса (облачный
+  metadata 169.254.169.254, fe80::/10), отказ — до подключения.
+- Windows: блокировка `auto_route` — в папке службы
+  `%ProgramData%\RealityClient` (права только у SYSTEM и
+  администраторов), а не в общем `%ProgramData%`; в режиме библиотеки —
+  `rc_set_lock_dir`.
+- Настройки, кеш подписок и fake-IP пишутся сразу с правами 0600, без
+  перехода по подложенным ссылкам; `.srs` — не больше 2 млн подсетей и
+  32 МиБ после распаковки; внешние команды (`ip`, `netsh`) — по
+  абсолютным путям; сервер или пароль в командной строке — предупреждение.
+- Паника больше не роняет приложение-хост в режиме библиотеки
+  (`panic = "unwind"`); `libreality` собирается под Android и iOS.
 
 ### Проект
 - Лицензия GPL-3.0-or-later (раньше — MIT); SPDX-метки в исходниках;
@@ -139,6 +154,21 @@ It will include:
   actions are pinned to commits.
 - The rustls patch is described honestly: `vendor/rustls-reality-patch.diff`
   and `docs/RUSTLS_PATCH.en.md` with the procedure for porting updates.
+- API: token guessing blocks the address (5 wrong tokens; IPv6 — per /64;
+  127.0.0.1 — never); `?token=` for WebSocket only for an API on loopback
+  by default, on the network — with `clash_api.allow_query_token`.
+- `direct`: link-local addresses (cloud metadata 169.254.169.254,
+  fe80::/10) are closed to network clients too, refused before connecting.
+- Windows: the `auto_route` lock lives in the service folder
+  `%ProgramData%\RealityClient` (writable only by SYSTEM and
+  administrators), not in the shared `%ProgramData%`; in library mode —
+  `rc_set_lock_dir`.
+- The config, subscription cache and fake-IP table are written with 0600
+  from the start, without following planted links; `.srs` — at most 2
+  million subnets and 32 MiB unpacked; external commands (`ip`, `netsh`) —
+  by absolute paths; a server or password on the command line — a warning.
+- A panic no longer brings down the host app in library mode
+  (`panic = "unwind"`); `libreality` builds for Android and iOS.
 
 ### Project
 - License GPL-3.0-or-later (previously MIT); SPDX headers in sources;
