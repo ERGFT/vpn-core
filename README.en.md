@@ -407,8 +407,9 @@ curl -H "$T" -X PUT --data-binary @new.json http://127.0.0.1:9090/config        
   restart, e.g. the API address or the TUN inbound).
 - Files in such a config (`link_file`, `rule_set`, databases,
   certificates…) must come from the config folder, as a relative path
-  without `..`: otherwise anyone with the token could make the client (the
-  Windows service — as SYSTEM) read any file on the computer.
+  without `..` and not through a symlink leading outside (the file's real
+  location is checked): otherwise anyone with the token could make the
+  client (the Windows service — as SYSTEM) read any file on the computer.
 - `GET /config` returns the whole file — including UUIDs and passwords, like
   the rest of the API: the token gives full control of the client.
 - Works only if the client was started with a config file (`--config`).
@@ -510,6 +511,12 @@ DNS is hijacked by an `inboundTag` rule → a `dns` outbound.
   the kill switch turns on, the system is still "identifying" the TUN
   interface and its DNS queries may fail; after a few seconds names
   resolve through the tunnel.
+- `auto_route` is held by one instance per computer (on Linux — per
+  network namespace): the routing table, rules and WFP filters are shared.
+  A second instance with `auto_route` will not start ("auto_route уже
+  держит другой запущенный экземпляр" — already held by another running
+  instance), and `--tun-cleanup` touches nothing while one is running and
+  exits with an error.
 - A system DNS server (`"type": "local"`) together with TUN is a config
   error: system DNS itself goes through TUN (a loop).
 - Limitations: ICMP (ping) does not pass through TUN; on Windows

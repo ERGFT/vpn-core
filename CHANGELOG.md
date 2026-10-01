@@ -48,6 +48,19 @@
 - Против DPI: `fragment`, `noises`.
 - Windows: системный прокси, служба, автозапуск при входе; Linux: systemd.
 
+### Безопасность
+- `auto_route` — один владелец на компьютер: второй экземпляр и
+  `--tun-cleanup` больше не снимают маршруты и kill switch работающего.
+- Токен API сравнивается с проверкой длины (раньше токен длиннее на
+  256·k байт с правильным началом проходил).
+- Пути в настройках через API проверяются и после разрешения
+  символических ссылок, включая кеш подписки по умолчанию.
+- Общий секрет TLS не оставляет незатёртой копии в памяти.
+- Выпуск: сборка без права записи, публикация — отдельным шагом; actions
+  закреплены на коммитах.
+- Патч rustls описан честно: `vendor/rustls-reality-patch.diff` и
+  `docs/RUSTLS_PATCH.md` с порядком переноса обновлений.
+
 ### Проект
 - Лицензия GPL-3.0-or-later (раньше — MIT); SPDX-метки в исходниках;
   лицензии зависимостей в каждом релизе.
@@ -112,6 +125,20 @@ It will include:
   key. The own TOML format has been removed.
 - Anti-DPI: `fragment`, `noises`.
 - Windows: system proxy, service, autostart at logon; Linux: systemd.
+
+### Security
+- `auto_route` has one owner per computer: a second instance and
+  `--tun-cleanup` no longer remove the routes and kill switch of a running
+  one.
+- The API token is compared with a length check (a token 256·k bytes
+  longer with the right prefix used to pass).
+- Paths in a config sent through the API are also checked after resolving
+  symlinks, including the default subscription cache.
+- The TLS shared secret leaves no unwiped copy in memory.
+- Release: the build has no write access, publishing is a separate step;
+  actions are pinned to commits.
+- The rustls patch is described honestly: `vendor/rustls-reality-patch.diff`
+  and `docs/RUSTLS_PATCH.en.md` with the procedure for porting updates.
 
 ### Project
 - License GPL-3.0-or-later (previously MIT); SPDX headers in sources;

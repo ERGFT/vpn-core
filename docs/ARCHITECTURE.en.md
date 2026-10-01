@@ -252,7 +252,12 @@ SIGHUP, `PUT /config` (a new config as text), or directly
    (`Config::for_each_path`) must be relative without `..`
    (`check_paths_confined`). Otherwise a token holder could make the client
    (the Windows service, running as SYSTEM) read other files.
-2. `Config::parse_at` resolves the paths against the config file's folder.
+2. `Config::parse_at` resolves the paths against the config file's folder
+   and fills in default paths (the subscription cache —
+   `<tag>.subscription`). Then `check_paths_inside`: the canonical path of
+   every file (for one not created yet — of the nearest existing folder
+   above it) must lie inside the canonical config folder, so neither a
+   symlink leading outside nor a subscription tag with `..` gets through.
 3. With `?check=1`, only `App::build` runs.
 4. Otherwise the config is applied with `reload`.
 5. With `save`, the text is written atomically (`save_config`):
@@ -585,6 +590,15 @@ with protection, and `tun/route.rs` installs the routes.
     interface and sends DNS queries to the physical adapter's servers —
     the filters block them; after that names resolve through TUN (the live
     test waits for this, `Wait-Dns`).
+- **One `auto_route` owner** (`route::HostLock`). The table, rule
+  priorities and filter GUIDs are shared by all instances, so one process
+  holds them: on Linux an abstract Unix socket `reality-client/auto_route`
+  (in the network namespace, like the routes), on Windows
+  `%ProgramData%\reality-client-auto_route.lock` opened with no sharing.
+  The lock is taken before the interface is created and lives in
+  `RouteGuard`; the OS releases it with the process, so a held lock always
+  means a live instance: a second one exits with an error and
+  `--tun-cleanup` refuses.
 - **Names while TUN is on.** The system resolver itself goes through TUN
   and could get fake-IPs. So:
   - server addresses are resolved in advance and cached: fresh for 120 s,
