@@ -38,25 +38,38 @@ static PROTECT_FN: RwLock<Option<Arc<ProtectFn>>> = RwLock::new(None);
 static TUN_ACTIVE: AtomicBool = AtomicBool::new(false);
 
 fn update_active() {
-    let on = PROTECT.read().unwrap().is_some() || PROTECT_FN.read().unwrap().is_some();
+    let on = PROTECT
+        .read()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .is_some()
+        || PROTECT_FN
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .is_some();
     TUN_ACTIVE.store(on, Ordering::SeqCst);
 }
 
 /// Включить (или выключить — `None`) защиту для всех новых сокетов.
 pub fn set(p: Option<Protect>) {
-    *PROTECT.write().unwrap() = p;
+    *PROTECT
+        .write()
+        .unwrap_or_else(std::sync::PoisonError::into_inner) = p;
     update_active();
 }
 
 /// Защищать новые сокеты обратным вызовом приложения (Android
 /// `VpnService.protect`); `None` — перестать.
 pub fn set_callback(f: Option<Arc<ProtectFn>>) {
-    *PROTECT_FN.write().unwrap() = f;
+    *PROTECT_FN
+        .write()
+        .unwrap_or_else(std::sync::PoisonError::into_inner) = f;
     update_active();
 }
 
 pub fn current() -> Option<Protect> {
-    *PROTECT.read().unwrap()
+    *PROTECT
+        .read()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
 /// Работает ли TUN с перехватом маршрутов (тогда системный DNS тоже идёт
@@ -66,7 +79,10 @@ pub fn tun_active() -> bool {
 }
 
 fn apply(sock: socket2::SockRef<'_>, v6: bool) -> io::Result<()> {
-    let cb = PROTECT_FN.read().unwrap().clone();
+    let cb = PROTECT_FN
+        .read()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clone();
     if let Some(f) = cb {
         #[cfg(unix)]
         let raw = std::os::fd::AsRawFd::as_raw_fd(&*sock) as i64;

@@ -47,11 +47,17 @@ impl RouterHandle {
     }
 
     pub fn get(&self) -> Arc<Router> {
-        self.0.read().unwrap().clone()
+        self.0
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
     }
 
     pub fn set(&self, r: Arc<Router>) {
-        *self.0.write().unwrap() = r;
+        *self
+            .0
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = r;
     }
 }
 

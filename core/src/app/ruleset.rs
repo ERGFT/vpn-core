@@ -116,6 +116,7 @@ pub fn expand(
             sets.insert(&rs.tag, Some(set));
         }
     }
+    #[allow(clippy::expect_used, reason = "инвариант: все наборы загружены выше")]
     let get = |t: &str| sets.get(t).and_then(Option::as_ref).expect("загружен выше");
 
     let mut out_rules = std::mem::take(&mut route.rules);
@@ -234,7 +235,7 @@ fn parse_cidr(s: &str) -> std::result::Result<IpNet, String> {
         s.parse().map_err(|_| format!("ip_cidr «{s}»"))
     } else {
         let ip: IpAddr = s.parse().map_err(|_| format!("ip_cidr «{s}»"))?;
-        Ok(IpNet::new(ip, if ip.is_ipv4() { 32 } else { 128 }).expect("полный префикс"))
+        IpNet::new(ip, if ip.is_ipv4() { 32 } else { 128 }).ok_or_else(|| format!("ip_cidr «{s}»"))
     }
 }
 
@@ -250,6 +251,13 @@ impl<'a> Reader<'a> {
         let v = *self.b.get(self.pos).ok_or("файл оборван")?;
         self.pos += 1;
         Ok(v)
+    }
+
+    /// Ровно `N` байт.
+    fn array<const N: usize>(&mut self) -> std::result::Result<[u8; N], String> {
+        self.take(N)?
+            .try_into()
+            .map_err(|_| "конец файла".to_string())
     }
 
     fn take(&mut self, n: usize) -> std::result::Result<&'a [u8], String> {
@@ -284,7 +292,7 @@ impl<'a> Reader<'a> {
     fn u64s(&mut self) -> std::result::Result<Vec<u64>, String> {
         let n = self.len(8)?;
         (0..n)
-            .map(|_| Ok(u64::from_be_bytes(self.take(8)?.try_into().unwrap())))
+            .map(|_| Ok(u64::from_be_bytes(self.array()?)))
             .collect()
     }
 
@@ -303,7 +311,7 @@ impl<'a> Reader<'a> {
     fn u16s(&mut self) -> std::result::Result<Vec<u16>, String> {
         let n = self.len(2)?;
         (0..n)
-            .map(|_| Ok(u16::from_be_bytes(self.take(2)?.try_into().unwrap())))
+            .map(|_| Ok(u16::from_be_bytes(self.array()?)))
             .collect()
     }
 }
@@ -491,7 +499,7 @@ fn read_ip_set(r: &mut Reader, limit: usize) -> std::result::Result<Vec<IpNet>, 
     if r.byte()? != 1 {
         return Err("набор адресов: версия не 1".into());
     }
-    let n = u64::from_be_bytes(r.take(8)?.try_into().unwrap()) as usize;
+    let n = u64::from_be_bytes(r.array()?) as usize;
     if n.saturating_mul(10) > r.b.len() - r.pos {
         return Err("набор адресов длиннее файла".into());
     }
@@ -511,9 +519,9 @@ fn read_addr(r: &mut Reader) -> std::result::Result<IpAddr, String> {
     let n = r.uvarint()? as usize;
     let b = r.take(n)?;
     match n {
-        4 => Ok(IpAddr::from(<[u8; 4]>::try_from(b).unwrap())),
+        4 => Ok(IpAddr::from(<[u8; 4]>::try_from(b).map_err(|_| "адрес")?)),
         16 => {
-            let v6 = std::net::Ipv6Addr::from(<[u8; 16]>::try_from(b).unwrap());
+            let v6 = std::net::Ipv6Addr::from(<[u8; 16]>::try_from(b).map_err(|_| "адрес")?);
             // sing-box хранит IPv4 как «IPv4 в IPv6» не всегда — приводим.
             Ok(IpAddr::V6(v6).to_canonical())
         }
@@ -556,7 +564,8 @@ fn range_to_cidrs(from: IpAddr, to: IpAddr) -> std::result::Result<Vec<IpNet>, S
         } else {
             IpAddr::V6(std::net::Ipv6Addr::from(cur))
         };
-        out.push(IpNet::new(ip, (bits - size_bits) as u8).expect("префикс в пределах"));
+        let net = IpNet::new(ip, (bits - size_bits) as u8).ok_or("префикс вне пределов")?;
+        out.push(net);
         let span = if size_bits >= 128 {
             u128::MAX
         } else {

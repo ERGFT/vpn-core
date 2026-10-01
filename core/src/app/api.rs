@@ -875,13 +875,12 @@ impl Api {
     /// `PATCH /configs`: сменить режим. Остальное из Clash (порты,
     /// allow-lan, уровень журнала) меняется только в файле настроек.
     fn patch_configs(&self, body: &[u8]) -> Reply {
-        let v: Value = match serde_json::from_slice(body) {
-            Ok(Value::Object(m)) => Value::Object(m),
+        let obj = match serde_json::from_slice(body) {
+            Ok(Value::Object(m)) => m,
             Ok(_) | Err(_) => {
                 return Reply::err(400, "тело: JSON-объект, например {\"mode\": \"global\"}")
             }
         };
-        let obj = v.as_object().expect("объект");
         if let Some(k) = obj.keys().find(|k| *k != "mode") {
             return Reply::err(
                 400,

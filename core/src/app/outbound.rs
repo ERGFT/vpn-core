@@ -256,7 +256,10 @@ struct DirectUdp {
 
 impl DirectUdp {
     fn touch(&self) {
-        *self.last.lock().unwrap() = tokio::time::Instant::now();
+        *self
+            .last
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = tokio::time::Instant::now();
     }
 
     async fn resolve(&self, dst: &Address) -> Result<IpAddr> {
@@ -350,7 +353,11 @@ impl UdpSession for DirectUdp {
             let mut b4 = vec![0u8; 65536];
             let mut b6 = vec![0u8; 65536];
             loop {
-                let deadline = *self.last.lock().unwrap() + UDP_IDLE;
+                let deadline = *self
+                    .last
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    + UDP_IDLE;
                 let got = tokio::select! {
                     r = self.v4.recv_from(&mut b4) => r.map(|(n, a)| (b4[..n].to_vec(), a)),
                     r = async {
@@ -360,7 +367,7 @@ impl UdpSession for DirectUdp {
                         }
                     } => r.map(|(n, a)| (b6[..n].to_vec(), a)),
                     _ = tokio::time::sleep_until(deadline) => {
-                        if tokio::time::Instant::now() >= *self.last.lock().unwrap() + UDP_IDLE {
+                        if tokio::time::Instant::now() >= *self.last.lock().unwrap_or_else(std::sync::PoisonError::into_inner) + UDP_IDLE {
                             return Ok(None);
                         }
                         continue;

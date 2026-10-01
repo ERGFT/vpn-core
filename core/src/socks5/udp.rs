@@ -23,11 +23,19 @@ pub fn parse_datagram(buf: &[u8]) -> Result<(TargetAddr, u16, usize)> {
     }
     let (addr, at) = match buf[3] {
         0x01 => {
-            let b: [u8; 4] = buf.get(4..8).ok_or_else(bad)?.try_into().unwrap();
+            let b: [u8; 4] = buf
+                .get(4..8)
+                .ok_or_else(bad)?
+                .try_into()
+                .map_err(|_| bad())?;
             (TargetAddr::Ip(IpAddr::V4(Ipv4Addr::from(b))), 8)
         }
         0x04 => {
-            let b: [u8; 16] = buf.get(4..20).ok_or_else(bad)?.try_into().unwrap();
+            let b: [u8; 16] = buf
+                .get(4..20)
+                .ok_or_else(bad)?
+                .try_into()
+                .map_err(|_| bad())?;
             (TargetAddr::Ip(IpAddr::V6(Ipv6Addr::from(b))), 20)
         }
         0x03 => {

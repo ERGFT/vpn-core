@@ -227,7 +227,11 @@ pub struct ConnGuard {
 impl Drop for ConnGuard {
     fn drop(&mut self) {
         if self.registered {
-            self.tracker.conns.lock().unwrap().remove(&self.info.id);
+            self.tracker
+                .conns
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .remove(&self.info.id);
         }
         let c = &self.info;
         self.tracker.events.emit(|| Event::ConnectionClose {
@@ -329,15 +333,22 @@ impl Tracker {
 
     /// Запомнить итог проверки задержки выхода `tag`.
     pub fn record_delay(&self, tag: &str, delay: Option<std::time::Duration>) {
-        self.delays.lock().unwrap().insert(
-            tag.to_string(),
-            (now_ms(), delay.map(|d| d.as_millis() as u64)),
-        );
+        self.delays
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert(
+                tag.to_string(),
+                (now_ms(), delay.map(|d| d.as_millis() as u64)),
+            );
     }
 
     /// Последняя проверка выхода: время (мс Unix) и задержка.
     pub fn last_delay(&self, tag: &str) -> Option<(u64, Option<u64>)> {
-        self.delays.lock().unwrap().get(tag).copied()
+        self.delays
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(tag)
+            .copied()
     }
 
     /// Начать учёт соединения через выход `outbound` (и участника группы).
@@ -350,7 +361,7 @@ impl Tracker {
         let traffic = self
             .per_outbound
             .lock()
-            .unwrap()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .entry(outbound.to_string())
             .or_default()
             .clone();
@@ -376,7 +387,10 @@ impl Tracker {
             opened: Instant::now(),
         });
         self.events.emit(|| Event::ConnectionOpen(info.view()));
-        let mut conns = self.conns.lock().unwrap();
+        let mut conns = self
+            .conns
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let registered = conns.len() < MAX_TRACKED;
         if registered {
             conns.insert(info.id, info.clone());
@@ -400,7 +414,7 @@ impl Tracker {
         let mut outbounds: Vec<OutboundTraffic> = self
             .per_outbound
             .lock()
-            .unwrap()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .iter()
             .map(|(k, t)| OutboundTraffic {
                 tag: k.clone(),
@@ -413,7 +427,11 @@ impl Tracker {
             uptime_secs: self.started.elapsed().as_secs(),
             up: self.total.up.load(Ordering::Relaxed),
             down: self.total.down.load(Ordering::Relaxed),
-            connections: self.conns.lock().unwrap().len(),
+            connections: self
+                .conns
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .len(),
             outbounds,
         }
     }
@@ -422,7 +440,7 @@ impl Tracker {
         let mut v: Vec<ConnView> = self
             .conns
             .lock()
-            .unwrap()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .values()
             .map(|c| c.view())
             .collect();
@@ -432,14 +450,25 @@ impl Tracker {
 
     /// Открытые соединения в формате Clash API.
     pub fn clash_connections(&self) -> Vec<serde_json::Value> {
-        let mut v: Vec<Arc<ConnInfo>> = self.conns.lock().unwrap().values().cloned().collect();
+        let mut v: Vec<Arc<ConnInfo>> = self
+            .conns
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .values()
+            .cloned()
+            .collect();
         v.sort_by_key(|c| c.id);
         v.iter().map(|c| c.clash()).collect()
     }
 
     /// Закрыть соединение; `false` — такого нет.
     pub fn close(&self, id: u64) -> bool {
-        match self.conns.lock().unwrap().get(&id) {
+        match self
+            .conns
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(&id)
+        {
             Some(c) => {
                 c.cancel.cancel();
                 true
@@ -450,7 +479,10 @@ impl Tracker {
 
     /// Закрыть все соединения (например, через выход, которого больше нет).
     pub fn close_all(&self) -> usize {
-        let conns = self.conns.lock().unwrap();
+        let conns = self
+            .conns
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         for c in conns.values() {
             c.cancel.cancel();
         }

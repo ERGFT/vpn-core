@@ -107,11 +107,15 @@ fn parse_addr_port(b: &[u8]) -> Result<(Address, u16)> {
     let port = u16::from_be_bytes([b[0], b[1]]);
     let addr = match b[2] {
         1 => {
-            let o: [u8; 4] = b.get(3..7).ok_or_else(bad)?.try_into().unwrap();
+            let o: [u8; 4] = b.get(3..7).ok_or_else(bad)?.try_into().map_err(|_| bad())?;
             Address::Ipv4(Ipv4Addr::from(o))
         }
         3 => {
-            let o: [u8; 16] = b.get(3..19).ok_or_else(bad)?.try_into().unwrap();
+            let o: [u8; 16] = b
+                .get(3..19)
+                .ok_or_else(bad)?
+                .try_into()
+                .map_err(|_| bad())?;
             Address::Ipv6(Ipv6Addr::from(o))
         }
         2 => {

@@ -242,10 +242,10 @@ impl Dns {
                 Some(f) => Some(f),
                 None => Some(Arc::new(FakeIp::new(
                     fc.inet4_range
-                        .unwrap_or_else(|| "198.18.0.0/15".parse().unwrap()),
+                        .unwrap_or_else(|| crate::app::access::const_net("198.18.0.0/15")),
                     Some(
                         fc.inet6_range
-                            .unwrap_or_else(|| "fc00::/18".parse().unwrap()),
+                            .unwrap_or_else(|| crate::app::access::const_net("fc00::/18")),
                     ),
                     fc.cache_file,
                 )?)),
@@ -283,10 +283,9 @@ impl Dns {
         if allow_fake || !f.is_fake() {
             return f;
         }
-        self.servers
-            .iter()
-            .find(|s| !s.is_fake())
-            .expect("проверено при сборке")
+        let real = self.servers.iter().find(|s| !s.is_fake());
+        #[allow(clippy::expect_used, reason = "инвариант: проверено при сборке")]
+        real.expect("проверено при сборке")
     }
 
     /// Серверы, заданные именем (их адреса нужно узнать до включения TUN).
@@ -336,6 +335,10 @@ impl Dns {
         let qtype = question.query_type();
         let server = self.pick(&name, allow_fake);
         if server.is_fake() {
+            #[allow(
+                clippy::expect_used,
+                reason = "инвариант: сервер fakeip есть только с таблицей"
+            )]
             let fake = self
                 .fakeip
                 .as_ref()

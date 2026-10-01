@@ -21,6 +21,12 @@
 //! DNS-запросы клиента не текут отдельным, отличимым от TLS трафиком
 //! путём.
 
+// unwrap/expect в продуктовом коде — только с обоснованием (#[allow] с
+// reason): новые не появляются незаметно. Блокировки — через
+// unwrap_or_else(PoisonError::into_inner): паника в одной задаче не
+// отравляет общие данные для остальных.
+#![cfg_attr(not(test), warn(clippy::unwrap_used, clippy::expect_used))]
+
 pub mod app;
 pub mod error;
 pub mod fingerprint;

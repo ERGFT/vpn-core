@@ -239,6 +239,10 @@ impl RealityClientHook for RealityHook {
         // Result: это вызывается из середины сборки ClientHello в
         // rustls, где заворачивать в Result было бы правкой сигнатуры
         // ради ветки, которая никогда не сработает.
+        #[allow(
+            clippy::expect_used,
+            reason = "инвариант: HKDF-SHA256 с 32-байтным выводом"
+        )]
         let auth_key = Zeroizing::new(
             derive_auth_key(&*self.shared_secret, client_hello_random)
                 .expect("HKDF-SHA256 с 32-байтным выводом не может провалиться"),
@@ -249,6 +253,7 @@ impl RealityClientHook for RealityHook {
         // же для одного и того же хука.
         let _ = self.auth_key.set(Zeroizing::new(*auth_key));
         let plaintext = build_plaintext(&self.short_id);
+        #[allow(clippy::expect_used, reason = "инвариант: AES-256-GCM, ключ 32 байта")]
         let sealed = aead_seal_session_id(&auth_key, client_hello_random, &plaintext, aad)
             .expect("AES-256-GCM seal 16 байт корректным 32-байтным ключом не может провалиться");
         // Итоговый ClientHello = AAD с запечатанным SessionId на своём месте.
@@ -311,6 +316,10 @@ impl RealityClientHook for RealityHook {
         // не полагаемся на это неявно). Сразу копируем в свой
         // `Zeroizing<[u8; 32]>`, как и везде в этом файле с секретами,
         // которые храним сами.
+        #[allow(
+            clippy::expect_used,
+            reason = "инвариант: общий ключ ML-KEM-768 — 32 байта (FIPS 203)"
+        )]
         let mlkem_shared: Zeroizing<[u8; 32]> = Zeroizing::new(
             self.mlkem_decap
                 .decapsulate(&mlkem_ct)

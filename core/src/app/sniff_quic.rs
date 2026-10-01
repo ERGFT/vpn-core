@@ -55,6 +55,10 @@ fn expand_label(prk: &Hkdf<Sha256>, label: &str, out: &mut [u8]) {
     info.push(full.len() as u8);
     info.extend_from_slice(full.as_bytes());
     info.push(0);
+    #[allow(
+        clippy::expect_used,
+        reason = "инвариант: длины вывода — 16 и 32 байта"
+    )]
     prk.expand(&info, out)
         .expect("длина вывода HKDF в пределах");
 }

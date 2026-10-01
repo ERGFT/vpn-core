@@ -110,6 +110,13 @@ struct Entry {
     last: Instant,
 }
 
+/// Подсеть из строковой константы в коде (не из настроек): ошибка в ней —
+/// ошибка программы, которую ловят тесты.
+#[allow(clippy::expect_used, reason = "константа в коде, проверяется тестами")]
+pub(crate) fn const_net(s: &'static str) -> IpNet {
+    s.parse().expect("подсеть-константа")
+}
+
 /// Учёт неверных паролей по адресам.
 #[derive(Default)]
 pub struct AuthGuard {
@@ -141,7 +148,10 @@ fn key(ip: IpAddr) -> IpAddr {
 impl AuthGuard {
     /// Заблокирован ли адрес сейчас.
     pub fn is_blocked(&self, ip: IpAddr, now: Instant) -> bool {
-        let map = self.map.lock().unwrap();
+        let map = self
+            .map
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         map.get(&key(ip))
             .and_then(|e| e.blocked_until)
             .is_some_and(|t| now < t)
@@ -149,7 +159,10 @@ impl AuthGuard {
 
     /// Неверный пароль с адреса `ip`.
     pub fn failure(&self, ip: IpAddr, now: Instant) -> Verdict {
-        let mut map = self.map.lock().unwrap();
+        let mut map = self
+            .map
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         if map.len() >= MAX_TRACKED && !map.contains_key(&key(ip)) {
             // Чистим записи без действующей блокировки, давно не
             // обновлявшиеся; если и после этого места нет — вытесняем
@@ -191,7 +204,10 @@ impl AuthGuard {
 
     /// Верный пароль — счёт неудач адреса обнуляется.
     pub fn success(&self, ip: IpAddr) {
-        self.map.lock().unwrap().remove(&key(ip));
+        self.map
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .remove(&key(ip));
     }
 }
 
@@ -224,6 +240,22 @@ mod tests {
         assert!(!allowed(&list, "192.168.1.11".parse().unwrap()));
         assert!(allowed(&list, "127.0.0.1".parse().unwrap()));
         assert!(allowed(&[], "192.168.1.11".parse().unwrap()));
+    }
+
+    /// Подсети-константы из кода (const_net) разбираются.
+    #[test]
+    fn code_constant_nets_parse() {
+        for s in [
+            "198.18.0.0/15",
+            "fc00::/18",
+            "172.19.0.1/30",
+            "fdfe:dcba:9876::1/126",
+        ]
+        .iter()
+        .chain(crate::app::rules::PRIVATE_NETS)
+        {
+            assert!(s.parse::<IpNet>().is_ok(), "{s}");
+        }
     }
 
     #[test]
@@ -287,6 +319,12 @@ mod tests {
         for i in 0..(MAX_TRACKED as u32 + 500) {
             g.failure(IpAddr::from(i.to_be_bytes()), t);
         }
-        assert!(g.map.lock().unwrap().len() <= MAX_TRACKED);
+        assert!(
+            g.map
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .len()
+                <= MAX_TRACKED
+        );
     }
 }

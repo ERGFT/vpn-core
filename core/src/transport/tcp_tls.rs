@@ -137,7 +137,9 @@ fn tun_resolver() -> &'static std::sync::RwLock<Option<Arc<HostResolver>>> {
 
 /// Задать (или снять) резолвер для режима TUN.
 pub fn set_tun_resolver(r: Option<Arc<HostResolver>>) {
-    *tun_resolver().write().unwrap() = r;
+    *tun_resolver()
+        .write()
+        .unwrap_or_else(std::sync::PoisonError::into_inner) = r;
 }
 
 /// Адреса VLESS-сервера с кешем: не спрашивать DNS на каждое соединение,
@@ -147,7 +149,11 @@ pub fn set_tun_resolver(r: Option<Arc<HostResolver>>) {
 /// подключённым.
 pub async fn resolve_server(host: &str, port: u16) -> Result<Vec<SocketAddr>> {
     let key = format!("{host}:{port}");
-    let cached = server_cache().lock().unwrap().get(&key).cloned();
+    let cached = server_cache()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .get(&key)
+        .cloned();
     if let Some((addrs, at)) = &cached {
         if at.elapsed() < SERVER_CACHE_FRESH {
             return Ok(addrs.clone());
@@ -158,16 +164,23 @@ pub async fn resolve_server(host: &str, port: u16) -> Result<Vec<SocketAddr>> {
         if crate::net_protect::tun_active() {
             // Одно обновление на имя за раз: иначе запрос DNS, идущий к
             // этому же серверу, порождал бы новое обновление, и так по кругу.
-            if refreshing().lock().unwrap().insert(key.clone()) {
+            if refreshing()
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .insert(key.clone())
+            {
                 let (h, k) = (host.to_string(), key.clone());
                 tokio::spawn(async move {
                     if let Ok(a) = resolve_host(&h, port).await {
                         server_cache()
                             .lock()
-                            .unwrap()
+                            .unwrap_or_else(std::sync::PoisonError::into_inner)
                             .insert(k.clone(), (a, std::time::Instant::now()));
                     }
-                    refreshing().lock().unwrap().remove(&k);
+                    refreshing()
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
+                        .remove(&k);
                 });
             }
             return Ok(addrs.clone());
@@ -175,7 +188,9 @@ pub async fn resolve_server(host: &str, port: u16) -> Result<Vec<SocketAddr>> {
     }
     match resolve_host(host, port).await {
         Ok(addrs) => {
-            let mut c = server_cache().lock().unwrap();
+            let mut c = server_cache()
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             if c.len() > 64 {
                 c.clear();
             }
@@ -198,7 +213,10 @@ pub async fn resolve_host(host: &str, port: u16) -> Result<Vec<SocketAddr>> {
         return Ok(vec![SocketAddr::new(ip, port)]);
     }
     if crate::net_protect::tun_active() {
-        let r = tun_resolver().read().unwrap().clone();
+        let r = tun_resolver()
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
         if let Some(r) = r {
             let ips = tokio::time::timeout(DNS_TIMEOUT, r(host.to_string()))
                 .await
@@ -300,6 +318,10 @@ fn build_client_config(
         rustls::crypto::aws_lc_rs::default_provider(),
         browser,
     );
+    #[allow(
+        clippy::expect_used,
+        reason = "инвариант: набор шифров провайдера aws-lc-rs непуст"
+    )]
     let mut config = ClientConfig::builder_with_provider(Arc::new(provider))
         .with_safe_default_protocol_versions()
         .expect("переупорядочивание cipher_suites не может сделать набор suite'ов непригодным")
@@ -467,6 +489,10 @@ fn reality_client_config_inner(
         rustls::crypto::aws_lc_rs::default_provider(),
         browser,
     );
+    #[allow(
+        clippy::expect_used,
+        reason = "инвариант: набор шифров провайдера aws-lc-rs непуст"
+    )]
     let mut config = ClientConfig::builder_with_provider(Arc::new(provider))
         .with_protocol_versions(&[&rustls::version::TLS13])
         .expect("переупорядочивание cipher_suites не может сделать TLS1.3 непригодным")
