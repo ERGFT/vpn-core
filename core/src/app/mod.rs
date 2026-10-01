@@ -1374,7 +1374,10 @@ impl Controller {
         })?;
         Config::parse(text)?.check_paths_confined()?;
         let base = path.parent().unwrap_or(std::path::Path::new("."));
-        let cfg = Config::parse_at(text, base)?;
+        let mut cfg = Config::parse_at(text, base)?;
+        // После подстановки путей по умолчанию (кеш подписки — по тегу) и
+        // с разрешением символических ссылок.
+        cfg.check_paths_inside(base)?;
         if check_only {
             App::build(&cfg)?;
             return Ok(Applied::default());

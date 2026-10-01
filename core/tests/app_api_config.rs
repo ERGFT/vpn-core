@@ -186,6 +186,40 @@ async fn files_only_from_config_folder() {
             "{bad}: {v}"
         );
     }
+    // Кеш подписки по умолчанию — по тегу: тег с `..` тоже не выводит
+    // запись за пределы папки.
+    let text = r#"{"subscriptions": [{"tag": "../../evil", "url": "https://example.test/s"}],
+        "outbounds": [{"type": "direct", "tag": "direct"}]}"#;
+    let (c, v) = call(a, "PUT", "/config?check=1", text).await;
+    assert_eq!(c, 400, "{v}");
+    assert!(
+        v["message"].as_str().unwrap().contains("папки настроек"),
+        "{v}"
+    );
+    // Символическая ссылка в папке настроек, ведущая наружу: путь без `..`,
+    // но файл — за пределами папки.
+    #[cfg(unix)]
+    {
+        let outside = s.dir.with_extension("outside");
+        std::fs::create_dir_all(&outside).unwrap();
+        std::fs::write(outside.join("secret.txt"), "x").unwrap();
+        std::os::unix::fs::symlink(&outside, s.dir.join("out")).unwrap();
+        for bad in ["out/secret.txt", "out/new.txt", "out/newdir/new.txt"] {
+            let text = format!(
+                r#"{{"outbounds": [{{"type": "vless", "tag": "p", "link_file": "{bad}"}}]}}"#
+            );
+            let (c, v) = call(a, "PUT", "/config?check=1", &text).await;
+            assert_eq!(c, 400, "{bad}: {v}");
+            assert!(
+                v["message"]
+                    .as_str()
+                    .unwrap()
+                    .contains("символическую ссылку"),
+                "{bad}: {v}"
+            );
+        }
+        let _ = std::fs::remove_dir_all(&outside);
+    }
     // Файл рядом с настройками — можно (проверка доходит до самой ссылки).
     std::fs::write(s.dir.join("server.txt"), "vless://not-a-link").unwrap();
     let text = r#"{"outbounds": [{"type": "vless", "tag": "p", "link_file": "server.txt"}]}"#;

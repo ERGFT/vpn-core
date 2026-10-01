@@ -517,6 +517,31 @@ impl Config {
         }
     }
 
+    /// Вторая ступень [`Self::check_paths_confined`] — для настроек после
+    /// [`Self::parse_at`] (пути уже от `base`, подставлены пути по
+    /// умолчанию): каждый файл после разрешения символических ссылок лежит
+    /// внутри `base`. Ссылка в папке настроек, ведущая наружу, иначе
+    /// обошла бы проверку по компонентам пути. Для ещё не созданного файла
+    /// проверяется ближайшая существующая папка над ним.
+    pub fn check_paths_inside(&mut self, base: &Path) -> Result<()> {
+        let root = base
+            .canonicalize()
+            .map_err(|e| Error::Config(format!("папка настроек {}: {e}", base.display())))?;
+        let mut bad = None;
+        self.for_each_path(&mut |p| {
+            if bad.is_none() && !resolves_inside(p, &root) {
+                bad = Some(p.display().to_string());
+            }
+        });
+        match bad {
+            Some(p) => Err(Error::Config(format!(
+                "«{p}»: в настройках через API — только файлы из папки настроек \
+                 (путь ведёт за её пределы, в том числе через символическую ссылку)"
+            ))),
+            None => Ok(()),
+        }
+    }
+
     /// Формат текста настроек: `sing-box` или `xray`.
     pub fn format_name(text: &str) -> &'static str {
         let json = obj::strip_jsonc(text.trim_start_matches('\u{feff}'));
@@ -525,6 +550,29 @@ impl Config {
             _ => "sing-box",
         }
     }
+}
+
+/// `p` после разрешения символических ссылок — внутри `root` (уже
+/// канонического). Несуществующий хвост пути — только обычные имена.
+fn resolves_inside(p: &Path, root: &Path) -> bool {
+    let mut cur = p.to_path_buf();
+    let mut tail = Vec::new();
+    let real = loop {
+        match cur.canonicalize() {
+            Ok(c) => break c,
+            Err(_) => {
+                // Нет имени (`..`, корень) — не проверить, значит нельзя.
+                let Some(name) = cur.file_name() else {
+                    return false;
+                };
+                tail.push(name.to_owned());
+                if !cur.pop() {
+                    return false;
+                }
+            }
+        }
+    };
+    real.starts_with(root) && tail.iter().all(|n| n != "..")
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
