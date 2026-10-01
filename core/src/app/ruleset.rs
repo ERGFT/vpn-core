@@ -308,6 +308,12 @@ impl<'a> Reader<'a> {
     }
 }
 
+/// Разбор `.srs` для фаззинга (`cargo fuzz` собирает с `--cfg fuzzing`).
+#[cfg(fuzzing)]
+pub fn parse_srs_for_fuzz(data: &[u8]) -> std::result::Result<RuleSet, String> {
+    parse_srs(data)
+}
+
 fn parse_srs(data: &[u8]) -> std::result::Result<RuleSet, String> {
     if data.len() < 4 || &data[..3] != b"SRS" {
         return Err("не файл набора правил sing-box (нет «SRS» в начале)".into());

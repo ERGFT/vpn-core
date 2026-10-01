@@ -1,0 +1,92 @@
+# Фаззинг парсеров ядра (cargo-fuzz, libFuzzer; нужен nightly):
+#   cargo +nightly fuzz run srs -- -max_len=65536 -rss_limit_mb=2048
+# Вне workspace: свой Cargo.lock, свой [patch] — тот же rustls из vendor/.
+[package]
+name = "reality-fuzz"
+version = "0.0.0"
+edition = "2021"
+license = "GPL-3.0-or-later"
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+reality-core = { path = "../core" }
+# time + test-util: паузы ядра (после неверного пароля) — на «замороженных»
+# часах, без настоящего ожидания.
+tokio = { version = "1", features = ["rt", "io-util", "time", "test-util"] }
+
+[patch.crates-io]
+rustls = { path = "../vendor/rustls-reality-patch" }
+
+# Отдельный workspace: корневой не тянет этот крейт в обычную сборку.
+[workspace]
+members = ["."]
+
+[profile.release]
+debug = 1
+
+[[bin]]
+name = "srs"
+path = "fuzz_targets/srs.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "http1_head"
+path = "fuzz_targets/http1_head.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "socks5"
+path = "fuzz_targets/socks5.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "vless_uri"
+path = "fuzz_targets/vless_uri.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "sniff"
+path = "fuzz_targets/sniff.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "sniff_quic"
+path = "fuzz_targets/sniff_quic.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "xudp"
+path = "fuzz_targets/xudp.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "mux"
+path = "fuzz_targets/mux.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "subscription"
+path = "fuzz_targets/subscription.rs"
+test = false
+doc = false
+bench = false
