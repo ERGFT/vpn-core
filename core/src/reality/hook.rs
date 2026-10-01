@@ -338,6 +338,9 @@ impl RealityClientHook for RealityHook {
         // (собственной реализации гибрида в них нет, это TLS-стек ниже
         // REALITY, тот же для всех). Итог — 64 байта на вход остального
         // TLS1.3 key schedule, вместо прежних 32 (чистый X25519 ECDH).
+        // Ёмкость — ровно под секрет: вектор не перевыделяется, и других
+        // копий в памяти не остаётся; rustls забирает его в SharedSecret,
+        // который стирает буфер при удалении.
         let mut combined = Vec::with_capacity(32 + 32);
         combined.extend_from_slice(mlkem_shared.as_slice());
         combined.extend_from_slice(ecdh_shared.as_bytes());
