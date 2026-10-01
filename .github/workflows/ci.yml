@@ -5,6 +5,9 @@
 #           с sing-box, эталон отпечатка Chrome; отдельно — TUN в netns (root).
 # windows — на настоящей Windows (не Wine): тесты, сборка .exe, служба и
 #           TUN (Wintun, маршруты) с настоящим трафиком.
+# audit   — уязвимости и источники зависимостей (cargo deny, cargo audit)
+#           и отдельно патченного rustls; ещё и раз в неделю — новые
+#           advisories появляются без коммитов (тогда только он).
 name: CI
 
 on:
@@ -12,6 +15,8 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+  schedule:
+    - cron: "17 4 * * 1" # еженедельно: новые advisories появляются без коммитов
 
 # Только чтение: CI запускает сторонние actions и сборку зависимостей.
 permissions:
@@ -26,7 +31,25 @@ env:
   RUST_BACKTRACE: 1
 
 jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: taiki-e/install-action@83ac0ad63c0167e6f06796fab0fce28db1bf3db0 # v2
+        with:
+          tool: cargo-deny,cargo-audit
+      - run: cargo deny check advisories bans sources
+      - run: cargo audit
+      # cargo audit/deny не видят rustls из vendor/ (нет источника в
+      # Cargo.lock) — его версия сверяется с RustSec отдельно.
+      - name: патченный rustls против RustSec
+        run: bash scripts/rustls_advisories.sh
+
   linux:
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     timeout-minutes: 90
     steps:
@@ -55,6 +78,7 @@ jobs:
         run: sudo -E env "PATH=$PATH" XRAY_BIN="$PWD/target/xray/xray" CLIENT_BIN="$PWD/target/release/reality-client" bash scripts/tun_netns.sh
 
   windows:
+    if: github.event_name != 'schedule'
     runs-on: windows-latest
     timeout-minutes: 90
     steps:
