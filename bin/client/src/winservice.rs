@@ -43,6 +43,14 @@ pub fn data_dir() -> Result<PathBuf> {
     Ok(base.join(DATA_DIR))
 }
 
+/// Создать или проверить папку службы (права — только SYSTEM и
+/// администраторам) и вернуть её путь. Нужны права администратора.
+pub fn ensure_data_dir() -> Result<PathBuf> {
+    let d = data_dir()?;
+    prepare_dir(&d)?;
+    Ok(d)
+}
+
 // ── запуск как служба ──
 
 type RunFn = Box<dyn FnOnce(tokio::sync::oneshot::Receiver<()>) -> Result<()> + Send>;

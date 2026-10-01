@@ -5,6 +5,15 @@
 #           с sing-box, эталон отпечатка Chrome; отдельно — TUN в netns (root).
 # windows — на настоящей Windows (не Wine): тесты, сборка .exe, служба и
 #           TUN (Wintun, маршруты) с настоящим трафиком.
+# msrv    — сборка на минимальной версии Rust (rust-version в Cargo.toml).
+# coverage — покрытие тестами (cargo llvm-cov; отчёт lcov — артефакт).
+# mobile  — сборка библиотеки (ffi) под Android и iOS; необязательная:
+#           её падение не красит CI.
+# secrets — gitleaks по всей истории git (ложные срабатывания —
+#           .gitleaksignore).
+# audit   — уязвимости и источники зависимостей (cargo deny, cargo audit)
+#           и отдельно патченного rustls; ещё и раз в неделю — новые
+#           advisories появляются без коммитов (тогда только он).
 name: CI
 
 on:
@@ -12,6 +21,8 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+  schedule:
+    - cron: "17 4 * * 1" # еженедельно: новые advisories появляются без коммитов
 
 # Только чтение: CI запускает сторонние actions и сборку зависимостей.
 permissions:
@@ -26,11 +37,123 @@ env:
   RUST_BACKTRACE: 1
 
 jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: taiki-e/install-action@83ac0ad63c0167e6f06796fab0fce28db1bf3db0 # v2
+        with:
+          tool: cargo-deny,cargo-audit
+      - run: cargo deny check advisories bans sources
+      - run: cargo audit
+      # cargo audit/deny не видят rustls из vendor/ (нет источника в
+      # Cargo.lock) — его версия сверяется с RustSec отдельно.
+      - name: патченный rustls против RustSec
+        run: bash scripts/rustls_advisories.sh
+
+  msrv:
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+        with:
+          toolchain: "1.88" # = rust-version в Cargo.toml
+      - run: cargo check --locked --workspace --all-targets
+
+  coverage:
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+        with:
+          toolchain: stable
+          components: llvm-tools-preview
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      - uses: taiki-e/install-action@83ac0ad63c0167e6f06796fab0fce28db1bf3db0 # v2
+        with:
+          tool: cargo-llvm-cov
+      # Порога пока нет — его ставят после первых замеров.
+      - run: cargo llvm-cov --locked --workspace --lcov --output-path lcov.info
+      - run: cargo llvm-cov report --summary-only
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: coverage-lcov
+          path: lcov.info
+
+  mobile:
+    if: github.event_name != 'schedule'
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: aarch64-linux-android
+          - os: macos-latest
+            target: aarch64-apple-ios
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+        with:
+          toolchain: stable
+          targets: ${{ matrix.target }}
+      - uses: taiki-e/install-action@83ac0ad63c0167e6f06796fab0fce28db1bf3db0 # v2
+        if: contains(matrix.target, 'android')
+        with:
+          tool: cargo-ndk
+      - name: libreality под Android (NDK раннера)
+        if: contains(matrix.target, 'android')
+        run: cargo ndk -t arm64-v8a build --locked --release -p reality-ffi
+      # Одна минимальная iOS для Rust и для C-кода aws-lc (иначе он
+      # собирается под iOS из SDK и не линкуется: ___chkstk_darwin).
+      - name: libreality под iOS
+        if: contains(matrix.target, 'ios')
+        env:
+          IPHONEOS_DEPLOYMENT_TARGET: "13.0"
+        run: cargo build --locked --release -p reality-ffi --target ${{ matrix.target }}
+
+  secrets:
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: stable
+          cache: false
+      # gitleaks — из исходников, закреплённая версия: готовому
+      # gitleaks-action нужен токен GitHub (и лицензия для организаций).
+      - run: go install github.com/zricethezav/gitleaks/v8@v8.28.0
+      - name: gitleaks по всей истории
+        run: "$(go env GOPATH)/bin/gitleaks git --log-opts=--all --redact ."
+
   linux:
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
         with:
           toolchain: stable
@@ -51,14 +174,20 @@ jobs:
           tool: cargo-about@0.9.2
       - name: лицензии зависимостей (новая зависимость с лицензией не из about.toml — ошибка)
         run: bash scripts/third_party_licenses.sh target/THIRD-PARTY-LICENSES.html
+      # Root на раннере — только для кода из этого репозитория: PR из
+      # форков этот шаг пропускают.
       - name: TUN в изолированном netns (root)
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
         run: sudo -E env "PATH=$PATH" XRAY_BIN="$PWD/target/xray/xray" CLIENT_BIN="$PWD/target/release/reality-client" bash scripts/tun_netns.sh
 
   windows:
+    if: github.event_name != 'schedule'
     runs-on: windows-latest
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
         with:
           toolchain: stable
@@ -66,11 +195,11 @@ jobs:
       - uses: ilammy/setup-nasm@72793074d3c8cdda771dba85f6deafe00623038b # v1
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
       - name: clippy (код только для Windows)
-        run: cargo clippy --workspace --all-targets -- -D warnings
+        run: cargo clippy --locked --workspace --all-targets -- -D warnings
       - name: тесты
-        run: cargo test --workspace
+        run: cargo test --locked --workspace
       - name: сборка
-        run: cargo build --release -p reality-client
+        run: cargo build --locked --release -p reality-client
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: reality-client-windows

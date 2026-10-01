@@ -67,11 +67,11 @@
 
 ## Сборка
 
-Нужен Rust (stable). На Linux:
+Нужен Rust 1.88 или новее (stable). На Linux:
 
 ```sh
 cargo build --release -p reality-client
-# -> target/release/reality-client  (~7 МБ)
+# -> target/release/reality-client  (~14 МБ)
 ```
 
 На Windows — [`docs/WINDOWS.md`](docs/WINDOWS.md) или
@@ -80,14 +80,17 @@ cargo build --release -p reality-client
 ## Запуск
 
 ```sh
-reality-client --server 'vless://UUID@host:443?encryption=none&security=reality&sni=site.example&pbk=KEY&sid=SHORTID&type=tcp&flow=xtls-rprx-vision' \
-               --listen 127.0.0.1:1080
+# ссылка — в первой строке файла, файл — только для себя
+printf '%s\n' 'vless://UUID@host:443?encryption=none&security=reality&sni=site.example&pbk=KEY&sid=SHORTID&type=tcp&flow=xtls-rprx-vision' > server.txt
+chmod 600 server.txt
+reality-client --server-file server.txt --listen 127.0.0.1:1080
 ```
 
-- `--server` — ссылка целиком, в кавычках (в ней есть `&`). ⚠️ Аргументы
-  командной строки видны всем пользователям машины (список процессов), а в
-  ссылке — ваш UUID. Надёжнее `--server-file файл` (ссылка в первой
-  строке файла) или переменная окружения `REALITY_SERVER`.
+- `--server-file` — файл со ссылкой (первая непустая строка); то же —
+  переменная окружения `REALITY_SERVER`. Есть и `--server 'vless://…'`
+  (ссылка целиком, в кавычках: в ней есть `&`), но ⚠️ аргументы командной
+  строки видны всем пользователям машины (список процессов), а в ссылке —
+  ваш UUID; клиент тогда печатает предупреждение.
 - `--listen` — адрес локального прокси, по умолчанию `127.0.0.1:1080`.
   На этом порту и SOCKS5, и HTTP-прокси (вид определяется по первому байту).
 - `--auth логин:пароль` — требовать логин и пароль на SOCKS5. Слушать не
@@ -355,6 +358,10 @@ Clash API, работают с ядром без переделок. metacubexd 
   панель из `external_ui` разрешена всегда.
   `access_control_allow_private_network: true` — нужно Chrome для панели
   из интернета.
+- `allow_query_token` (расширение) — принимать токен в адресе WebSocket
+  (`?token=`), как его передают панели. По умолчанию — только когда API
+  слушает 127.0.0.1: адрес с токеном оседает в журналах прокси и истории
+  браузера. API в сети с панелью из браузера — `"allow_query_token": true`.
 - `default_mode` — режим при запуске: `rule` (по правилам), `global` (всё
   через выбранный в группе `GLOBAL` выход) или `direct` (всё напрямую).
   Перехват DNS работает в любом режиме. Группа `GLOBAL` (все выходы,
@@ -434,7 +441,9 @@ curl -N -H "$T" "http://127.0.0.1:9090/logs?level=warning"
 одновременно — до 16.
 
 - Токен обязателен всегда (`Authorization: Bearer`; WebSocket из браузера —
-  `?token=`). Без токена отдаются только файлы панели и приветствие `GET /`,
+  `?token=`, см. `allow_query_token`). 5 неверных токенов с адреса (IPv6 —
+  с подсети /64) — адрес блокируется на минуту и дольше; 127.0.0.1 не
+  блокируется. Без токена отдаются только файлы панели и приветствие `GET /`,
   как у Clash. `Host` должен быть адресом API (защита от DNS rebinding);
   запросы из браузера — только от своей панели и сайтов из
   `access_control_allow_origin`; слушать не на 127.0.0.1 — только с
@@ -664,8 +673,11 @@ scripts/ci.sh --quick  # только fmt, SPDX-метки, clippy, тесты
 страницы запуска, «Artifacts») и `scripts/windows_live_test.ps1`: служба,
 права её папки и TUN с настоящим трафиком. Выпуск —
 `git tag v0.2.0 && git push origin v0.2.0`: `.github/workflows/release.yml`
-собирает бинарники для Windows и Linux с SHA-256, `LICENSE` и
-`THIRD-PARTY-LICENSES.html` в черновик релиза.
+собирает бинарники для Windows и Linux с SHA-256, `LICENSE`,
+`THIRD-PARTY-LICENSES.html` и SBOM (`reality-client.sbom.cdx.json`,
+CycloneDX) в черновик релиза; происхождение бинарников подписано
+(GitHub attestation) — проверка:
+`gh attestation verify reality-client-linux-x86_64 --repo ERGFT/vpn-core`.
 
 Xray-core для тестов: `scripts/fetch_xray.sh` (скачать релиз) или
 `scripts/build_xray_from_source.sh` (собрать из исходников по git — для

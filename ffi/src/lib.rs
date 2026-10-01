@@ -425,6 +425,29 @@ pub unsafe extern "C" fn rc_set_protect(cb: RcProtect, user: *mut c_void) {
     reality_core::net_protect::set_callback(f);
 }
 
+/// Windows: каталог для файла блокировки `auto_route` — запись в него
+/// только у SYSTEM и администраторов. Без него вход TUN с `auto_route` на
+/// Windows не запускается (с готовым дескриптором TUN не нужен). Вызывать
+/// до [`rc_start`], один раз; на других системах ничего не делает.
+/// 0 — успех, -1 — `dir` NULL или не UTF-8.
+///
+/// # Safety
+/// `dir` — NULL или строка с нулём в конце.
+#[no_mangle]
+pub unsafe extern "C" fn rc_set_lock_dir(dir: *const c_char) -> c_int {
+    if dir.is_null() {
+        return -1;
+    }
+    // SAFETY: обещание вызывающего (см. выше).
+    match unsafe { CStr::from_ptr(dir) }.to_str() {
+        Ok(d) => {
+            reality_core::app::tun::route::set_lock_dir(PathBuf::from(d));
+            0
+        }
+        Err(_) => -1,
+    }
+}
+
 /// Освободить строку, которую вернула библиотека. NULL — ничего.
 ///
 /// # Safety

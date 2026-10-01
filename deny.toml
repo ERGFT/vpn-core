@@ -1,0 +1,23 @@
+# cargo deny check advisories bans sources — в CI (job audit) и еженедельно.
+# Лицензии здесь не проверяются: это делает cargo-about по about.toml.
+
+[advisories]
+yanked = "deny"
+ignore = [
+    # paste (proc-macro) больше не поддерживается — не уязвимость. Приходит
+    # транзитивно: tun-rs → netconfig-rs → netlink-packet-core; заменить
+    # нечем, пока это не сделают они.
+    { id = "RUSTSEC-2024-0436", reason = "unmaintained proc-macro, транзитивно через tun-rs" },
+]
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+# Свои крейты workspace (publish = false) ссылаются друг на друга путём
+# без версии — это не wildcard из реестра.
+allow-wildcard-paths = true
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]

@@ -140,6 +140,23 @@ impl TunInbound {
         if let Some(fd) = s.fd {
             return self.device_from_fd(fd);
         }
+        #[cfg(any(target_os = "android", target_os = "ios"))]
+        {
+            Err(Error::Config(
+                "tun: на Android и iOS интерфейс создаёт система (VpnService, \
+                 Network Extension) — нужен готовый дескриптор (tun_fd)"
+                    .into(),
+            ))
+        }
+        #[cfg(not(any(target_os = "android", target_os = "ios")))]
+        self.create_named()
+    }
+
+    /// Создать интерфейс по имени (десктоп: Linux, Windows, macOS). На
+    /// Android и iOS в tun-rs такого нет — там только [`Self::device_from_fd`].
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    fn create_named(&self) -> Result<TunDevice> {
+        let s = &self.settings;
         let err = |e: std::io::Error| {
             Error::Config(format!(
                 "tun: не удалось создать интерфейс {}: {e}{}",
@@ -496,7 +513,7 @@ pub fn settings(i: &super::config::InboundConfig) -> Result<TunSettings> {
         mtu,
         // С готовым дескриптором маршруты и kill switch — забота системы
         // (у Android — VpnService).
-        auto_route: i.tun_fd.is_none() && i.auto_route.unwrap_or(true),
+        auto_route: i.wants_auto_route(),
         route_exclude: i.route_exclude.clone(),
         strict_route: i.tun_fd.is_none() && i.strict_route.unwrap_or(false),
         dns_hijack: i.dns_hijack.unwrap_or(true),

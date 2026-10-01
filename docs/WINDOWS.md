@@ -67,13 +67,14 @@ cargo build --release -p reality-client
 ## 3. Запуск
 
 ```powershell
-.\target\release\reality-client.exe --server "vless://UUID@host:443?encryption=none&security=reality&sni=site&pbk=KEY&sid=ID&type=tcp" --listen 127.0.0.1:1080
+Set-Content ссылка.txt "vless://UUID@host:443?encryption=none&security=reality&sni=site&pbk=KEY&sid=ID&type=tcp"
+.\target\release\reality-client.exe --server-file ссылка.txt --listen 127.0.0.1:1080
 ```
 
-Ссылку лучше брать в двойные кавычки: в ней есть `&`, который иначе
-обработает оболочка. Надёжнее положить ссылку в файл и запускать с
-`--server-file ссылка.txt`: аргументы командной строки видны другим
-программам и пользователям компьютера, а в ссылке — ваш UUID. В консоли появятся строки
+Ссылка — в файле, а не в командной строке: аргументы видны другим
+программам и пользователям компьютера, а в ссылке — ваш UUID (с
+`--server "vless://…"` клиент работает, но печатает предупреждение;
+ссылку тогда — в двойные кавычки, в ней есть `&`). В консоли появятся строки
 `сервер загружен ...` и `прокси слушает ... addr=127.0.0.1:1080`.
 Подробнее журнал: `$env:RUST_LOG = "debug"` перед запуском.
 

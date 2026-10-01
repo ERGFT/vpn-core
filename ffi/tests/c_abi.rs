@@ -4,7 +4,9 @@
 use std::ffi::{c_char, c_int, CStr, CString};
 use std::ptr;
 
-use reality::{rc_free_string, rc_reload, rc_request, rc_start, rc_stop, rc_version};
+use reality::{
+    rc_free_string, rc_reload, rc_request, rc_set_lock_dir, rc_start, rc_stop, rc_version,
+};
 
 const CONFIG: &str = r#"{
   "inbounds": [{ "type": "mixed", "tag": "in", "listen": "127.0.0.1", "listen_port": 0 }],
@@ -81,4 +83,35 @@ fn start_request_reload_stop() {
 
     unsafe { rc_stop(core) };
     unsafe { rc_stop(ptr::null_mut()) };
+}
+
+/// catch_unwind на границе C работает только при panic = "unwind":
+/// с "abort" паника в ядре роняла бы приложение-хост. Сам `cargo test`
+/// всегда собирается с unwind, поэтому сторожим профиль release.
+#[test]
+fn release_profile_keeps_unwind() {
+    let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../Cargo.toml");
+    let text = std::fs::read_to_string(manifest).unwrap();
+    let release = text
+        .split("[profile.release]")
+        .nth(1)
+        .expect("в Cargo.toml есть [profile.release]");
+    let release = release.split("\n[").next().unwrap();
+    let abort = release
+        .lines()
+        .map(|l| l.split('#').next().unwrap().replace(' ', ""))
+        .any(|l| l == "panic=\"abort\"");
+    assert!(
+        !abort,
+        "panic = \"abort\" в [profile.release] отключает catch_unwind в ffi"
+    );
+}
+
+#[test]
+fn set_lock_dir_checks_its_argument() {
+    assert_eq!(unsafe { rc_set_lock_dir(ptr::null()) }, -1);
+    let bad = [0xffu8, 0];
+    assert_eq!(unsafe { rc_set_lock_dir(bad.as_ptr().cast()) }, -1);
+    let dir = CString::new(std::env::temp_dir().to_string_lossy().into_owned()).unwrap();
+    assert_eq!(unsafe { rc_set_lock_dir(dir.as_ptr()) }, 0);
 }

@@ -1679,19 +1679,16 @@ pub struct Applied {
 /// переименовать; прежний остаётся в `<файл>.bak`. Права (Unix) — как
 /// у прежнего файла.
 fn save_config(path: &std::path::Path, text: &str) -> std::io::Result<()> {
-    let mut tmp = path.as_os_str().to_owned();
-    tmp.push(".tmp");
-    let tmp = std::path::PathBuf::from(tmp);
-    std::fs::write(&tmp, text)?;
-    if let Ok(meta) = std::fs::metadata(path) {
-        let _ = std::fs::set_permissions(&tmp, meta.permissions());
+    use crate::fsutil::{existing_mode_or_private, write_atomic};
+    let mode = existing_mode_or_private(path);
+    if let Ok(old) = std::fs::read(path) {
+        // Копия прежнего файла — тоже через write_atomic, с его правами:
+        // fs::copy пошёл бы по подложенному симлинку `.bak`.
         let mut bak = path.as_os_str().to_owned();
         bak.push(".bak");
-        let _ = std::fs::copy(path, std::path::PathBuf::from(bak));
+        let _ = write_atomic(std::path::Path::new(&bak), &old, mode);
     }
-    std::fs::rename(&tmp, path).inspect_err(|_| {
-        let _ = std::fs::remove_file(&tmp);
-    })
+    write_atomic(path, text.as_bytes(), mode)
 }
 
 /// Узнать адреса серверов заранее (по 16 одновременно).

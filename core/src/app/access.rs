@@ -125,11 +125,24 @@ pub enum Verdict {
     Blocked(Duration),
 }
 
+/// Ключ учёта: IPv4 — как есть; IPv6 — префикс /64 (подсеть клиента:
+/// сменой адреса внутри своей /64 блокировку не обойти).
+fn key(ip: IpAddr) -> IpAddr {
+    match ip.to_canonical() {
+        IpAddr::V6(v6) => {
+            let mut o = v6.octets();
+            o[8..].fill(0);
+            IpAddr::V6(std::net::Ipv6Addr::from(o))
+        }
+        v4 => v4,
+    }
+}
+
 impl AuthGuard {
     /// Заблокирован ли адрес сейчас.
     pub fn is_blocked(&self, ip: IpAddr, now: Instant) -> bool {
         let map = self.map.lock().unwrap();
-        map.get(&ip.to_canonical())
+        map.get(&key(ip))
             .and_then(|e| e.blocked_until)
             .is_some_and(|t| now < t)
     }
@@ -137,7 +150,7 @@ impl AuthGuard {
     /// Неверный пароль с адреса `ip`.
     pub fn failure(&self, ip: IpAddr, now: Instant) -> Verdict {
         let mut map = self.map.lock().unwrap();
-        if map.len() >= MAX_TRACKED && !map.contains_key(&ip.to_canonical()) {
+        if map.len() >= MAX_TRACKED && !map.contains_key(&key(ip)) {
             // Чистим записи без действующей блокировки, давно не
             // обновлявшиеся; если и после этого места нет — вытесняем
             // самую старую.
@@ -151,7 +164,7 @@ impl AuthGuard {
                 }
             }
         }
-        let e = map.entry(ip.to_canonical()).or_insert(Entry {
+        let e = map.entry(key(ip)).or_insert(Entry {
             failures: 0,
             strikes: 0,
             blocked_until: None,
@@ -178,7 +191,7 @@ impl AuthGuard {
 
     /// Верный пароль — счёт неудач адреса обнуляется.
     pub fn success(&self, ip: IpAddr) {
-        self.map.lock().unwrap().remove(&ip.to_canonical());
+        self.map.lock().unwrap().remove(&key(ip));
     }
 }
 
@@ -211,6 +224,23 @@ mod tests {
         assert!(!allowed(&list, "192.168.1.11".parse().unwrap()));
         assert!(allowed(&list, "127.0.0.1".parse().unwrap()));
         assert!(allowed(&[], "192.168.1.11".parse().unwrap()));
+    }
+
+    #[test]
+    fn ipv6_same_64_shares_counter() {
+        let g = AuthGuard::default();
+        let t = Instant::now();
+        for i in 0..5u16 {
+            g.failure(format!("2001:db8:1:2::{i:x}").parse().unwrap(), t);
+        }
+        assert!(g.is_blocked("2001:db8:1:2::ffff".parse().unwrap(), t));
+        assert!(!g.is_blocked("2001:db8:1:3::1".parse().unwrap(), t));
+        // IPv4 — по-прежнему по адресу.
+        for _ in 0..5 {
+            g.failure("192.0.2.1".parse().unwrap(), t);
+        }
+        assert!(g.is_blocked("192.0.2.1".parse().unwrap(), t));
+        assert!(!g.is_blocked("192.0.2.2".parse().unwrap(), t));
     }
 
     #[test]

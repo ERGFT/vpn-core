@@ -48,8 +48,14 @@ pub struct RuleSet {
     pub ip_cidr: Vec<IpNet>,
 }
 
-/// Потолок распакованного `.srs` (наборы geosite — единицы МиБ).
-const MAX_UNPACKED: usize = 256 * 1024 * 1024;
+/// Потолок распакованного `.srs` (реальные наборы geosite/geoip — сотни
+/// КиБ, крупные — единицы МиБ).
+const MAX_UNPACKED: usize = 32 * 1024 * 1024;
+/// Потолок подсетей во всём наборе (реальные списки — десятки тысяч).
+/// Один диапазон адресов разворачивается в десятки (IPv4) и сотни (IPv6)
+/// подсетей, поэтому потолка распакованного размера мало: файл в сотни КиБ
+/// раздувался бы до гигабайтов `Vec<IpNet>`.
+const MAX_NETS: usize = 2_000_000;
 const PREFIX_LABEL: u8 = b'\r';
 const ROOT_LABEL: u8 = b'\n';
 
@@ -341,7 +347,11 @@ fn read_rule(r: &mut Reader, out: &mut RuleSet) -> std::result::Result<(), Strin
             }
             3 => out.domain_keyword.extend(r.strings()?),
             4 => out.domain_regex.extend(r.strings()?),
-            6 => out.ip_cidr.extend(read_ip_set(r)?),
+            6 => {
+                // Потолок — на весь файл, а не на один набор адресов.
+                let left = MAX_NETS.saturating_sub(out.ip_cidr.len());
+                out.ip_cidr.extend(read_ip_set(r, left)?);
+            }
             0xff => {
                 if r.byte()? != 0 {
                     return Err("invert не поддерживается".into());
@@ -470,7 +480,8 @@ fn read_domain_matcher(r: &mut Reader) -> std::result::Result<(Vec<String>, Vec<
     Ok((domains.into_iter().collect(), suffixes))
 }
 
-fn read_ip_set(r: &mut Reader) -> std::result::Result<Vec<IpNet>, String> {
+/// Набор адресов; подсетей — не больше `limit`.
+fn read_ip_set(r: &mut Reader, limit: usize) -> std::result::Result<Vec<IpNet>, String> {
     if r.byte()? != 1 {
         return Err("набор адресов: версия не 1".into());
     }
@@ -483,6 +494,9 @@ fn read_ip_set(r: &mut Reader) -> std::result::Result<Vec<IpNet>, String> {
         let from = read_addr(r)?;
         let to = read_addr(r)?;
         out.extend(range_to_cidrs(from, to)?);
+        if out.len() > limit {
+            return Err(format!("набор адресов: больше {MAX_NETS} подсетей"));
+        }
     }
     Ok(out)
 }
@@ -675,6 +689,49 @@ mod tests {
             .map(|n| format!("{}/{}", n.addr(), n.prefix()))
             .collect();
         assert_eq!(ips, ["10.0.0.0/24", "1.0.0.1/32", "1.0.0.2/32"]);
+    }
+
+    /// Правило с одним набором адресов из `n` диапазонов
+    /// 0.0.0.1–255.255.255.254 (каждый — 62 подсети).
+    fn wide_ranges_rule(body: &mut Vec<u8>, n: u64) {
+        body.push(0);
+        body.push(6);
+        body.push(1);
+        body.extend(n.to_be_bytes());
+        for _ in 0..n {
+            body.push(4);
+            body.extend([0, 0, 0, 1]);
+            body.push(4);
+            body.extend([255, 255, 255, 254]);
+        }
+        body.extend([0xff, 0]);
+    }
+
+    #[test]
+    fn subnet_bomb_is_rejected() {
+        assert_eq!(
+            range_to_cidrs([0, 0, 0, 1].into(), [255, 255, 255, 254].into())
+                .unwrap()
+                .len(),
+            62
+        );
+        // Один набор: N·62 > MAX_NETS при файле в сотни КиБ.
+        let n = (MAX_NETS / 62 + 2) as u64;
+        let mut body = Vec::new();
+        uvarint(&mut body, 1);
+        wide_ranges_rule(&mut body, n);
+        let e = parse_srs(&srs(body)).unwrap_err();
+        assert!(e.contains("подсетей"), "{e}");
+
+        // Несколько наборов, каждый ниже потолка, а вместе — выше.
+        let half = (MAX_NETS / 62 / 2 + 2) as u64;
+        let mut body = Vec::new();
+        uvarint(&mut body, 3);
+        for _ in 0..3 {
+            wide_ranges_rule(&mut body, half);
+        }
+        let e = parse_srs(&srs(body)).unwrap_err();
+        assert!(e.contains("подсетей"), "{e}");
     }
 
     #[test]

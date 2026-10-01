@@ -57,11 +57,11 @@ skip() { RESULTS+=("SKIP  $1 — $2"); echo; echo "==> $1: SKIP ($2)"; }
 step "cargo fmt --check" cargo fmt --check
 step "SPDX-метки лицензии" bash scripts/check_license_headers.sh
 step "cargo clippy (без предупреждений)" \
-    cargo clippy --workspace --all-targets -- -D warnings
-step "cargo test --workspace" cargo test --workspace
+    cargo clippy --locked --workspace --all-targets -- -D warnings
+step "cargo test --workspace" cargo test --locked --workspace
 
 if [[ $QUICK -eq 0 ]]; then
-    step "cargo build --release" cargo build --release --workspace
+    step "cargo build --release" cargo build --locked --release --workspace
 
     # Интероп и smoke нужен Go >= 1.27 (crypto/mldsa, crypto/hpke в stdlib).
     go_ok=0

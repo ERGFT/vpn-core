@@ -528,16 +528,8 @@ impl Subscription {
         let Some(f) = &self.cfg.cache_file else {
             return;
         };
-        let tmp = f.with_extension("tmp");
-        let r = (|| -> std::io::Result<()> {
-            std::fs::write(&tmp, body)?;
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600))?;
-            }
-            std::fs::rename(&tmp, f)
-        })();
+        // Права 0600 — сразу при создании: в списке UUID и адреса серверов.
+        let r = crate::fsutil::write_atomic(f, body, 0o600);
         if let Err(e) = r {
             tracing::warn!(subscription = %self.cfg.tag, error = %e, "подписка: список не сохранён");
         }

@@ -85,6 +85,12 @@ int rc_set_log_callback(RcCore *core, const char *level, rc_callback cb, void *u
  * rc_start; действует на весь процесс. cb = NULL — перестать. */
 void rc_set_protect(rc_protect cb, void *user);
 
+/* Windows: каталог для файла блокировки auto_route — запись в него только
+ * у SYSTEM и администраторов. Без него вход TUN с auto_route на Windows не
+ * запускается (с готовым дескриптором TUN не нужен). Вызывать до rc_start,
+ * один раз; на других системах ничего не делает. 0 — успех, -1 — ошибка. */
+int rc_set_lock_dir(const char *dir);
+
 /* Освободить строку, которую вернула библиотека. NULL — ничего. */
 void rc_free_string(char *s);
 

@@ -66,11 +66,11 @@ There has been no third-party crypto review of the REALITY implementation
 
 ## Building
 
-You need Rust (stable). On Linux:
+You need Rust 1.88 or newer (stable). On Linux:
 
 ```sh
 cargo build --release -p reality-client
-# -> target/release/reality-client  (~7 MB)
+# -> target/release/reality-client  (~14 MB)
 ```
 
 On Windows — see [`docs/WINDOWS.en.md`](docs/WINDOWS.en.md) or run
@@ -79,14 +79,18 @@ On Windows — see [`docs/WINDOWS.en.md`](docs/WINDOWS.en.md) or run
 ## Running
 
 ```sh
-reality-client --server 'vless://UUID@host:443?encryption=none&security=reality&sni=site.example&pbk=KEY&sid=SHORTID&type=tcp&flow=xtls-rprx-vision' \
-               --listen 127.0.0.1:1080
+# the link on the first line of a file readable only by you
+printf '%s\n' 'vless://UUID@host:443?encryption=none&security=reality&sni=site.example&pbk=KEY&sid=SHORTID&type=tcp&flow=xtls-rprx-vision' > server.txt
+chmod 600 server.txt
+reality-client --server-file server.txt --listen 127.0.0.1:1080
 ```
 
-- `--server` — the whole link, in quotes (it contains `&`). ⚠️ Command-line
-  arguments are visible to every user of the machine (the process list), and
-  the link contains your UUID. Safer: `--server-file file` (the link on the
-  first line of the file) or the `REALITY_SERVER` environment variable.
+- `--server-file` — a file with the link (first non-empty line); the same
+  via the `REALITY_SERVER` environment variable. There is also
+  `--server 'vless://…'` (the whole link, in quotes: it contains `&`), but
+  ⚠️ command-line arguments are visible to every user of the machine (the
+  process list), and the link contains your UUID; the client then prints a
+  warning.
 - `--listen` — local proxy address, `127.0.0.1:1080` by default. The port
   serves both SOCKS5 and HTTP proxy (detected by the first byte).
 - `--auth user:password` — require a SOCKS5 username and password. The client
@@ -354,6 +358,11 @@ tests, connections, rules, logs, mode.
   dashboard from `external_ui` is always allowed.
   `access_control_allow_private_network: true` — needed by Chrome for a
   dashboard hosted on the internet.
+- `allow_query_token` (extension) — accept the token in a WebSocket URL
+  (`?token=`), the way dashboards send it. By default only when the API
+  listens on 127.0.0.1: a URL with the token ends up in proxy logs and
+  browser history. An API on the network used from a browser dashboard
+  needs `"allow_query_token": true`.
 - `default_mode` — the mode at startup: `rule` (by rules), `global`
   (everything through the outbound selected in the `GLOBAL` group) or
   `direct` (everything direct). DNS hijacking works in every mode. The
@@ -437,7 +446,9 @@ While nobody listens to a stream, events are not even assembled. Up to 16
 streams at a time.
 
 - The token is always required (`Authorization: Bearer`; a WebSocket from a
-  browser — `?token=`). Only dashboard files and the `GET /` greeting are
+  browser — `?token=`, see `allow_query_token`). 5 wrong tokens from an
+  address (IPv6 — from a /64) block it for a minute and longer; 127.0.0.1
+  is never blocked. Only dashboard files and the `GET /` greeting are
   served without it, as in Clash. `Host` must be the API address (DNS
   rebinding protection); browser requests are accepted only from your own
   dashboard and sites in `access_control_allow_origin`; listening on
@@ -671,7 +682,10 @@ build (downloadable from the run page, "Artifacts") and
 `scripts/windows_live_test.ps1`: the service, its folder permissions and TUN
 with real traffic. Release — `git tag v0.2.0 && git push origin v0.2.0`:
 `.github/workflows/release.yml` builds Windows and Linux binaries with
-SHA-256 sums, `LICENSE` and `THIRD-PARTY-LICENSES.html` into a draft release.
+SHA-256 sums, `LICENSE`, `THIRD-PARTY-LICENSES.html` and an SBOM
+(`reality-client.sbom.cdx.json`, CycloneDX) into a draft release; the
+binaries' provenance is signed (GitHub attestation) — to check:
+`gh attestation verify reality-client-linux-x86_64 --repo ERGFT/vpn-core`.
 
 Xray-core for tests: `scripts/fetch_xray.sh` (download a release) or
 `scripts/build_xray_from_source.sh` (build from source via git — for

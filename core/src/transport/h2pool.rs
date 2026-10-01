@@ -32,6 +32,18 @@ use tokio::sync::OnceCell;
 use crate::error::{Error, Result};
 use crate::transport::xhttp::Range;
 
+/// Уменьшить счётчик на 1, если он больше нуля (без `fetch_update`: в
+/// новых Rust он переименован в `try_update`, которого нет в MSRV).
+fn dec_if_positive(a: &AtomicI64) {
+    let mut v = a.load(Ordering::Relaxed);
+    while v > 0 {
+        match a.compare_exchange_weak(v, v - 1, Ordering::Relaxed, Ordering::Relaxed) {
+            Ok(_) => return,
+            Err(cur) => v = cur,
+        }
+    }
+}
+
 /// Соединение без сессий закрывается через столько.
 pub const IDLE: Duration = Duration::from_secs(90);
 
@@ -159,12 +171,7 @@ impl<S: Clone> Lease<S> {
 
     /// Учесть ещё один запрос в этом соединении.
     pub fn note_request(&self) {
-        let _ = self
-            .entry
-            .left_requests
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| {
-                (v > 0).then_some(v - 1)
-            });
+        dec_if_positive(&self.entry.left_requests);
     }
 
     /// Соединение закрыто.
@@ -253,11 +260,7 @@ where
         } else {
             candidates[rand::thread_rng().gen_range(0..candidates.len())].clone()
         };
-        let _ = e
-            .left_reuse
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| {
-                (v > 0).then_some(v - 1)
-            });
+        dec_if_positive(&e.left_reuse);
         e.open.fetch_add(1, Ordering::Relaxed);
         e
     };

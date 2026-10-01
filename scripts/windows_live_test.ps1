@@ -179,6 +179,11 @@ curl.exe -sS --max-time 30 -o NUL "https://$site/"
 if ($LASTEXITCODE) { Show-Net; Fail 'HTTPS через TUN со strict_route не прошёл' }
 Write-Host 'OK: kill switch включён, трафик идёт через TUN'
 
+# Блокировка auto_route — в папке службы (права только у SYSTEM и
+# администраторов), а не в общем ProgramData.
+if (-not (Test-Path (Join-Path $dir 'auto_route.lock'))) { Fail 'нет auto_route.lock в папке службы' }
+Write-Host 'OK: блокировка auto_route в папке службы'
+
 # Один владелец auto_route: --tun-cleanup не снимает фильтры работающей службы.
 $out = & $exePath --tun-cleanup 2>&1 | Out-String
 if (-not $LASTEXITCODE) { Fail '--tun-cleanup снял kill switch работающей службы' }

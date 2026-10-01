@@ -39,8 +39,11 @@ GREASE, but it is a change in rustls behaviour for the whole process.
 
 ## Updating rustls
 
-rustls is pinned to the patch's version (dependabot leaves it alone). A
-new release — especially one with a security fix — means porting the
+rustls is pinned to the patch's version (dependabot leaves it alone), and
+`cargo audit`/`cargo deny` do not see it: it has no source in
+`Cargo.lock`. So a separate CI step checks the patch's version against
+RustSec — `scripts/rustls_advisories.sh` (the `audit` job, also weekly).
+A new release — especially one with a security fix — means porting the
 patch:
 
 1. Read rustls's release notes and security advisories

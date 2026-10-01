@@ -46,6 +46,11 @@ async fn setup(name: &str) -> Setup {
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("config.json");
     std::fs::write(&path, singbox("block")).unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+    }
     let cfg = Config::load(&path).unwrap();
     let r = App::build(&cfg).unwrap().start().await.unwrap();
     r.set_config_path(path.clone());
@@ -156,7 +161,15 @@ async fn read_check_apply_and_save() {
     assert_eq!(v["saved"], true);
     assert_eq!(std::fs::read_to_string(&s.path).unwrap(), singbox("direct"));
     let bak = s.dir.join("config.json.bak");
-    assert_eq!(std::fs::read_to_string(bak).unwrap(), singbox("block"));
+    assert_eq!(std::fs::read_to_string(&bak).unwrap(), singbox("block"));
+    // Права файла с секретами (0600) сохраняются — и у копии .bak.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = |p: &std::path::Path| std::fs::metadata(p).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode(&s.path), 0o600);
+        assert_eq!(mode(&bak), 0o600);
+    }
     assert_eq!(socks_rep(&s.r, echo).await, 0);
     // Сохранённое читается обратно и переживает перечитывание.
     assert_eq!(

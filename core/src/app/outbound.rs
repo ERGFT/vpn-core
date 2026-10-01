@@ -71,8 +71,22 @@ fn is_local_host(ip: IpAddr) -> bool {
     ip.is_loopback() || ip.is_unspecified()
 }
 
+/// Адреса, которые клиентам из сети недоступны через `direct`: сам
+/// компьютер и link-local (в том числе облачный metadata 169.254.169.254).
+/// Отдельно от [`is_local_host`]: та решает, «свой» ли источник, и
+/// link-local сосед не должен становиться своим.
+fn is_host_only_target(ip: IpAddr) -> bool {
+    let ip = ip.to_canonical();
+    ip.is_loopback()
+        || ip.is_unspecified()
+        || match ip {
+            IpAddr::V4(v) => v.is_link_local(),
+            IpAddr::V6(v) => (v.segments()[0] & 0xffc0) == 0xfe80,
+        }
+}
+
 fn check_local_access(meta: &Metadata, ip: IpAddr) -> Result<()> {
-    if is_local_host(ip) && !is_local_host(meta.source.ip()) {
+    if is_host_only_target(ip) && !is_local_host(meta.source.ip()) {
         return Err(Error::Protocol(format!(
             "direct: клиенту {} из сети нельзя соединяться с адресами этого компьютера ({ip})",
             meta.source.ip()
@@ -175,12 +189,23 @@ impl Outbound for DirectOutbound {
                 }
             }
             let s = tokio::time::timeout(DIRECT_CONNECT_TIMEOUT, async {
-                let addrs = resolve(dns_for(&self.dns, meta), &meta.target, meta.port).await?;
+                let mut addrs =
+                    resolve(dns_for(&self.dns, meta), &meta.target, meta.port).await?;
+                // Запрещённые адреса — до подключения: иначе соединение
+                // успевало бы установиться (оракул для сканирования портов).
+                if !is_local_host(meta.source.ip()) {
+                    addrs.retain(|a| !is_host_only_target(a.ip()));
+                    if addrs.is_empty() {
+                        return Err(Error::Protocol(format!(
+                            "direct: клиенту {} из сети нельзя соединяться с адресами этого компьютера",
+                            meta.source.ip()
+                        )));
+                    }
+                }
                 let s =
                     crate::transport::tcp_tls::connect_addrs(&addrs, &host_string(&meta.target))
                         .await?;
-                // Проверка по фактическому адресу: домен мог указывать на
-                // 127.0.0.1.
+                // Страховка: проверка по фактическому адресу.
                 check_local_access(meta, s.peer_addr()?.ip())?;
                 Ok::<_, Error>(s)
             })
@@ -288,7 +313,7 @@ impl UdpSession for DirectUdp {
                     return Ok(());
                 }
             };
-            if is_local_host(ip) && !is_local_host(self.source.ip()) {
+            if is_host_only_target(ip) && !is_local_host(self.source.ip()) {
                 tracing::debug!(%ip, "direct UDP: адрес этого компьютера недоступен клиентам из сети");
                 return Ok(());
             }
@@ -573,6 +598,48 @@ mod tests {
             Network::Tcp,
         );
         d.connect(&m).await.expect("локальному клиенту разрешено");
+    }
+
+    #[test]
+    fn host_only_targets() {
+        for s in [
+            "127.0.0.1",
+            "0.0.0.0",
+            "::1",
+            "169.254.169.254",
+            "fe80::1",
+            "::ffff:169.254.169.254",
+        ] {
+            assert!(is_host_only_target(s.parse().unwrap()), "{s}");
+        }
+        assert!(!is_host_only_target("8.8.8.8".parse().unwrap()));
+        assert!(!is_host_only_target("192.168.1.5".parse().unwrap()));
+        // Источник: link-local сосед — не «свой».
+        assert!(!is_local_host("169.254.10.10".parse().unwrap()));
+    }
+
+    /// Облачный metadata (link-local) клиентам из сети недоступен — отказ
+    /// сразу, без попытки соединения.
+    #[tokio::test]
+    async fn direct_denies_link_local_to_lan_clients() {
+        let d = DirectOutbound::new("direct");
+        for (source, target) in [
+            ("192.168.1.50:5000", "169.254.169.254"),
+            ("169.254.10.10:5000", "169.254.169.254"),
+            ("[2001:db8::5]:5000", "fe80::1"),
+        ] {
+            let target = match target.parse::<IpAddr>().unwrap() {
+                IpAddr::V4(v) => Address::Ipv4(v),
+                IpAddr::V6(v) => Address::Ipv6(v),
+            };
+            let m = meta(source, target.clone(), 80, Network::Tcp);
+            let e = tokio::time::timeout(Duration::from_secs(2), d.connect(&m))
+                .await
+                .expect("отказ до подключения, а не таймаут")
+                .err()
+                .expect("должен быть отказ");
+            assert!(e.to_string().contains("нельзя"), "{source} → {target}: {e}");
+        }
     }
 
     #[tokio::test]

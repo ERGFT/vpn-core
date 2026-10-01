@@ -59,8 +59,11 @@
 //!
 //! Безопасность:
 //! - токен обязателен всегда (`Authorization: Bearer …`; для WebSocket из
-//!   браузера — `?token=…`, иначе браузер его передать не может),
-//!   сравнение за постоянное время, после 10 неверных подряд — пауза;
+//!   браузера — `?token=…`, иначе браузер его передать не может: по
+//!   умолчанию только при API на loopback, в сеть — с `allow_query_token`,
+//!   ведь адрес с токеном оседает в журналах прокси и истории браузера),
+//!   сравнение за постоянное время; 5 неверных с адреса (IPv6 — с /64) —
+//!   адрес блокируется (loopback — нет);
 //! - заголовок `Host` должен быть адресом API (защита от DNS rebinding:
 //!   страница в браузере не сможет дотянуться до API через свой домен);
 //! - запрос из браузера (есть `Origin`) принимается только от своей панели
@@ -72,7 +75,6 @@
 
 use std::net::{IpAddr, SocketAddr};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -91,7 +93,7 @@ use tokio::sync::broadcast::error::RecvError;
 use tokio::sync::Semaphore;
 use tokio_util::compat::TokioAsyncReadCompatExt;
 
-use super::access::IpNet;
+use super::access::{AuthGuard, IpNet, Verdict};
 use super::events::{self, Event};
 use super::stats::{Mode, Tracker};
 use crate::error::{Error, Result};
@@ -114,6 +116,10 @@ pub struct ApiConfig {
     pub external_ui: Option<PathBuf>,
     /// Режим маршрутизации при запуске.
     pub default_mode: Option<Mode>,
+    /// Принимать токен в адресе (`?token=`) для WebSocket. По умолчанию —
+    /// только когда API слушает loopback: адрес с токеном оседает в
+    /// журналах прокси и истории браузера.
+    pub allow_query_token: Option<bool>,
 }
 
 /// Минимальная длина токена.
@@ -128,6 +134,8 @@ const MAX_STREAMS: usize = 16;
 /// Проверка задержки по умолчанию и потолок.
 const DELAY_TIMEOUT: Duration = Duration::from_secs(5);
 const DELAY_TIMEOUT_MAX: Duration = Duration::from_secs(30);
+/// Пауза после неверного токена.
+const FAILURE_PAUSE: Duration = Duration::from_millis(250);
 
 /// Что API умеет делать с приложением (реализует `Controller`).
 pub trait Control: Send + Sync {
@@ -173,10 +181,12 @@ pub struct Api {
     allow_ip: Vec<IpNet>,
     allow_origin: Vec<String>,
     allow_private_network: bool,
+    allow_query_token: bool,
     ui: Option<PathBuf>,
     tracker: Arc<Tracker>,
     control: Arc<dyn Control>,
-    failures: AtomicU32,
+    /// Неверные токены по адресам: после 5 подряд адрес блокируется.
+    guard: AuthGuard,
     streams: Arc<Semaphore>,
 }
 
@@ -271,10 +281,11 @@ impl Api {
                 .map(|o| o.trim_end_matches('/').to_ascii_lowercase())
                 .collect(),
             allow_private_network: cfg.allow_private_network,
+            allow_query_token: cfg.allow_query_token.unwrap_or(loopback),
             ui,
             tracker,
             control,
-            failures: AtomicU32::new(0),
+            guard: AuthGuard::default(),
             streams: Arc::new(Semaphore::new(MAX_STREAMS)),
         }))
     }
@@ -291,10 +302,11 @@ impl Api {
             allow_ip: Vec::new(),
             allow_origin: Vec::new(),
             allow_private_network: false,
+            allow_query_token: false,
             ui: None,
             tracker,
             control,
-            failures: AtomicU32::new(0),
+            guard: AuthGuard::default(),
             streams: Arc::new(Semaphore::new(MAX_STREAMS)),
         })
     }
@@ -326,6 +338,11 @@ impl Api {
             if !self.allowed(peer.ip()) {
                 continue;
             }
+            // Адрес, заблокированный за подбор токена, — сразу закрыть, не
+            // читая запрос.
+            if self.blocked(peer.ip()) {
+                continue;
+            }
             let Ok(permit) = sem.clone().try_acquire_owned() else {
                 continue;
             };
@@ -337,12 +354,22 @@ impl Api {
         }
     }
 
+    /// Заблокирован ли адрес за подбор токена. Loopback — никогда: забытый
+    /// токен в своей же панели не должен запирать на минуты.
+    fn blocked(&self, ip: IpAddr) -> bool {
+        !ip.to_canonical().is_loopback() && self.guard.is_blocked(ip, std::time::Instant::now())
+    }
+
     fn allowed(&self, ip: IpAddr) -> bool {
         let ip = ip.to_canonical();
         ip.is_loopback() || self.allow_ip.iter().any(|n| n.contains(ip))
     }
 
     async fn handle(&self, s: TcpStream, local: SocketAddr) {
+        let peer = s
+            .peer_addr()
+            .map(|a| a.ip())
+            .unwrap_or(IpAddr::from([0, 0, 0, 0]));
         let (r, mut w) = s.into_split();
         let mut r = BufReader::new(r);
         loop {
@@ -406,7 +433,7 @@ impl Api {
                 }
                 continue;
             }
-            if !self.authorized(&req).await {
+            if !self.authorized(&req, peer).await {
                 let _ = respond(
                     &mut w,
                     Reply::err(401, "нужен токен: Authorization: Bearer …"),
@@ -484,28 +511,38 @@ impl Api {
         Some(serve_file(root, &path[4..]))
     }
 
-    async fn authorized(&self, req: &Request) -> bool {
+    async fn authorized(&self, req: &Request, peer: IpAddr) -> bool {
         let header = req
             .header("authorization")
             .and_then(|v| v.strip_prefix("Bearer "));
         // Браузер не умеет ставить заголовки WebSocket — токен в адресе,
-        // как у Clash; только для WebSocket.
-        let query = if is_upgrade(req) {
+        // как у Clash; только для WebSocket и если это разрешено.
+        let query = if is_upgrade(req) && self.allow_query_token {
             req.query("token")
         } else {
             None
         };
         let got = header.map(str::to_string).or(query).unwrap_or_default();
+        // Заблокированный адрес (блокировка могла начаться посреди
+        // keep-alive соединения) — отказ без проверки токена.
+        if self.blocked(peer) {
+            tokio::time::sleep(FAILURE_PAUSE).await;
+            return false;
+        }
         if token_eq(got.as_bytes(), self.token.as_bytes()) {
-            self.failures.store(0, Ordering::Relaxed);
+            self.guard.success(peer);
             return true;
         }
-        let n = self.failures.fetch_add(1, Ordering::Relaxed) + 1;
-        if n >= 10 {
-            // Подбор токена: пауза растёт, но не больше 5 с.
-            tokio::time::sleep(Duration::from_millis((n as u64 * 100).min(5000))).await;
+        if peer.to_canonical().is_loopback() {
+            tracing::warn!(%peer, "api: неверный токен");
+        } else if let Verdict::Blocked(d) = self.guard.failure(peer, std::time::Instant::now()) {
+            tracing::warn!(%peer, block = ?d, "api: адрес заблокирован за подбор токена");
+        } else {
+            tracing::warn!(%peer, "api: неверный токен");
         }
-        tracing::warn!("api: неверный токен");
+        // Небольшая постоянная пауза: подбор с одного соединения медленный
+        // и для loopback, где блокировки нет.
+        tokio::time::sleep(FAILURE_PAUSE).await;
         false
     }
 
@@ -1211,7 +1248,160 @@ async fn respond<W: tokio::io::AsyncWrite + Unpin>(
 
 #[cfg(test)]
 mod tests {
-    use super::token_eq;
+    use super::*;
+
+    /// Control, который тестам блокировки токена не нужен.
+    struct NoControl;
+    impl Control for NoControl {
+        fn groups(&self) -> Value {
+            Value::Null
+        }
+        fn select(&self, _: &str, _: &str) -> Result<()> {
+            Ok(())
+        }
+        fn check(&self, _: &str) -> BoxFuture<'_, Result<()>> {
+            Box::pin(async { Ok(()) })
+        }
+        fn update_subscription(&self, _: &str) -> BoxFuture<'_, Result<usize>> {
+            Box::pin(async { Ok(0) })
+        }
+        fn reload(&self) -> BoxFuture<'_, Result<Vec<String>>> {
+            Box::pin(async { Ok(Vec::new()) })
+        }
+        fn proxies(&self) -> Value {
+            Value::Null
+        }
+        fn clash_groups(&self) -> Value {
+            Value::Null
+        }
+        fn delay<'a>(
+            &'a self,
+            _: &'a str,
+            _: &'a str,
+            _: Duration,
+        ) -> BoxFuture<'a, Result<Option<u64>>> {
+            Box::pin(async { Ok(None) })
+        }
+        fn group_delay<'a>(
+            &'a self,
+            _: &'a str,
+            _: &'a str,
+            _: Duration,
+        ) -> BoxFuture<'a, Result<Value>> {
+            Box::pin(async { Ok(Value::Null) })
+        }
+        fn rules(&self) -> Value {
+            Value::Null
+        }
+        fn configs(&self) -> Value {
+            Value::Null
+        }
+        fn providers(&self) -> Value {
+            Value::Null
+        }
+        fn provider_check<'a>(&'a self, _: &'a str) -> BoxFuture<'a, Result<()>> {
+            Box::pin(async { Ok(()) })
+        }
+        fn dns_query<'a>(&'a self, _: &'a str, _: &'a str) -> BoxFuture<'a, Result<Value>> {
+            Box::pin(async { Ok(Value::Null) })
+        }
+        fn config_text(&self) -> Result<(PathBuf, String)> {
+            Err(Error::Config("нет".into()))
+        }
+        fn apply<'a>(&'a self, _: &'a str, _: bool, _: bool) -> BoxFuture<'a, Result<Value>> {
+            Box::pin(async { Ok(Value::Null) })
+        }
+    }
+
+    fn with_token(token: &str) -> Request {
+        Request {
+            method: "GET".into(),
+            path: "/version".into(),
+            headers: vec![("Authorization".into(), format!("Bearer {token}"))],
+            body: Vec::new(),
+            close: false,
+        }
+    }
+
+    fn ws_with_query_token(token: &str) -> Request {
+        Request {
+            method: "GET".into(),
+            path: format!("/logs?token={token}"),
+            headers: vec![
+                ("Upgrade".into(), "websocket".into()),
+                ("Connection".into(), "Upgrade".into()),
+            ],
+            body: Vec::new(),
+            close: false,
+        }
+    }
+
+    #[tokio::test]
+    async fn query_token_only_on_loopback_by_default() {
+        const TOKEN: &str = "0123456789abcdef";
+        let api = |listen: &str, allow_query_token: Option<bool>| {
+            let cfg = ApiConfig {
+                listen: listen.parse().unwrap(),
+                token: None,
+                token_file: None,
+                allow_ip: vec!["192.0.2.0/24".parse().unwrap()],
+                allow_origin: Vec::new(),
+                allow_private_network: false,
+                external_ui: None,
+                default_mode: None,
+                allow_query_token,
+            };
+            Api::new(&cfg, TOKEN.into(), Tracker::new(), Arc::new(NoControl)).unwrap()
+        };
+        let lo: IpAddr = "127.0.0.1".parse().unwrap();
+        let lan: IpAddr = "192.0.2.5".parse().unwrap();
+        // API на loopback — как раньше: панели (yacd и др.) передают токен так.
+        assert!(
+            api("127.0.0.1:9090", None)
+                .authorized(&ws_with_query_token(TOKEN), lo)
+                .await
+        );
+        // API в сети — по умолчанию нет, только заголовком.
+        let net = api("0.0.0.0:9090", None);
+        assert!(!net.authorized(&ws_with_query_token(TOKEN), lan).await);
+        assert!(net.authorized(&with_token(TOKEN), lan).await);
+        // Явно разрешено.
+        assert!(
+            api("0.0.0.0:9090", Some(true))
+                .authorized(&ws_with_query_token(TOKEN), lan)
+                .await
+        );
+        // Явно запрещено и на loopback.
+        assert!(
+            !api("127.0.0.1:9090", Some(false))
+                .authorized(&ws_with_query_token(TOKEN), lo)
+                .await
+        );
+    }
+
+    #[tokio::test]
+    async fn token_guessing_blocks_the_address() {
+        let api = Api::embedded(Tracker::new(), Arc::new(NoControl));
+        let good = api.token.clone();
+        let attacker: IpAddr = "192.0.2.7".parse().unwrap();
+        let other: IpAddr = "198.51.100.9".parse().unwrap();
+        for _ in 0..5 {
+            assert!(!api.authorized(&with_token("wrong"), attacker).await);
+        }
+        assert!(api.blocked(attacker), "после 5 неверных токенов — блок");
+        // Заблокированному адресу не помогает и верный токен.
+        assert!(!api.authorized(&with_token(&good), attacker).await);
+        // Другие адреса и loopback не затронуты; успех одного адреса не
+        // сбрасывает чужую блокировку.
+        assert!(api.authorized(&with_token(&good), other).await);
+        assert!(api.blocked(attacker));
+        let lo: IpAddr = "127.0.0.1".parse().unwrap();
+        for _ in 0..6 {
+            assert!(!api.authorized(&with_token("wrong"), lo).await);
+        }
+        assert!(!api.blocked(lo), "loopback не блокируется");
+        assert!(api.authorized(&with_token(&good), lo).await);
+    }
 
     #[test]
     fn token_must_match_exactly() {

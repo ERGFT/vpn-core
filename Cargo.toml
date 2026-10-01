@@ -11,6 +11,9 @@ members = [
 [workspace.package]
 version = "0.1.0"
 edition = "2021"
+# Минимальная версия Rust (MSRV): ниже не дают зависимости (time, icu_*,
+# libloading — 1.88); проверяется в CI (job msrv).
+rust-version = "1.88"
 license = "GPL-3.0-or-later"
 authors = ["ERGFT"]
 repository = "https://github.com/ERGFT/vpn-core"
@@ -132,8 +135,11 @@ ml-kem = { version = "0.3", features = ["zeroize", "getrandom"] }
 [patch.crates-io]
 rustls = { path = "vendor/rustls-reality-patch" }
 
+# panic = "unwind" (по умолчанию), не "abort": профиль общий и для
+# библиотеки (ffi), где catch_unwind не даёт панике выйти за границу C и
+# уронить приложение-хост; и в клиенте паника в задаче tokio закрывает
+# одно соединение, а не весь VPN.
 [profile.release]
 lto = true
 codegen-units = 1
-panic = "abort"
 strip = true

@@ -104,6 +104,14 @@ pub struct InboundConfig {
 }
 
 impl InboundConfig {
+    /// Вход TUN, который сам ставит маршруты (`auto_route`): не с готовым
+    /// дескриптором и не выключен явно.
+    pub fn wants_auto_route(&self) -> bool {
+        self.kind == InboundKind::Tun && self.tun_fd.is_none() && self.auto_route.unwrap_or(true)
+    }
+}
+
+impl InboundConfig {
     pub fn new(kind: InboundKind) -> Self {
         InboundConfig {
             kind,
