@@ -17,7 +17,7 @@
 use std::sync::OnceLock;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use rand::Rng;
+use rand::RngExt;
 
 use crate::fingerprint::Browser;
 
@@ -47,7 +47,7 @@ fn chrome() -> &'static Chrome {
             .unwrap_or(0) as i64;
         // 2026-01-13 в днях от эпохи.
         let days_start: i64 = 20466;
-        let r: f64 = rand::thread_rng().gen();
+        let r: f64 = rand::rng().random();
         let lag = (r * r * 105.0).floor() as i64;
         let diff = (days_now - days_start - 35 - lag).max(0);
         let v = 144 + diff / 35;
@@ -88,7 +88,7 @@ fn firefox_version() -> i64 {
             .map(|d| d.as_secs() / 86400)
             .unwrap_or(0) as i64;
         let days_start: i64 = 20508; // 2026-02-24
-        let r: f64 = rand::thread_rng().gen();
+        let r: f64 = rand::rng().random();
         let lag = (r * r * 56.0).floor() as i64;
         148 + (days_now - days_start - lag).max(0) / 28
     })

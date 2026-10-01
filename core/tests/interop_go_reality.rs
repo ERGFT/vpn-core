@@ -108,7 +108,7 @@ fn link(port: u16, uuid: &uuid::Uuid, pbk: &[u8; 32], sid: &str) -> VlessConfig 
 }
 
 fn server_keys() -> ([u8; 32], [u8; 32]) {
-    let secret = StaticSecret::random_from_rng(rand::rngs::OsRng);
+    let secret = StaticSecret::random_from_rng(&mut rand::rand_core::UnwrapErr(rand::rngs::SysRng));
     let public = PublicKey::from(&secret);
     (secret.to_bytes(), public.to_bytes())
 }

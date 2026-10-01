@@ -13,7 +13,7 @@ use std::net::IpAddr;
 use std::time::Duration;
 
 use base64::Engine;
-use rand::RngCore;
+use rand::Rng;
 use serde::Deserialize;
 
 use crate::error::{Error, Result};
@@ -135,7 +135,7 @@ impl Noise {
             Data::Fixed(d) => d.clone(),
             Data::Rand(r) => {
                 let mut v = vec![0u8; r.rand() as usize];
-                rand::thread_rng().fill_bytes(&mut v);
+                rand::rng().fill_bytes(&mut v);
                 v
             }
         }

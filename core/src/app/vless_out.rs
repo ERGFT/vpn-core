@@ -186,7 +186,7 @@ impl XudpSession {
         let (down_tx, down_rx) = mpsc::channel::<Packet>(QUEUE);
         // GlobalID — один на сессию: сервер закрепляет за ней внешний порт.
         let mut global_id = [0u8; 8];
-        rand::RngCore::fill_bytes(&mut rand::thread_rng(), &mut global_id);
+        rand::Rng::fill_bytes(&mut rand::rng(), &mut global_id);
         tokio::spawn(async move {
             let stream = match dial(
                 &cfg,
