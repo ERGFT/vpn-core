@@ -124,8 +124,30 @@ impl HostLock {
     }
 }
 
+/// Абсолютный путь к системной утилите: служба работает от root/SYSTEM,
+/// и поиск по `PATH` дал бы выполнить подложенную программу.
+fn tool_path(name: &str) -> std::path::PathBuf {
+    #[cfg(windows)]
+    {
+        let root = std::env::var_os("SystemRoot").unwrap_or_else(|| "C:\\Windows".into());
+        std::path::Path::new(&root)
+            .join("System32")
+            .join(format!("{name}.exe"))
+    }
+    #[cfg(not(windows))]
+    {
+        for dir in ["/usr/sbin", "/sbin", "/usr/bin", "/bin"] {
+            let p = std::path::Path::new(dir).join(name);
+            if p.exists() {
+                return p;
+            }
+        }
+        std::path::PathBuf::from(name) // последний шанс — как раньше
+    }
+}
+
 fn run(cmd: &[String], quiet: bool) -> Result<()> {
-    let out = std::process::Command::new(&cmd[0])
+    let out = std::process::Command::new(tool_path(&cmd[0]))
         .args(&cmd[1..])
         .output()
         .map_err(|e| Error::Config(format!("tun: не удалось запустить {}: {e}", cmd[0])))?;
@@ -404,7 +426,14 @@ mod winapi {
 
 #[cfg(all(test, target_os = "linux"))]
 mod tests {
-    use super::HostLock;
+    use super::{tool_path, HostLock};
+
+    #[test]
+    fn tools_by_absolute_path() {
+        let ip = tool_path("ip");
+        assert!(ip.is_absolute(), "{}", ip.display());
+        assert!(ip.ends_with("ip"));
+    }
 
     #[test]
     fn host_lock_is_exclusive() {
