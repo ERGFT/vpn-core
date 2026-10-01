@@ -54,6 +54,8 @@ jobs:
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
         with:
           toolchain: stable
@@ -74,7 +76,10 @@ jobs:
           tool: cargo-about@0.9.2
       - name: лицензии зависимостей (новая зависимость с лицензией не из about.toml — ошибка)
         run: bash scripts/third_party_licenses.sh target/THIRD-PARTY-LICENSES.html
+      # Root на раннере — только для кода из этого репозитория: PR из
+      # форков этот шаг пропускают.
       - name: TUN в изолированном netns (root)
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
         run: sudo -E env "PATH=$PATH" XRAY_BIN="$PWD/target/xray/xray" CLIENT_BIN="$PWD/target/release/reality-client" bash scripts/tun_netns.sh
 
   windows:
@@ -83,6 +88,8 @@ jobs:
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
         with:
           toolchain: stable
@@ -90,11 +97,11 @@ jobs:
       - uses: ilammy/setup-nasm@72793074d3c8cdda771dba85f6deafe00623038b # v1
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
       - name: clippy (код только для Windows)
-        run: cargo clippy --workspace --all-targets -- -D warnings
+        run: cargo clippy --locked --workspace --all-targets -- -D warnings
       - name: тесты
-        run: cargo test --workspace
+        run: cargo test --locked --workspace
       - name: сборка
-        run: cargo build --release -p reality-client
+        run: cargo build --locked --release -p reality-client
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: reality-client-windows
