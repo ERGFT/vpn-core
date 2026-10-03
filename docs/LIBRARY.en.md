@@ -62,7 +62,7 @@ rc_stop(core);
 
   On a config error it returns NULL and puts the text in `err`.
 - **`rc_request(core, method, path, body, &status)`** — everything the
-  HTTP API can do ([README](../README.en.md), "API" section), with the same
+  HTTP API can do ([API.en.md](API.en.md)), with the same
   path and the same response, but without the network or a token:
   - groups and server selection (`/proxies`);
   - the mode (`PATCH /configs`);

@@ -1227,7 +1227,7 @@ lists.
 
 ## 17. Security
 
-A summary of measures (the threat model is in the README, the audit in
+A summary of measures (the threat model is in [SECURITY-MODEL.en.md](SECURITY-MODEL.en.md), the audit in
 PLAN.md):
 
 | Threat | Measure |
@@ -1275,7 +1275,7 @@ PLAN.md):
     load);
   - TUN at ~200–230 MiB/s in `scripts/tun_netns.sh`.
 
-  The results are in the README, "Performance and memory".
+  The results are in [TESTING.en.md](TESTING.en.md), "Performance and memory".
 
 ## 19. Errors and logging
 
@@ -1376,7 +1376,7 @@ PLAN.md):
 2. Read it in `singbox.rs` and `xray.rs` via `Obj`. Until it is read, an
    unknown key is already an error.
 3. Use it in `build_core`/`build_inbounds`.
-4. Add a test in `config/mod.rs` and a line in the README.
+4. Add a test in `config/mod.rs` and a line in [CONFIG.en.md](CONFIG.en.md) and CONFIG.md.
 
 **A new outbound.**
 

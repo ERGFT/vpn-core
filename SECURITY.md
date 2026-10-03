@@ -24,7 +24,7 @@
 - падение или неограниченный рост памяти от данных из сети;
 - доступ к прокси, API или службе Windows без прав.
 
-Известные ограничения перечислены в [README.md](README.md#безопасность) и
+Известные ограничения перечислены в [docs/SECURITY-MODEL.md](docs/SECURITY-MODEL.md), [docs/FEATURES.md](docs/FEATURES.md) и
 [PLAN.md](PLAN.md): стороннее крипто-ревью REALITY не проводилось.
 
 ## Поддерживаемые версии
@@ -61,7 +61,7 @@ Useful to include:
 - a crash or unbounded memory growth caused by data from the network;
 - access to the proxy, the API or the Windows service without permission.
 
-Known limitations are listed in [README.en.md](README.en.md#security) and
+Known limitations are listed in [docs/SECURITY-MODEL.en.md](docs/SECURITY-MODEL.en.md), [docs/FEATURES.en.md](docs/FEATURES.en.md) and
 [PLAN.md](PLAN.md) (in Russian): there has been no third-party crypto review
 of REALITY.
 

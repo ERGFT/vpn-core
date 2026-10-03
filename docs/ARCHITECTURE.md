@@ -1151,7 +1151,7 @@ API совместимо с Clash API — как у sing-box и mihomo: гото
 
 ## 17. Безопасность
 
-Сводка мер (модель угроз — в README, аудит — в PLAN.md):
+Сводка мер (модель угроз — в [SECURITY-MODEL.md](SECURITY-MODEL.md), аудит — в PLAN.md):
 
 | Угроза | Мера |
 |---|---|
@@ -1193,7 +1193,7 @@ API совместимо с Clash API — как у sing-box и mihomo: гото
   - кеш адресов сервера.
 - **Замеры**: `bench/` (criterion), `bench/src/bin/memwatch.rs`,
   `scripts/stage8_compare_with_xray.sh` (сравнение с Xray под нагрузкой),
-  TUN — ~200–230 МиБ/с в `scripts/tun_netns.sh`. Итоги — в README,
+  TUN — ~200–230 МиБ/с в `scripts/tun_netns.sh`. Итоги — в [TESTING.md](TESTING.md),
   «Производительность и память».
 
 ## 19. Ошибки и журнал
@@ -1292,7 +1292,7 @@ API совместимо с Clash API — как у sing-box и mihomo: гото
 2. Чтение в `singbox.rs` и `xray.rs` через `Obj`: неизвестные ключи и так
    будут ошибкой, пока их не прочитали.
 3. Использование в `build_core`/`build_inbounds`.
-4. Тест в `config/mod.rs` и строка в README.
+4. Тест в `config/mod.rs` и строка в [CONFIG.md](CONFIG.md) и CONFIG.en.md.
 
 **Новый выход.**
 

@@ -44,13 +44,23 @@ scripts/ci.sh           # плюс release-сборка, интероп с Xray-
   (`cargo +nightly fuzz run -O <цель>`; CI гоняет их каждую ночь,
   `.github/workflows/fuzz.yml`).
 - Меняется то, что видит пользователь, — обновите `README.md` и
-  `README.en.md` и допишите строку в `CHANGELOG.md` (раздел «Не выпущено»);
-  меняется решение или открывается риск — `PLAN.md`; меняется устройство
+  `README.en.md`, нужную страницу в `docs/` и допишите строку в
+  `CHANGELOG.md` (раздел «Не выпущено»). Где что: README — что доступно
+  сейчас и как начать; `docs/` — справочник; `CHANGELOG.md` — что
+  изменилось и что планируется; `PLAN.md` — технические решения и история
+  этапов. Статусы возможностей — одними словами: «готово»,
+  «экспериментально», «не поддерживается», «не проверено на этой
+  платформе».
+- Меняется решение или открывается риск — `PLAN.md`; меняется устройство
   ядра (новый модуль, путь соединения, предел) — `docs/ARCHITECTURE.md` и
   `docs/ARCHITECTURE.en.md`. С него же удобно начинать знакомство с кодом.
 - Комментарии в коде, `PLAN.md` и сообщения коммитов — на русском, как в
   остальном проекте; документация для пользователя — на двух языках
   (`*.md` и `*.en.md`); issue и pull request — на русском или английском.
+- **Две языковые версии меняются вместе.** Правите возможности,
+  ограничения или инструкции в `README.md` или в `docs/*.md` — в том же
+  pull request поправьте `*.en.md` (и наоборот) и перед отправкой сверьте,
+  что в обеих версиях одинаковые разделы, команды, статусы и ссылки.
 
 ## Уязвимости
 
@@ -101,14 +111,25 @@ CI on GitHub runs the same — on Linux and on real Windows.
   `.srs`, links, subscriptions, Mux, XUDP) comes with a fuzz target in
   `fuzz/` (`cargo +nightly fuzz run -O <target>`; CI runs them nightly,
   `.github/workflows/fuzz.yml`).
-- If what the user sees changes, update both `README.md` and `README.en.md`
-  and add a line to `CHANGELOG.md` (the "Unreleased" section);
-  if a decision changes or a risk appears — `PLAN.md`; if the core's
+- If what the user sees changes, update both `README.md` and `README.en.md`,
+  the relevant page in `docs/`, and add a line to `CHANGELOG.md` (the
+  "Unreleased" section). Where things go: the README — what is available
+  now and how to start; `docs/` — the reference; `CHANGELOG.md` — what
+  changed and what is planned; `PLAN.md` — technical decisions and the
+  history of stages. Feature statuses use the same words everywhere:
+  "ready", "experimental", "not supported", "not tested on this platform".
+- If a decision changes or a risk appears — `PLAN.md`; if the core's
   structure changes (a new module, connection path, limit) —
   `docs/ARCHITECTURE.md` and `docs/ARCHITECTURE.en.md`. It is also the best
   place to start reading the code.
 - Code comments, `PLAN.md` and commit messages are in Russian, like the rest
-  of the project; issues and pull requests may be in English or Russian.
+  of the project; user documentation is in two languages (`*.md` and
+  `*.en.md`); issues and pull requests may be in English or Russian.
+- **Both language versions change together.** If you change features,
+  limitations or instructions in `README.md` or `docs/*.md`, update the
+  `*.en.md` file in the same pull request (and vice versa), and before
+  sending check that both versions have the same sections, commands,
+  statuses and links.
 
 ## Vulnerabilities
 

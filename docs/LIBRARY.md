@@ -59,7 +59,7 @@ rc_stop(core);
   подписок), дескриптор TUN или -1. Ошибка настроек — NULL и текст в
   `err`.
 - **`rc_request(core, method, path, body, &status)`** — всё, что умеет
-  HTTP API ([README](../README.md), раздел «API»), тем же путём и с тем же
+  HTTP API ([API.md](API.md)), тем же путём и с тем же
   ответом, без сети и токена: группы и выбор сервера (`/proxies`), режим
   (`PATCH /configs`), соединения (`/connections`), проверка задержки,
   подписки (`/providers/proxies`), DNS-запрос, статистика (`/stats`).
