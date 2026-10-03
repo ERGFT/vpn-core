@@ -48,7 +48,10 @@ async fn site_name_is_only_in_debug() {
     assert!(!err.contains(SITE), "в тексте ошибки: {err}");
     assert!(!log.contains(SITE), "в журнале info: {log}");
     let (_, log) = logged(tracing::Level::DEBUG, resolve_host(SITE, 443)).await;
-    assert!(log.contains(SITE), "в debug имя остаётся для отладки: {log}");
+    assert!(
+        log.contains(SITE),
+        "в debug имя остаётся для отладки: {log}"
+    );
 }
 
 #[tokio::test]
@@ -58,6 +61,58 @@ async fn site_address_is_not_in_connect_error() {
     let addr = l.local_addr().unwrap();
     drop(l);
     let (err, log) = logged(tracing::Level::INFO, connect_addrs(&[addr], "site.test")).await;
-    assert!(!err.contains(&addr.to_string()) && !err.contains("site.test"), "{err}");
+    assert!(
+        !err.contains(&addr.to_string()) && !err.contains("site.test"),
+        "{err}"
+    );
     assert!(!log.contains("site.test"), "{log}");
+}
+
+/// Секреты из настроек не видны в `Debug` (`?cfg`, `.expect()`).
+#[test]
+fn secrets_are_not_in_debug_output() {
+    use reality_core::app::config::Config;
+    use reality_core::trojan::TrojanConfig;
+    use reality_core::vless::uri::VlessConfig;
+
+    const UUID: &str = "b831381d-6324-4d53-ad4f-8cda48b30811";
+    const PBK: &str = "SbVKOEMjK0sIlbwg4akyBg5mL5KZwwB-ed4eEE7YnRc";
+    const SID: &str = "0123abcd";
+    let link = format!(
+        "vless://{UUID}@example.com:443?security=reality&sni=example.com&pbk={PBK}&sid={SID}\
+         &type=tcp&flow=xtls-rprx-vision#name"
+    );
+    let v = VlessConfig::parse(&link).unwrap();
+    let r = v.reality_params().unwrap();
+    for s in [format!("{v:?}"), format!("{r:?}")] {
+        for secret in [UUID, PBK, SID, "0x01, 0x23"] {
+            assert!(!s.contains(secret), "{secret} в {s}");
+        }
+    }
+    let t =
+        TrojanConfig::parse("trojan://trojan-secret-pw@example.com:443?sni=example.com").unwrap();
+    assert!(!format!("{t:?}").contains("trojan-secret-pw"));
+
+    let cfg = Config::parse(&format!(
+        r#"{{
+  "inbounds": [{{ "type": "socks", "tag": "in", "listen": "127.0.0.1", "listen_port": 0,
+                 "users": [{{ "username": "user-secret", "password": "pass-secret" }}] }}],
+  "outbounds": [{{ "type": "vless", "tag": "proxy", "link": "{link}" }}],
+  "subscriptions": [{{ "tag": "sub", "url": "https://panel.example/sub/token-secret" }}],
+  "experimental": {{ "clash_api": {{ "external_controller": "127.0.0.1:0",
+                                    "secret": "api-token-secret-0123456789" }} }}
+}}"#
+    ))
+    .unwrap();
+    let s = format!("{cfg:?}");
+    for secret in [
+        UUID,
+        "user-secret",
+        "pass-secret",
+        "token-secret",
+        "api-token-secret",
+    ] {
+        assert!(!s.contains(secret), "{secret} в {s}");
+    }
+    assert!(s.contains("***"), "видно, что секрет задан: {s}");
 }

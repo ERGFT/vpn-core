@@ -101,7 +101,7 @@ impl Flow {
 /// параметры, что реально используются нижестоящими этапами; неизвестные
 /// query-параметры сохраняются в `raw_params` и не приводят к ошибке —
 /// новый параметр в конфиге не должен ломать клиент.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct VlessConfig {
     pub id: Uuid,
     pub host: String,
@@ -129,7 +129,7 @@ pub struct VlessConfig {
 /// Разобранные параметры REALITY (`pbk=`/`sid=` в ссылке) — Этап 5.
 /// Живут отдельно от [`VlessConfig`], потому что осмысленны только при
 /// `security=reality`; см. [`VlessConfig::reality_params`].
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct RealityParams {
     /// Статический X25519-публичный ключ сервера (`pbk=`) — 32 байта,
     /// base64url без padding, как у Xray-core.
@@ -142,6 +142,41 @@ pub struct RealityParams {
     /// кроме HMAC проверяется ещё и постквантовая подпись сервера в
     /// сертификате (`Mldsa65Verify` у Xray-core).
     pub mldsa65_verify: Option<Vec<u8>>,
+}
+
+/// UUID и параметры ссылки (`pbk`, `sid`, `pqv`, пароли транспорта) —
+/// скрыты; из `raw_params` видны только имена.
+impl std::fmt::Debug for VlessConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut params: Vec<&String> = self.raw_params.keys().collect();
+        params.sort();
+        f.debug_struct("VlessConfig")
+            .field("id", &crate::redact::Redacted)
+            .field("host", &self.host)
+            .field("port", &self.port)
+            .field("encryption", &self.encryption)
+            .field("security", &self.security)
+            .field("sni", &self.sni)
+            .field("fingerprint", &self.fingerprint)
+            .field("flow", &self.flow)
+            .field("network", &self.network)
+            .field("remark", &self.remark)
+            .field("raw_params", &params)
+            .field("ca_roots", &self.ca_roots.as_ref().map(|r| r.len()))
+            .field("fragment", &self.fragment)
+            .field("browser", &self.browser)
+            .finish()
+    }
+}
+
+impl std::fmt::Debug for RealityParams {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RealityParams")
+            .field("public_key", &crate::redact::Redacted)
+            .field("short_id", &crate::redact::Redacted)
+            .field("mldsa65_verify", &crate::redact::opt(&self.mldsa65_verify))
+            .finish()
+    }
 }
 
 impl VlessConfig {

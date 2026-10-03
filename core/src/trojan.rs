@@ -34,12 +34,21 @@ pub const CMD_UDP: u8 = 3;
 pub const MAX_UDP: usize = 65535;
 
 /// Разобранная ссылка trojan://.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct TrojanConfig {
     pub password: String,
     /// Параметры транспорта (TLS/REALITY, ws, grpc, …) — в том же виде,
     /// что у VLESS; UUID в нём не используется.
     pub transport: VlessConfig,
+}
+
+impl std::fmt::Debug for TrojanConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TrojanConfig")
+            .field("password", &crate::redact::Redacted)
+            .field("transport", &self.transport)
+            .finish()
+    }
 }
 
 impl TrojanConfig {

@@ -98,7 +98,7 @@ use super::events::{self, Event};
 use super::stats::{Mode, Tracker};
 use crate::error::{Error, Result};
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Clone, PartialEq)]
 pub struct ApiConfig {
     pub listen: SocketAddr,
     pub token: Option<String>,
@@ -120,6 +120,22 @@ pub struct ApiConfig {
     /// только когда API слушает loopback: адрес с токеном оседает в
     /// журналах прокси и истории браузера.
     pub allow_query_token: Option<bool>,
+}
+
+impl std::fmt::Debug for ApiConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ApiConfig")
+            .field("listen", &self.listen)
+            .field("token", &crate::redact::opt(&self.token))
+            .field("token_file", &self.token_file)
+            .field("allow_ip", &self.allow_ip)
+            .field("allow_origin", &self.allow_origin)
+            .field("allow_private_network", &self.allow_private_network)
+            .field("external_ui", &self.external_ui)
+            .field("default_mode", &self.default_mode)
+            .field("allow_query_token", &self.allow_query_token)
+            .finish()
+    }
 }
 
 /// Минимальная длина токена.

@@ -35,6 +35,7 @@ pub mod hostname;
 pub mod http1;
 pub mod net_protect;
 pub mod reality;
+pub mod redact;
 pub mod relay;
 pub mod socks5;
 pub mod transport;
