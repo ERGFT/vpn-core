@@ -80,6 +80,21 @@
   абсолютным путям; сервер или пароль в командной строке — предупреждение.
 - Паника больше не роняет приложение-хост в режиме библиотеки
   (`panic = "unwind"`); `libreality` собирается под Android и iOS.
+- Имена хоста в старой числовой записи IPv4 (`2130706433`, `0x7f000001`,
+  `0177.0.0.1`, `127.1`) отклоняются на входах, в маршрутизаторе и перед
+  разрешением имени: системный резолвер читал их как IP, и они обходили
+  правила по IP. Имена с управляющими символами из SOCKS5 и подписок
+  отклоняются или очищаются.
+- Журнал: на уровне `info` нет адресов посещаемых сайтов (они — только в
+  `debug`); `--log-file` создаётся с правами 0600 и ротируется при 10 МБ
+  во время работы (раньше — только при запуске), запись не блокирует
+  работу.
+- Токен API, UUID, пароли, ссылки и адреса подписок не выводятся в
+  отладочном представлении настроек (`***`).
+- Загрузка подписки не следует перенаправлению панели из интернета на
+  адрес этого компьютера или локальной сети.
+- Интероп-стенд (`scripts/interop_sandbox_bootstrap.sh`): зависимости
+  клонируются ровно на закреплённых коммитах.
 
 ### Проект
 - Лицензия GPL-3.0-or-later (раньше — MIT); SPDX-метки в исходниках;
@@ -198,6 +213,20 @@ It will include:
   by absolute paths; a server or password on the command line — a warning.
 - A panic no longer brings down the host app in library mode
   (`panic = "unwind"`); `libreality` builds for Android and iOS.
+- Host names in the legacy numeric IPv4 notation (`2130706433`,
+  `0x7f000001`, `0177.0.0.1`, `127.1`) are rejected at inbounds, in the
+  router and before name resolution: the system resolver read them as IPs
+  and they bypassed IP rules. Names with control characters from SOCKS5
+  and subscriptions are rejected or cleaned.
+- Log: at the `info` level there are no addresses of visited sites (only
+  at `debug`); `--log-file` is created with mode 0600 and rotated at 10 MB
+  while running (previously only on start), and writing does not block.
+- The API token, UUID, passwords, links and subscription URLs are not
+  shown in the debug representation of the config (`***`).
+- Subscription downloads do not follow a redirect from a panel on the
+  internet to an address of this computer or the local network.
+- Interop test bench (`scripts/interop_sandbox_bootstrap.sh`): dependencies
+  are cloned at exactly the pinned commits.
 
 ### Project
 - License GPL-3.0-or-later (previously MIT); SPDX headers in sources;
