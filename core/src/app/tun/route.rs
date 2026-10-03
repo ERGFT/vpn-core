@@ -13,6 +13,13 @@
 //! `route_exclude`), пока его не запустят снова или не выполнят
 //! `reality-client --tun-cleanup`.
 //!
+//! Свои правила и маршруты помечены протоколом [`PROTO`] (`protocol` у
+//! `ip rule`, `proto` у `ip route`), и снимается только помеченное: чужие
+//! правила на тех же приоритетах и чужие маршруты в той же таблице не
+//! трогаются ни при запуске, ни при выходе, ни в `--tun-cleanup`. Если
+//! приоритеты или таблица уже заняты чужими записями, `auto_route` не
+//! включается — с ошибкой, где перечислено, что занято.
+//!
 //! Windows: маршруты `0.0.0.0/1` и `128.0.0.0/1` (и `::/1`, `8000::/1`)
 //! через TUN — они точнее маршрута по умолчанию; соединения клиента
 //! привязаны к физическому интерфейсу (`IP_UNICAST_IF`). Маршруты живут,
@@ -38,6 +45,10 @@ const PREF_MARK: u32 = 9000;
 const PREF_TUN: u32 = 9001;
 #[cfg(target_os = "linux")]
 const PREF_BLOCK: u32 = 9002;
+/// Метка своих правил и маршрутов: номер протокола маршрутизации, не
+/// занятый в `rt_protos` (метка у правил — с Linux 4.17).
+#[cfg(target_os = "linux")]
+const PROTO: u8 = 202;
 
 /// Пока жив — трафик идёт в TUN; при уничтожении маршруты снимаются.
 pub struct RouteGuard {
@@ -225,6 +236,7 @@ pub fn cleanup() -> Result<()> {
         .map_err(|e| Error::Config(format!("--tun-cleanup: {e}; сначала остановите его")))?;
     #[cfg(target_os = "linux")]
     {
+        // Только помеченное PROTO: чужие правила и маршруты остаются.
         for cmd in linux_down() {
             let _ = run(&cmd, true);
         }
@@ -247,14 +259,97 @@ fn linux_down() -> Vec<Vec<String>> {
     let mut down = Vec::new();
     for f in ["-4", "-6"] {
         // Правил с одним приоритетом может быть несколько — по одному за раз.
+        // С `protocol` ядро удаляет только правило с этой меткой: чужое
+        // на том же приоритете остаётся.
         for pref in [PREF_MARK, PREF_TUN, PREF_BLOCK] {
             for _ in 0..16 {
-                down.push(args(&format!("ip {f} rule del pref {pref}")));
+                down.push(args(&format!(
+                    "ip {f} rule del pref {pref} protocol {PROTO}"
+                )));
             }
         }
-        down.push(args(&format!("ip {f} route flush table {TABLE}")));
+        down.push(args(&format!(
+            "ip {f} route flush table {TABLE} proto {PROTO}"
+        )));
     }
     down
+}
+
+/// `ip -N -j <args>` (числа вместо имён протоколов). Нет таблицы или
+/// семейства адресов (IPv6 выключен) — пустой список. Иначе ошибка: не
+/// узнав, чьи записи, ничего не трогаем.
+#[cfg(target_os = "linux")]
+fn ip_json(a: &[&str]) -> Result<serde_json::Value> {
+    let out = std::process::Command::new(tool_path("ip"))
+        .args(["-N", "-j"])
+        .args(a)
+        .output()
+        .map_err(|e| Error::Config(format!("tun: не удалось запустить ip: {e}")))?;
+    if !out.status.success() {
+        let err = String::from_utf8_lossy(&out.stderr);
+        if err.contains("does not exist") || err.contains("not supported") {
+            return Ok(serde_json::Value::Array(Vec::new()));
+        }
+        return Err(Error::Config(format!(
+            "tun: не удалось проверить правила и маршруты («ip -j {}»): {}",
+            a.join(" "),
+            err.trim()
+        )));
+    }
+    if out.stdout.iter().all(u8::is_ascii_whitespace) {
+        return Ok(serde_json::Value::Array(Vec::new()));
+    }
+    serde_json::from_slice(&out.stdout).map_err(|e| {
+        Error::Config(format!(
+            "tun: не удалось разобрать вывод «ip -j {}»: {e}",
+            a.join(" ")
+        ))
+    })
+}
+
+/// Помечена ли запись `ip -N -j` нашим протоколом.
+#[cfg(target_os = "linux")]
+fn is_ours(e: &serde_json::Value) -> bool {
+    match e.get("protocol") {
+        Some(serde_json::Value::String(p)) => p.parse::<u8>() == Ok(PROTO),
+        Some(serde_json::Value::Number(p)) => p.as_u64() == Some(u64::from(PROTO)),
+        _ => false,
+    }
+}
+
+/// Чужие записи: правила на приоритетах `PREF_*` и маршруты таблицы
+/// `TABLE` без метки [`PROTO`] (`rules`, `routes` — вывод `ip -N -j`).
+#[cfg(target_os = "linux")]
+fn foreign_in(f: &str, rules: &serde_json::Value, routes: &serde_json::Value) -> Vec<String> {
+    let list = |v: &serde_json::Value| v.as_array().cloned().unwrap_or_default();
+    let mut out = Vec::new();
+    for r in list(rules) {
+        let pref = r.get("priority").and_then(serde_json::Value::as_u64);
+        if pref.is_some_and(|p| [PREF_MARK, PREF_TUN, PREF_BLOCK].contains(&(p as u32)))
+            && !is_ours(&r)
+        {
+            out.push(format!("ip {f} rule: {r}"));
+        }
+    }
+    for r in list(routes) {
+        if !is_ours(&r) {
+            out.push(format!("ip {f} route table {TABLE}: {r}"));
+        }
+    }
+    out
+}
+
+/// Чужие правила и маршруты на наших приоритетах и в нашей таблице.
+#[cfg(target_os = "linux")]
+fn foreign_entries(fams: &[&str]) -> Result<Vec<String>> {
+    let table = TABLE.to_string();
+    let mut out = Vec::new();
+    for f in fams {
+        let rules = ip_json(&[f, "rule", "show"])?;
+        let routes = ip_json(&[f, "route", "show", "table", &table])?;
+        out.extend(foreign_in(f, &rules, &routes));
+    }
+    Ok(out)
 }
 
 #[cfg(target_os = "linux")]
@@ -266,8 +361,21 @@ fn linux(
     strict: bool,
 ) -> Result<RouteGuard> {
     let fams: Vec<&str> = if v6 { vec!["-4", "-6"] } else { vec!["-4"] };
+    // Приоритеты и таблица общие для всех программ: занятые чужими
+    // записями — не наши, и смешивать с ними свои нельзя.
+    let foreign = foreign_entries(&fams)?;
+    if !foreign.is_empty() {
+        return Err(Error::Config(format!(
+            "tun: приоритеты правил {PREF_MARK}–{PREF_BLOCK} или таблица маршрутов \
+             {TABLE} уже заняты другой программой — auto_route не включён, чужие \
+             записи не тронуты:\n  {}\nЕсли это остатки старой версии \
+             reality-client (без метки protocol {PROTO}), удалите их вручную: \
+             ip rule del pref <приоритет>; ip route flush table {TABLE}",
+            foreign.join("\n  ")
+        )));
+    }
     let down = linux_down();
-    // Остатки прошлого запуска (если его убили) — убрать.
+    // Свои остатки прошлого запуска (если его убили) — убрать.
     for cmd in &down {
         let _ = run(cmd, true);
     }
@@ -277,10 +385,10 @@ fn linux(
     let mut up = Vec::new();
     for f in &fams {
         up.push(args(&format!(
-            "ip {f} route replace default dev {ifname} table {TABLE}"
+            "ip {f} route replace default dev {ifname} table {TABLE} proto {PROTO}"
         )));
         up.push(args(&format!(
-            "ip {f} rule add pref {PREF_MARK} fwmark {MARK:#x} lookup main"
+            "ip {f} rule add pref {PREF_MARK} fwmark {MARK:#x} lookup main protocol {PROTO}"
         )));
     }
     // Исключения — правилом в main (а не throw в таблице TUN): так они
@@ -291,20 +399,20 @@ fn linux(
             continue;
         }
         up.push(args(&format!(
-            "ip {f} rule add pref {PREF_MARK} to {}/{} lookup main",
+            "ip {f} rule add pref {PREF_MARK} to {}/{} lookup main protocol {PROTO}",
             n.addr(),
             n.prefix()
         )));
     }
     for f in &fams {
         up.push(args(&format!(
-            "ip {f} rule add pref {PREF_TUN} lookup {TABLE}"
+            "ip {f} rule add pref {PREF_TUN} lookup {TABLE} protocol {PROTO}"
         )));
         if strict {
             // Kill switch: если TUN пропал (клиент убит), таблица пуста —
             // и этот запрет не пускает трафик мимо туннеля.
             up.push(args(&format!(
-                "ip {f} rule add pref {PREF_BLOCK} unreachable"
+                "ip {f} rule add pref {PREF_BLOCK} unreachable protocol {PROTO}"
             )));
         }
     }
@@ -449,7 +557,7 @@ mod winapi {
 
 #[cfg(all(test, target_os = "linux"))]
 mod tests {
-    use super::{tool_path, HostLock};
+    use super::{foreign_in, linux_down, tool_path, HostLock};
 
     #[test]
     fn tools_by_absolute_path() {
@@ -464,5 +572,49 @@ mod tests {
         assert!(HostLock::acquire().is_err(), "второй владелец");
         drop(first);
         HostLock::acquire().expect("свободна снова");
+    }
+
+    #[test]
+    fn foreign_rules_and_routes_are_found() {
+        // Вывод `ip -N -j rule show` и `ip -N -j route show table 2022`.
+        let rules: serde_json::Value = serde_json::from_str(
+            r#"[{"priority":0,"src":"all","table":"local"},
+                {"priority":9000,"src":"all","fwmark":"0x7e2","table":"main","protocol":"202"},
+                {"priority":9001,"src":"all","table":"2022","protocol":"202"},
+                {"priority":9001,"src":"all","table":"100"},
+                {"priority":9002,"src":"all","action":"unreachable","protocol":"16"},
+                {"priority":9500,"src":"all","table":"200"},
+                {"priority":32766,"src":"all","table":"main"}]"#,
+        )
+        .unwrap();
+        let routes: serde_json::Value = serde_json::from_str(
+            r#"[{"dst":"default","dev":"rtun0","protocol":"202","scope":"253"},
+                {"dst":"10.8.0.0/16","dev":"lo","scope":"253"},
+                {"dst":"10.7.0.0/16","dev":"lo","protocol":"4","scope":"253"}]"#,
+        )
+        .unwrap();
+        let f = foreign_in("-4", &rules, &routes);
+        assert_eq!(f.len(), 4, "{f:#?}");
+        assert!(
+            f[0].contains(r#""table":"100""#),
+            "чужое на нашем приоритете"
+        );
+        assert!(f[1].contains(r#""protocol":"16""#), "чужая метка");
+        assert!(f[2].contains("10.8.0.0/16") && f[3].contains("10.7.0.0/16"));
+        // Только свои — чужого нет; пусто — тоже.
+        let ours: serde_json::Value =
+            serde_json::from_str(r#"[{"priority":9001,"table":"2022","protocol":"202"}]"#).unwrap();
+        assert!(foreign_in("-4", &ours, &serde_json::json!([])).is_empty());
+    }
+
+    #[test]
+    fn cleanup_removes_only_marked_entries() {
+        for cmd in linux_down() {
+            let c = cmd.join(" ");
+            assert!(
+                c.ends_with("protocol 202") || c.ends_with("proto 202"),
+                "без метки снялось бы чужое: {c}"
+            );
+        }
     }
 }

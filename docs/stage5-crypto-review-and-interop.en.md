@@ -55,7 +55,32 @@ Specific questions for the reviewer (not just "check everything"):
    themselves, but also that the rest of the rustls logic around them is not
    broken — three very narrow but not isolated changes in shared code).
 
+### How to record and close the review
+
+Until the review is done, do not use the client where a compromised
+connection would have serious consequences. The review is closed when the
+repository has a report (for example, `docs/reviews/<date>-reality.md`) and
+all its findings are fixed or knowingly accepted. The report contains:
+
+- **what was reviewed:** the commit (`git rev-parse HEAD`), the rustls
+  version under the patch (currently 0.23.45,
+  `vendor/rustls-reality-patch/Cargo.toml`) and the SHA-256 of
+  `vendor/rustls-reality-patch.diff`; the list of files from the list
+  above and which of them were not looked at;
+- **who reviewed** and when;
+- **findings** — a table: number, file and line, description, severity,
+  status (fixed — by which commit; accepted — why);
+- answers to the four questions above.
+
+After the fixes — a note in the report on which commit closed each
+finding, and a line in `CHANGELOG.md`.
+
 ## 2. Interop test against a live REALITY server
+
+> Done: `scripts/interop_xray.sh` (23 tests against real Xray-core,
+> including REALITY, Vision, ML-DSA-65) and `scripts/interop_go_reality.sh`
+> (the `XTLS/REALITY` Go library) run in CI on every push. The steps below
+> are for checking against your own server.
 
 All current tests (`reality_full_stack.rs`, `reality_handshake.rs`) run test
 servers started INSIDE the test itself and implemented by hand (not real

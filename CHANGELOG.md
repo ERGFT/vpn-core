@@ -51,6 +51,11 @@
 ### Безопасность
 - `auto_route` — один владелец на компьютер: второй экземпляр и
   `--tun-cleanup` больше не снимают маршруты и kill switch работающего.
+- `auto_route` на Linux не трогает чужие правила и маршруты: свои
+  помечены протоколом 202 и снимаются только они, а если приоритеты
+  9000–9002 или таблица 2022 заняты другой программой, `auto_route` не
+  включается с понятной ошибкой (раньше при запуске и в `--tun-cleanup`
+  удалялось всё на этих приоритетах и вся таблица).
 - Токен API сравнивается с проверкой длины (раньше токен длиннее на
   256·k байт с правильным началом проходил).
 - Пути в настройках через API проверяются и после разрешения
@@ -163,6 +168,12 @@ It will include:
 - `auto_route` has one owner per computer: a second instance and
   `--tun-cleanup` no longer remove the routes and kill switch of a running
   one.
+- `auto_route` on Linux leaves other programs' rules and routes alone: its
+  own are marked with protocol 202 and only those are removed; if
+  priorities 9000–9002 or table 2022 are taken by another program,
+  `auto_route` is not enabled and a clear error is shown (previously
+  everything at those priorities and the whole table were deleted on start
+  and in `--tun-cleanup`).
 - The API token is compared with a length check (a token 256·k bytes
   longer with the right prefix used to pass).
 - Paths in a config sent through the API are also checked after resolving
