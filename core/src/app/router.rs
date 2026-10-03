@@ -226,6 +226,14 @@ impl Router {
                     d.len()
                 )));
             }
+            // `2130706433`, `0x7f.1`: системный резолвер прочтёт их как IPv4,
+            // а правила по IP их не видят — откуда бы имя ни пришло (вход,
+            // sniffing, fake-IP).
+            if crate::hostname::is_disguised_ip(d) {
+                return Err(Error::Protocol(
+                    "числовое имя, не являющееся IPv4-адресом".into(),
+                ));
+            }
         }
         let mode = self.tracker.mode();
         if mode != Mode::Rule {
@@ -442,6 +450,12 @@ mod tests {
         assert_eq!(r.route(&mut ok).await.unwrap().tag(), "proxy");
         let mut long = meta(dom(&"a".repeat(256)), None);
         assert!(r.route(&mut long).await.is_err());
+        // Числовое имя (из sniffing, fake-IP, TUN) — тоже отказ; IP строкой
+        // в поле домена проходит.
+        let mut numeric = meta(dom("3232235777"), None);
+        assert!(r.route(&mut numeric).await.is_err());
+        let mut ip_str = meta(dom("192.168.1.1"), None);
+        assert!(r.route(&mut ip_str).await.is_ok());
         std::fs::remove_dir_all(&dir).ok();
     }
 

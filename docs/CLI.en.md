@@ -44,8 +44,10 @@ reality-client --server-file server.txt --listen 127.0.0.1:1080
 - `--no-xudp` — UDP without XUDP (a separate stream per destination) — for
   servers that do not know XUDP.
 - Log — to stderr, `info` level by default; `--log-file file` — to a file
-  (over 10 MB the previous one is moved to `.old`). Visited site addresses
-  are not logged at this level (only with `RUST_LOG=debug`).
+  readable only by the owner (0600; the log holds server names and proxy
+  client addresses); once it reaches 10 MB it is moved to `.old` while
+  running (replacing the previous `.old`). Visited site addresses are not
+  logged at the `info` level — only with `RUST_LOG=debug`.
 
 ## Autostart
 

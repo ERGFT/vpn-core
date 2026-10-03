@@ -1059,7 +1059,9 @@ mod h3c {
     }
 
     async fn connect(c: VlessConfig) -> Result<h2pool::Connected<Send3>> {
-        let addrs = resolve_server(&c.host, c.port).await?;
+        let addrs = resolve_server(&c.host, c.port)
+            .await
+            .map_err(|e| crate::transport::tcp_tls::server_error(&c.host, e))?;
         let roots = c.ca_roots.as_ref().map(|r| (**r).clone());
         let mut last = None;
         for addr in addrs {

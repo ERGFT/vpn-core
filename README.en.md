@@ -191,9 +191,10 @@ exists but has not been properly tested on this OS.
 ## Security
 
 - With `security=reality` the UUID goes only to a server that passed
-  REALITY verification, with no fallback to ordinary certificate checks.
-  With `security=tls` — only to whoever presents a valid certificate for
-  that name. With `security=none` anyone on the path to the server sees it.
+  REALITY verification; a connection to a server that failed it is never
+  handed to the app, even if the server has a genuine certificate. With
+  `security=tls` — only to whoever presents a valid certificate for that
+  name. With `security=none` anyone on the path to the server sees it.
 - For proxied traffic in which the app passes the site name (SOCKS5 with a
   hostname, HTTP proxy, TUN with fake-IP), the name is resolved by the
   server and the local DNS does not see it. Exceptions — the app resolved

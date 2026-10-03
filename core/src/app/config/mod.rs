@@ -61,7 +61,7 @@ impl InboundKind {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct InboundConfig {
     pub kind: InboundKind,
     pub tag: Option<String>,
@@ -101,6 +101,34 @@ pub struct InboundConfig {
     /// только программно, в режиме библиотеки; маршруты тогда ставит
     /// система, а не клиент.
     pub tun_fd: Option<i32>,
+}
+
+impl std::fmt::Debug for InboundConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("InboundConfig")
+            .field("kind", &self.kind)
+            .field("tag", &self.tag)
+            .field("listen", &self.listen)
+            .field("auth", &crate::redact::opt(&self.auth))
+            .field("auth_file", &self.auth_file)
+            .field("allow_ip", &self.allow_ip)
+            .field("max_conns", &self.max_conns)
+            .field("sniff", &self.sniff)
+            .field(
+                "sniff_override_destination",
+                &self.sniff_override_destination,
+            )
+            .field("interface_name", &self.interface_name)
+            .field("inet4_address", &self.inet4_address)
+            .field("inet6_address", &self.inet6_address)
+            .field("mtu", &self.mtu)
+            .field("auto_route", &self.auto_route)
+            .field("route_exclude", &self.route_exclude)
+            .field("strict_route", &self.strict_route)
+            .field("dns_hijack", &self.dns_hijack)
+            .field("tun_fd", &self.tun_fd)
+            .finish()
+    }
 }
 
 impl InboundConfig {
@@ -203,7 +231,7 @@ impl OutboundKind {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct OutboundConfig {
     pub tag: String,
     pub kind: OutboundKind,
@@ -238,6 +266,29 @@ pub struct OutboundConfig {
     pub tolerance: Option<u64>,
     /// selector: участник по умолчанию.
     pub default: Option<String>,
+}
+
+impl std::fmt::Debug for OutboundConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("OutboundConfig")
+            .field("tag", &self.tag)
+            .field("kind", &self.kind)
+            .field("link", &crate::redact::opt(&self.link))
+            .field("link_file", &self.link_file)
+            .field("ca_file", &self.ca_file)
+            .field("xudp", &self.xudp)
+            .field("allow_insecure", &self.allow_insecure)
+            .field("mux", &self.mux)
+            .field("fragment", &self.fragment)
+            .field("noises", &self.noises)
+            .field("outbounds", &self.outbounds)
+            .field("subscriptions", &self.subscriptions)
+            .field("url", &self.url)
+            .field("interval", &self.interval)
+            .field("tolerance", &self.tolerance)
+            .field("default", &self.default)
+            .finish()
+    }
 }
 
 impl OutboundConfig {

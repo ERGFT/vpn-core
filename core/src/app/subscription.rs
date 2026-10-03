@@ -35,7 +35,7 @@ use crate::error::{Error, Result};
 const MAX_BODY: usize = 4 * 1024 * 1024;
 const FETCH_TIMEOUT: Duration = Duration::from_secs(30);
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SubscriptionConfig {
     pub tag: String,
@@ -69,6 +69,28 @@ pub struct SubscriptionConfig {
     pub mux: Option<u16>,
     /// Дробление ClientHello к серверам подписки.
     pub fragment: Option<crate::transport::fragment::FragmentConfig>,
+}
+
+/// Адрес подписки — секрет (в нём токен панели).
+impl std::fmt::Debug for SubscriptionConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SubscriptionConfig")
+            .field("tag", &self.tag)
+            .field("url", &crate::redact::opt(&self.url))
+            .field("url_file", &self.url_file)
+            .field("update_interval", &self.update_interval)
+            .field("detour", &self.detour)
+            .field("cache_file", &self.cache_file)
+            .field("allow_insecure", &self.allow_insecure)
+            .field("include", &self.include)
+            .field("exclude", &self.exclude)
+            .field("user_agent", &self.user_agent)
+            .field("xudp", &self.xudp)
+            .field("ca_file", &self.ca_file)
+            .field("mux", &self.mux)
+            .field("fragment", &self.fragment)
+            .finish()
+    }
 }
 
 fn yes() -> bool {
@@ -353,9 +375,15 @@ pub fn parse(body: &[u8]) -> Result<Parsed> {
             "подписка: ответ не похож ни на список ссылок, ни на base64, ни на JSON/YAML".into(),
         ));
     }
+    // Имя задаёт панель, и оно попадает в tag выхода, а с ним — в журнал и
+    // API: без управляющих символов (`\n` подделывал бы строки журнала).
     // Одинаковые имена — с номером, чтобы tag серверов были разными.
     let mut seen: HashMap<String, usize> = HashMap::new();
     for (name, _) in &mut out.servers {
+        name.retain(|c| !c.is_control());
+        if name.is_empty() {
+            *name = "server".into();
+        }
         let n = seen.entry(name.clone()).or_default();
         *n += 1;
         if *n > 1 {
@@ -482,7 +510,7 @@ impl Subscription {
                 Ok(o) => built.push(o),
                 Err(e) if e.to_string().contains("security=none") => insecure += 1,
                 Err(e) => {
-                    tracing::debug!(server = %name, error = %e, "подписка: сервер пропущен");
+                    tracing::debug!(server = ?name, error = %e, "подписка: сервер пропущен");
                     broken += 1;
                 }
             }
@@ -772,6 +800,13 @@ proxies:
              "uuid": "44444444-4444-4444-4444-444444444444"}]}"#;
         let p = parse(j.as_bytes()).unwrap();
         assert_eq!((p.invalid, p.servers.len()), (1, 0));
+    }
+
+    #[test]
+    fn control_characters_are_removed_from_names() {
+        let list = "vless://11111111-1111-1111-1111-111111111111@a.example:443?security=tls#Good%0AFAKE%20LOG\n";
+        let p = parse(list.as_bytes()).unwrap();
+        assert_eq!(p.servers[0].0, "GoodFAKE LOG");
     }
 
     #[test]

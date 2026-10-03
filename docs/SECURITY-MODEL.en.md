@@ -12,8 +12,11 @@ history — `PLAN.md`, section "Аудит безопасности" / security 
 - **Who receives the UUID depends on `security`:**
   - `reality` — only a server that passed REALITY verification. VLESS data
     is sent after a full handshake with verification (certificate HMAC,
-    ML-DSA-65 with `pqv=`). There is no fallback to regular certificate
-    verification; a degenerate `pbk=` is rejected.
+    ML-DSA-65 with `pqv=`). If REALITY verification fails, the client
+    checks the certificate like an ordinary browser only to finish the
+    handshake plausibly (see below): that connection is never handed to
+    the app and the UUID is not sent over it. A degenerate `pbk=` is
+    rejected.
   - `tls` — whoever presents a valid certificate for the `sni=` name (by
     the built-in root set or `--ca`): the same protection as HTTPS, the
     UUID goes to anyone holding a valid certificate for that name.

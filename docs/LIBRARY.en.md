@@ -80,7 +80,11 @@ rc_stop(core);
 - **`rc_set_event_callback(core, cb, user)`** — events (like the
   `GET /events` stream): connections opening and closing, group switches,
   subscription updates, reloads, mode changes.
-- **`rc_set_log_callback(core, level, cb, user)`** — the core's log.
+- **`rc_set_log_callback(core, level, cb, user)`** — the core's log. At
+  the `info` level (the default) it contains no site addresses; at
+  `debug` (and with `RUST_LOG=debug`) the log — both the callback and
+  `GET /logs` — includes the domains of visited sites and DNS results. Do
+  not send such a log to a server or show it without the user knowing.
 - **`rc_stop(core)`** — stop: inbounds close, routes are restored.
 - **`rc_free_string(s)`** — free a string returned by the library.
 

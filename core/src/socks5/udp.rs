@@ -42,8 +42,14 @@ pub fn parse_datagram(buf: &[u8]) -> Result<(TargetAddr, u16, usize)> {
             let len = *buf.get(4).ok_or_else(bad)? as usize;
             let d = buf.get(5..5 + len).ok_or_else(bad)?;
             let d = String::from_utf8(d.to_vec())
-                .map_err(|_| Error::Socks5("домен не в UTF-8".into()))?;
-            (TargetAddr::Domain(d), 5 + len)
+                .ok()
+                .filter(|d| super::valid_domain(d))
+                .ok_or_else(|| {
+                    Error::Socks5(
+                        "домен пустой, не в UTF-8, с управляющими символами или числовой".into(),
+                    )
+                })?;
+            (super::domain_or_ip(d), 5 + len)
         }
         other => return Err(Error::UnsupportedAddressType(other)),
     };
@@ -136,6 +142,21 @@ pub fn recv_result(r: std::io::Result<(usize, SocketAddr)>) -> Result<Option<(us
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn numeric_or_control_domain_in_datagram_is_rejected() {
+        for d in [&b"3232235777"[..], b"x\ny"] {
+            let mut b = vec![0, 0, 0, 0x03, d.len() as u8];
+            b.extend_from_slice(d);
+            b.extend_from_slice(&[0, 53]);
+            assert!(parse_datagram(&b).is_err(), "{d:?}");
+        }
+        let mut b = vec![0, 0, 0, 0x03, 7];
+        b.extend_from_slice(b"8.8.8.8");
+        b.extend_from_slice(&[0, 53]);
+        let (a, port, _) = parse_datagram(&b).unwrap();
+        assert_eq!((a, port), (TargetAddr::Ip("8.8.8.8".parse().unwrap()), 53));
+    }
 
     #[test]
     fn datagram_header_roundtrip() {

@@ -186,6 +186,32 @@ impl Response {
     }
 }
 
+/// Адрес этого компьютера или локальной сети: панель из интернета не
+/// должна перенаправлять сюда загрузку (слепой SSRF: ответ разбирается
+/// как подписка, но сам запрос уходит). Имя, которое лишь *разрешается* во
+/// внутренний адрес, здесь не ловится.
+fn is_internal(host: &str) -> bool {
+    use std::net::IpAddr;
+    if host.eq_ignore_ascii_case("localhost")
+        || host.to_ascii_lowercase().ends_with(".localhost")
+        || crate::hostname::is_disguised_ip(host)
+    {
+        return true;
+    }
+    match host.parse::<IpAddr>().map(|ip| ip.to_canonical()) {
+        Ok(IpAddr::V4(v)) => {
+            v.is_loopback() || v.is_unspecified() || v.is_link_local() || v.is_private()
+        }
+        Ok(IpAddr::V6(v)) => {
+            v.is_loopback()
+                || v.is_unspecified()
+                || (v.segments()[0] & 0xffc0) == 0xfe80
+                || (v.segments()[0] & 0xfe00) == 0xfc00
+        }
+        Err(_) => false,
+    }
+}
+
 /// GET с переходами по перенаправлениям (до 3; `https_only` — никуда,
 /// кроме https). Тело — не больше `limit` байт.
 pub async fn get(
@@ -199,6 +225,8 @@ pub async fn get(
 ) -> Result<Response> {
     tokio::time::timeout(timeout, async {
         let mut u = Url::parse(url)?;
+        // Панель во внутренней сети может перенаправлять внутри неё.
+        let internal_ok = is_internal(&u.host);
         for _ in 0..4 {
             if https_only && !u.https {
                 return Err(Error::Config(format!(
@@ -229,6 +257,11 @@ pub async fn get(
                     .join(&loc)
                     .map_err(|e| Error::Protocol(format!("перенаправление: {e}")))?;
                 u = Url::parse(next.as_str())?;
+                if !internal_ok && is_internal(&u.host) {
+                    return Err(Error::Protocol(
+                        "перенаправление на внутренний адрес отклонено".into(),
+                    ));
+                }
                 continue;
             }
             let mut body = Limited {
@@ -251,6 +284,32 @@ pub async fn get(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn internal_hosts() {
+        for h in [
+            "localhost",
+            "a.localhost",
+            "127.0.0.1",
+            "10.1.2.3",
+            "192.168.1.1",
+            "169.254.169.254",
+            "0.0.0.0",
+            "::1",
+            "fe80::1",
+            "fd00::1",
+            "::ffff:127.0.0.1",
+            "3232235777",
+        ] {
+            assert!(is_internal(h), "{h}");
+        }
+        for h in ["panel.example", "1.1.1.1", "2001:db8::1"] {
+            assert!(!is_internal(h), "{h}");
+        }
+        // Адрес приходит без скобок; числовая форма уже нормализована.
+        assert_eq!(Url::parse("https://[::1]/").unwrap().host, "::1");
+        assert_eq!(Url::parse("https://2130706433/").unwrap().host, "127.0.0.1");
+    }
 
     #[test]
     fn urls() {

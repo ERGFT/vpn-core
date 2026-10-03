@@ -30,6 +30,7 @@ use std::path::PathBuf;
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
+mod logfile;
 mod sysproxy;
 #[cfg(windows)]
 mod winservice;
@@ -249,7 +250,11 @@ fn config_from_args(args: &Args) -> Result<Config> {
 
 /// Журнал: в stderr или в файл (`--log-file`); он же — поток `GET /logs`
 /// в API.
-fn init_logging(log_file: Option<&std::path::Path>) -> Result<()> {
+/// Возвращает guard очереди записи в файл: держать до выхода из `main`,
+/// иначе последние строки журнала не дойдут до файла.
+fn init_logging(
+    log_file: Option<&std::path::Path>,
+) -> Result<Option<tracing_appender::non_blocking::WorkerGuard>> {
     use reality_core::app::events::LogLayer;
     use tracing_subscriber::layer::SubscriberExt;
     use tracing_subscriber::util::SubscriberInitExt;
@@ -260,24 +265,20 @@ fn init_logging(log_file: Option<&std::path::Path>) -> Result<()> {
         tracing_subscriber::EnvFilter::new("info,netstack_smoltcp=error,smoltcp=error")
     });
     if let Some(path) = log_file {
-        if std::fs::metadata(path).is_ok_and(|m| m.len() > 10 << 20) {
-            let mut old = path.as_os_str().to_owned();
-            old.push(".old");
-            let _ = std::fs::rename(path, old);
-        }
-        let f = std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(path)
+        let f = logfile::RotatingFile::open(path, logfile::LIMIT)
             .with_context(|| format!("журнал {}", path.display()))?;
+        // Запись в файл — в отдельном потоке: медленный диск не задерживает
+        // задачи tokio. Переполнение очереди теряет строки, а не
+        // останавливает соединения.
+        let (writer, guard) = tracing_appender::non_blocking(f);
         tracing_subscriber::fmt()
             .with_env_filter(filter)
-            .with_writer(std::sync::Mutex::new(f))
+            .with_writer(writer)
             .with_ansi(false)
             .finish()
             .with(LogLayer)
             .init();
-        return Ok(());
+        return Ok(Some(guard));
     }
     // Цвета — только в настоящем терминале и не на Windows: в старой
     // консоли cmd.exe escape-последовательности печатаются как мусор.
@@ -289,7 +290,7 @@ fn init_logging(log_file: Option<&std::path::Path>) -> Result<()> {
         .finish()
         .with(LogLayer)
         .init();
-    Ok(())
+    Ok(None)
 }
 
 fn runtime() -> Result<tokio::runtime::Runtime> {
@@ -326,7 +327,7 @@ fn main() -> Result<()> {
              окружения REALITY_SERVER / REALITY_SOCKS_AUTH."
         );
     }
-    init_logging(args.log_file.as_deref())?;
+    let _log_guard = init_logging(args.log_file.as_deref())?;
     #[cfg(windows)]
     {
         if args.hide_console {
