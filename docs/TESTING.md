@@ -11,7 +11,7 @@
 ```sh
 scripts/ci.sh          # fmt, SPDX-метки, clippy (без предупреждений), тесты, release-сборка,
                        # + интероп и smoke с Go-стендом и с Xray-core, сверка отпечатка
-scripts/ci.sh --quick  # только fmt, SPDX-метки, clippy, тесты
+scripts/ci.sh --quick  # только fmt, SPDX-метки, ссылки в документации, clippy, тесты
 ```
 
 Отдельно:
@@ -28,6 +28,7 @@ scripts/ci.sh --quick  # только fmt, SPDX-метки, clippy, тесты
 | `scripts/smoke_e2e.sh` | бинарник против Go-стенда; несовместимая ссылка отклоняется при старте |
 | `scripts/check_chrome_fingerprint.sh` | не устарел ли эталон Chrome в utls: cipher suites, набор расширений, `signature_algorithms` (стоит запускать раз в месяц-два) |
 | `scripts/check_license_headers.sh` | у каждого своего исходника есть метка `SPDX-License-Identifier` |
+| `scripts/check_doc_links.py` | у ссылок между документами есть файл и заголовок для `#якоря` (как на GitHub) |
 | `scripts/third_party_licenses.sh` | `THIRD-PARTY-LICENSES.html` из `Cargo.lock` (cargo-about); ошибка, если у зависимости лицензия не из `about.toml` |
 | `cargo run -p fpcheck -- --server 'vless://...'` | JA3/JA4 реального ClientHello этого клиента |
 

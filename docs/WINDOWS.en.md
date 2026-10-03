@@ -20,8 +20,18 @@ linker) and tested under **Wine 9**:
   DNS inbound;
 - `--system-proxy`, installing and removing the service, autostart at logon.
 
-The resulting file is `dist\windows\reality-client.exe` (~11 MB, depends only
-on Windows system DLLs).
+Where to get the `.exe` and what it is called (~11 MB, depends only on
+Windows system DLLs):
+
+| Source | File |
+|---|---|
+| Building on Windows (section 2) | `target\release\reality-client.exe` |
+| Cross-building on Linux (`scripts/cross_windows.sh`) | `target/x86_64-pc-windows-gnu/release/reality-client.exe` |
+| CI on GitHub: the run page → Artifacts → `reality-client-windows` | an archive with `reality-client.exe` (built on real Windows, MSVC) |
+| [Releases](https://github.com/ERGFT/vpn-core/releases) — once the first release is out | `reality-client-windows-x86_64.exe` and its `.sha256` |
+
+There are no releases yet; for yourself, building on Windows (section 2) is
+the simplest way.
 
 > Wine is not real Windows: the network stack and the console are emulated
 > there. So on **real Windows** (GitHub Actions, `windows-latest`) CI builds

@@ -190,9 +190,15 @@ exists but has not been properly tested on this OS.
 
 ## Security
 
-- The UUID goes only to the real REALITY server: data is sent after full
+- With `security=reality` the UUID goes only to a server that passed
   REALITY verification, with no fallback to ordinary certificate checks.
-- Site names are resolved by the server; the local DNS does not see them.
+  With `security=tls` — only to whoever presents a valid certificate for
+  that name. With `security=none` anyone on the path to the server sees it.
+- For proxied traffic in which the app passes the site name (SOCKS5 with a
+  hostname, HTTP proxy, TUN with fake-IP), the name is resolved by the
+  server and the local DNS does not see it. Exceptions — the app resolved
+  the name itself, the `direct` outbound, DNS servers with
+  `detour: direct` or `type: local`; details are in the security model.
 - The client refuses to run a `security=none` link (everything in plain
   text) without `--allow-insecure`; by default the proxy listens only on
   `127.0.0.1`.
@@ -202,10 +208,10 @@ vulnerability — [SECURITY.md](SECURITY.md), not in public issues.
 
 ## Contributing
 
-How to send a fix — [CONTRIBUTING.md](CONTRIBUTING.md#english); where to
+How to send a fix — [CONTRIBUTING.md](CONTRIBUTING.md#contributing); where to
 get help — [SUPPORT.md](SUPPORT.md); code of conduct —
 [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md); what changed and what is
-planned — [CHANGELOG.md](CHANGELOG.md#english); decision history by stage —
+planned — [CHANGELOG.md](CHANGELOG.md#changelog); decision history by stage —
 [PLAN.md](PLAN.md) (Russian).
 
 ## License

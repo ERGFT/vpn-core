@@ -20,8 +20,18 @@ mingw-w64) и проверяется под **Wine 9**:
   внутреннего TLS, UDP через XUDP; файл настроек, подписка, DNS-вход;
 - `--system-proxy`, установка и удаление службы, автозапуск при входе.
 
-Готовый файл — `dist\windows\reality-client.exe` (~11 МБ, зависит только
-от системных DLL Windows).
+Где взять `.exe` и как он называется (~11 МБ, зависит только от системных
+DLL Windows):
+
+| Откуда | Файл |
+|---|---|
+| Сборка на Windows (раздел 2) | `target\release\reality-client.exe` |
+| Кросс-сборка на Linux (`scripts/cross_windows.sh`) | `target/x86_64-pc-windows-gnu/release/reality-client.exe` |
+| CI на GitHub: страница запуска → Artifacts → `reality-client-windows` | архив с `reality-client.exe` (собран на настоящей Windows, MSVC) |
+| [Releases](https://github.com/ERGFT/vpn-core/releases) — когда появится первый выпуск | `reality-client-windows-x86_64.exe` и `.sha256` к нему |
+
+Готовых выпусков пока нет; для себя проще всего собрать на Windows
+(раздел 2).
 
 > Wine — не настоящая Windows: сетевой стек и консоль там эмулируются.
 > Поэтому на **настоящей Windows** (GitHub Actions, `windows-latest`)

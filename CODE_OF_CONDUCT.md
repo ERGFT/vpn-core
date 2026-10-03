@@ -1,4 +1,4 @@
-[Русский](#кодекс-поведения) | [English](#english)
+[Русский](#кодекс-поведения) | [English](#contributor-covenant-code-of-conduct)
 
 # Кодекс поведения
 
@@ -129,7 +129,6 @@
 
 ---
 
-<a id="english"></a>
 
 # Contributor Covenant Code of Conduct
 

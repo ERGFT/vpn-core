@@ -11,7 +11,7 @@ One command — everything available on this machine:
 ```sh
 scripts/ci.sh          # fmt, SPDX headers, clippy (no warnings), tests, release build,
                        # + interop and smoke with the Go test server and Xray-core, fingerprint check
-scripts/ci.sh --quick  # fmt, SPDX headers, clippy, tests only
+scripts/ci.sh --quick  # fmt, SPDX headers, doc links, clippy, tests only
 ```
 
 Individually:
@@ -28,6 +28,7 @@ Individually:
 | `scripts/smoke_e2e.sh` | the binary against the Go test server; an incompatible link is rejected at startup |
 | `scripts/check_chrome_fingerprint.sh` | whether the Chrome reference in utls has changed: cipher suites, extension set, `signature_algorithms` (worth running every month or two) |
 | `scripts/check_license_headers.sh` | every own source file has an `SPDX-License-Identifier` header |
+| `scripts/check_doc_links.py` | links between documents point to an existing file and a heading for the `#anchor` (as GitHub computes it) |
 | `scripts/third_party_licenses.sh` | `THIRD-PARTY-LICENSES.html` from `Cargo.lock` (cargo-about); fails on a dependency with a license not in `about.toml` |
 | `cargo run -p fpcheck -- --server 'vless://...'` | JA3/JA4 of this client's real ClientHello |
 

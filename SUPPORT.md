@@ -1,4 +1,4 @@
-[Русский](#помощь) | [English](#english)
+[Русский](#помощь) | [English](#support)
 
 # Помощь
 
@@ -23,7 +23,6 @@
 
 ---
 
-<a id="english"></a>
 
 # Support
 
@@ -41,7 +40,7 @@
   template. ⚠️ Do not post your real server link, UUID, keys or
   subscription URL.
 - **Vulnerability** — not in an issue, report it privately:
-  [SECURITY.md](SECURITY.md#english).
+  [SECURITY.md](SECURITY.md#security).
 
 This is a one-person project; answers come as time permits. Questions about
 setting up the server itself (Xray-core, the 3x-ui, Marzban, Remnawave
