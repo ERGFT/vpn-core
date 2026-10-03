@@ -353,9 +353,15 @@ pub fn parse(body: &[u8]) -> Result<Parsed> {
             "подписка: ответ не похож ни на список ссылок, ни на base64, ни на JSON/YAML".into(),
         ));
     }
+    // Имя задаёт панель, и оно попадает в tag выхода, а с ним — в журнал и
+    // API: без управляющих символов (`\n` подделывал бы строки журнала).
     // Одинаковые имена — с номером, чтобы tag серверов были разными.
     let mut seen: HashMap<String, usize> = HashMap::new();
     for (name, _) in &mut out.servers {
+        name.retain(|c| !c.is_control());
+        if name.is_empty() {
+            *name = "server".into();
+        }
         let n = seen.entry(name.clone()).or_default();
         *n += 1;
         if *n > 1 {
@@ -482,7 +488,7 @@ impl Subscription {
                 Ok(o) => built.push(o),
                 Err(e) if e.to_string().contains("security=none") => insecure += 1,
                 Err(e) => {
-                    tracing::debug!(server = %name, error = %e, "подписка: сервер пропущен");
+                    tracing::debug!(server = ?name, error = %e, "подписка: сервер пропущен");
                     broken += 1;
                 }
             }
@@ -772,6 +778,13 @@ proxies:
              "uuid": "44444444-4444-4444-4444-444444444444"}]}"#;
         let p = parse(j.as_bytes()).unwrap();
         assert_eq!((p.invalid, p.servers.len()), (1, 0));
+    }
+
+    #[test]
+    fn control_characters_are_removed_from_names() {
+        let list = "vless://11111111-1111-1111-1111-111111111111@a.example:443?security=tls#Good%0AFAKE%20LOG\n";
+        let p = parse(list.as_bytes()).unwrap();
+        assert_eq!(p.servers[0].0, "GoodFAKE LOG");
     }
 
     #[test]

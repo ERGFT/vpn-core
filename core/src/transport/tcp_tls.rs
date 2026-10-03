@@ -99,8 +99,21 @@ fn default_root_store() -> RootCertStore {
 }
 
 async fn connect_tcp_stream(cfg: &VlessConfig) -> Result<TcpStream> {
-    let addrs = resolve_server(&cfg.host, cfg.port).await?;
-    connect_addrs(&addrs, &cfg.host).await
+    let addrs = resolve_server(&cfg.host, cfg.port)
+        .await
+        .map_err(|e| server_error(&cfg.host, e))?;
+    connect_addrs(&addrs, &cfg.host)
+        .await
+        .map_err(|e| server_error(&cfg.host, e))
+}
+
+/// Ошибка соединения с самим сервером — с его именем: оно и так в журнале
+/// при запуске, а без него не понять, к какому серверу не подключились.
+/// Ошибки [`resolve_host`] и [`connect_addrs`] адреса не содержат: те же
+/// функции соединяют и с сайтами (`direct`), а адреса сайтов в журнал
+/// уровня info не пишутся.
+pub(crate) fn server_error(host: &str, e: Error) -> Error {
+    Error::Protocol(format!("сервер {host}: {e}"))
 }
 
 /// Сколько помнить адреса VLESS-сервера и сколько ещё пользоваться ими,
@@ -227,8 +240,9 @@ pub async fn resolve_host(host: &str, port: u16) -> Result<Vec<SocketAddr>> {
             let ips = tokio::time::timeout(DNS_TIMEOUT, r(host.to_string()))
                 .await
                 .map_err(|_| {
+                    tracing::debug!(%host, "DNS: таймаут разрешения имени");
                     Error::Protocol(format!(
-                        "не удалось разрешить имя {host} за {} с",
+                        "не удалось разрешить имя за {} с",
                         DNS_TIMEOUT.as_secs()
                     ))
                 })??;
@@ -252,18 +266,21 @@ pub async fn resolve_host(host: &str, port: u16) -> Result<Vec<SocketAddr>> {
     let addrs: Vec<SocketAddr> = tokio::time::timeout(DNS_TIMEOUT, tokio::net::lookup_host(&addr))
         .await
         .map_err(|_| {
+            tracing::debug!(%addr, "DNS: таймаут разрешения имени");
             Error::Protocol(format!(
-                "не удалось разрешить имя {addr} за {} с",
+                "не удалось разрешить имя за {} с",
                 DNS_TIMEOUT.as_secs()
             ))
         })?
-        .map_err(|e| Error::Protocol(format!("не удалось разрешить имя {addr}: {e}")))?
+        .map_err(|e| {
+            tracing::debug!(%addr, error = %e, "DNS: имя не разрешилось");
+            Error::Protocol(format!("не удалось разрешить имя: {e}"))
+        })?
         .collect();
 
     if addrs.is_empty() {
-        return Err(Error::Protocol(format!(
-            "имя {addr} не разрешилось ни в один адрес"
-        )));
+        tracing::debug!(%addr, "DNS: имя не дало ни одного адреса");
+        return Err(Error::Protocol("имя не разрешилось ни в один адрес".into()));
     }
     Ok(addrs)
 }
@@ -295,15 +312,15 @@ pub async fn connect_addrs(addrs: &[SocketAddr], what: &str) -> Result<TcpStream
             Err(_) => {
                 tracing::debug!(%sa, "таймаут подключения, пробую следующий");
                 last_err = Some(Error::Protocol(format!(
-                    "таймаут подключения к {sa} ({} с)",
+                    "таймаут подключения ({} с)",
                     CONNECT_TIMEOUT.as_secs()
                 )));
             }
         }
     }
-    Err(last_err.unwrap_or_else(|| {
-        Error::Protocol(format!("не удалось подключиться ни к одному адресу {what}"))
-    }))
+    tracing::debug!(%what, "не удалось подключиться ни к одному адресу");
+    Err(last_err
+        .unwrap_or_else(|| Error::Protocol("не удалось подключиться ни к одному адресу".into())))
 }
 
 async fn connect_tcp(cfg: &VlessConfig) -> Result<RawConn> {

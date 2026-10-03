@@ -283,7 +283,8 @@ impl DirectUdp {
                     )
                     .await
                     .map_err(|_| {
-                        Error::Protocol(format!("direct: имя {d} не разрешилось вовремя"))
+                        tracing::debug!(domain = %d, "direct: таймаут DNS");
+                        Error::Protocol("direct: имя не разрешилось вовремя".into())
                     })??
                     .map(|a| a.ip())
                     .collect(),
@@ -293,7 +294,10 @@ impl DirectUdp {
                     .iter()
                     .find(|ip| ip.is_ipv4() || self.v6.is_some())
                     .copied()
-                    .ok_or_else(|| Error::Protocol(format!("direct: имя {d} не разрешилось")))?;
+                    .ok_or_else(|| {
+                        tracing::debug!(domain = %d, "direct: имя не дало адреса");
+                        Error::Protocol("direct: имя не разрешилось".into())
+                    })?;
                 let mut cache = self.resolved.lock().await;
                 if cache.len() < 1024 {
                     cache.insert(d.clone(), ip);

@@ -408,8 +408,10 @@ impl Dns {
     /// с учётом стратегии.
     pub async fn lookup(&self, name: &str) -> Result<Vec<IpAddr>> {
         let name = normalize(name);
-        let fqdn = Name::from_ascii(format!("{name}."))
-            .map_err(|e| Error::Protocol(format!("DNS: имя «{name}»: {e}")))?;
+        let fqdn = Name::from_ascii(format!("{name}.")).map_err(|e| {
+            tracing::debug!(%name, error = %e, "DNS: неверное имя");
+            Error::Protocol(format!("DNS: неверное имя: {e}"))
+        })?;
         let ask = |t: RecordType| {
             let mut m = Message::query();
             m.metadata.recursion_desired = true;
@@ -437,7 +439,8 @@ impl Dns {
         };
         out.dedup();
         if out.is_empty() {
-            return Err(Error::Protocol(format!("DNS: имя {name} не разрешилось")));
+            tracing::debug!(%name, "DNS: имя не разрешилось");
+            return Err(Error::Protocol("DNS: имя не разрешилось".into()));
         }
         Ok(out)
     }
