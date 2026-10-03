@@ -63,6 +63,14 @@ DNS is hijacked by an `inboundTag` rule → a `dns` outbound.
   держит другой запущенный экземпляр" — already held by another running
   instance), and `--tun-cleanup` touches nothing while one is running and
   exits with an error.
+- On Linux the client uses rule priorities 9000–9002 and routing table
+  2022 and marks its entries with protocol 202 (`ip rule … proto 202`).
+  It removes only marked entries — on exit, on the next start after
+  `kill -9` and in `--tun-cleanup`. If those priorities or that table
+  already hold someone else's rules or routes (another VPN, a network
+  manager), `auto_route` is not enabled: the error lists the occupied
+  entries, and they are left unchanged. Linux 4.17 or newer is required
+  (rule marks).
 - A system DNS server (`"type": "local"`) together with TUN is a config
   error: system DNS itself goes through TUN (a loop).
 - Limitations: ICMP (ping) does not pass through TUN; on Windows

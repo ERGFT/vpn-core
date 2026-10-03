@@ -20,7 +20,10 @@
 #      трогают работающий; после kill -9 сеть закрыта, после
 #      --tun-cleanup — открыта;
 #  10. sniffing QUIC: настоящие Initial-пакеты Chromium к IP — домен
-#      найден, правило по домену отправляет их direct.
+#      найден, правило по домену отправляет их direct;
+#  11. чужие правила на приоритетах 9000–9002 и чужие маршруты в таблице
+#      2022 не трогаются: запуск с ними отказывается, а --tun-cleanup и
+#      kill -9 их не снимают.
 #
 # Нужно: root, iproute2, python3, Xray (XRAY_BIN).
 set -euo pipefail
@@ -295,4 +298,34 @@ echo "OK: strict_route — после kill -9 сеть закрыта"
 nsx "$CLIENT_BIN" --tun-cleanup
 nsx python3 -c "import socket; s=socket.create_connection(('$HOST_IP',$ECHO),5); assert s.recv(64).startswith(b'PEER 10.99.0.2')"
 echo "OK: --tun-cleanup открыл сеть"
+
+# 11. Чужие правила и маршруты (другая VPN, сетевой менеджер).
+foreign_intact() {
+    nsx ip rule show pref 9001 | grep -q 'lookup 100' \
+        || { echo "чужое правило pref 9001 снято"; nsx ip rule; exit 1; }
+    nsx ip route show table 2022 | grep -q '10.55.0.0/16' \
+        || { echo "чужой маршрут в таблице 2022 снят"; nsx ip route show table 2022; exit 1; }
+}
+nsx ip rule add pref 9001 lookup 100
+nsx ip route add 10.55.0.0/16 dev lo table 2022
+if nsx timeout 10 "$CLIENT_BIN" --config "$TMP/client.json" > "$TMP/foreign.log" 2>&1; then
+    echo "auto_route включился поверх чужих правил"; exit 1
+fi
+grep -q 'уже заняты другой программой' "$TMP/foreign.log" || { cat "$TMP/foreign.log"; exit 1; }
+foreign_intact
+nsx "$CLIENT_BIN" --tun-cleanup
+foreign_intact
+echo "OK: занятые приоритеты и таблица — auto_route не включён, чужое не тронуто"
+# Чужие записи появились, пока клиент работал; клиент убит.
+nsx ip rule del pref 9001 lookup 100
+nsx ip route del 10.55.0.0/16 dev lo table 2022
+start_client
+nsx ip rule add pref 9001 lookup 100
+nsx ip route add 10.55.0.0/16 dev lo table 2022
+kill -9 "$CLIENT_PID"; wait "$CLIENT_PID" 2>/dev/null || true; sleep 0.3
+nsx "$CLIENT_BIN" --tun-cleanup
+foreign_intact
+if nsx ip rule | grep -q 'proto 202'; then echo "свои правила не сняты"; nsx ip rule; exit 1; fi
+if nsx ip -6 rule | grep -q 'proto 202'; then echo "свои правила IPv6 не сняты"; nsx ip -6 rule; exit 1; fi
+echo "OK: kill -9 и --tun-cleanup сняли только свои правила, чужие на месте"
 echo "TUN (netns) PASSED"

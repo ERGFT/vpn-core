@@ -560,7 +560,12 @@ with protection, and `tun/route.rs` installs the routes.
   - `strict_route` (kill switch) adds an `unreachable` rule after the TUN
     table (pref 9002). A killed client then leaves the network closed,
     except `route_exclude`, until it is started again or `--tun-cleanup`
-    is run.
+    is run;
+  - the client's rules and routes are marked with protocol 202
+    (`protocol` on `ip rule`, `proto` on `ip route`); only marked entries
+    are removed, and someone else's entries at priorities 9000–9002 or in
+    table 2022 (`ip -N -j`) make it refuse to enable `auto_route`, listing
+    them.
 - **Windows**:
   - routes `0.0.0.0/1` and `128.0.0.0/1` (plus `::/1`, `8000::/1`) via
     TUN. They are more specific than the default route, so the default
