@@ -1,0 +1,77 @@
+diff -ruN a/src/socket/tcp.rs b/src/socket/tcp.rs
+--- a/src/socket/tcp.rs
++++ b/src/socket/tcp.rs
+@@ -1596,7 +1596,14 @@
+         }
+ 
+         let window_start = self.remote_seq_no + self.rx_buffer.len();
+-        let window_end = self.remote_seq_no + self.rx_buffer.capacity();
++        // vpn-core: правый край окна — объявленный собеседнику, а не весь
++        // буфер (бэкпорт smoltcp 0.13, #1079). Байты сверх объявленного окна
++        // потом роняли `last_scaled_window` паникой.
++        let window_end = if let Some(last_ack) = self.remote_last_ack {
++            last_ack + ((self.remote_last_win as usize) << self.remote_win_shift)
++        } else {
++            window_start
++        };
+         let segment_start = repr.seq_number;
+         let segment_end = repr.seq_number + repr.payload.len();
+ 
+@@ -4265,6 +4272,57 @@
+         );
+     }
+ 
++    // vpn-core: байт сверх объявленного окна (окно 0 после масштабирования,
++    // но в буфере ещё есть место) не принимается. Раньше он принимался, и
++    // `last_scaled_window` паниковал: «attempt to subtract sequence numbers
++    // with underflow» (исправлено в smoltcp 0.13, #1079).
++    #[test]
++    fn test_established_rejects_data_beyond_advertised_window() {
++        let mut s = socket_established_with_buffer_sizes(64, 64);
++        s.remote_win_scale = Some(0);
++        s.remote_win_shift = 2;
++        send!(
++            s,
++            TcpRepr {
++                seq_number: REMOTE_SEQ + 1,
++                ack_number: Some(LOCAL_SEQ + 1),
++                payload: &[0; 62],
++                ..SEND_TEMPL
++            }
++        );
++        recv!(
++            s,
++            [TcpRepr {
++                seq_number: LOCAL_SEQ + 1,
++                ack_number: Some(REMOTE_SEQ + 1 + 62),
++                window_len: 0,
++                ..RECV_TEMPL
++            }]
++        );
++        // Объявлено окно 0, свободно 2 байта: байт за окном отвергается.
++        send!(
++            s,
++            TcpRepr {
++                seq_number: REMOTE_SEQ + 1 + 62,
++                ack_number: Some(LOCAL_SEQ + 1),
++                payload: &[0; 1],
++                ..SEND_TEMPL
++            },
++            Some(TcpRepr {
++                seq_number: LOCAL_SEQ + 1,
++                ack_number: Some(REMOTE_SEQ + 1 + 62),
++                window_len: 0,
++                ..RECV_TEMPL
++            })
++        );
++        assert_eq!(s.rx_buffer.len(), 62);
++        // Приложение прочитало данные: проверка «не пора ли обновить окно»
++        // не паникует.
++        let mut buf = [0; 64];
++        assert_eq!(s.recv_slice(&mut buf), Ok(62));
++        assert!(s.window_to_update());
++    }
++
+     #[test]
+     fn test_established_send() {
+         let mut s = socket_established();

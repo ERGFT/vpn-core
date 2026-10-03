@@ -28,8 +28,9 @@
 #      $SING_BOX_BIN или target/sing-box/sing-box — scripts/fetch_sing_box.sh)
 #  12. режим библиотеки: C-программа управляет ядром через C ABI
 #      (scripts/ffi_smoke.sh; если есть компилятор C)
-#  13. vendor/rustls-reality-patch.diff совпадает с патчем rustls
-#      (scripts/rustls_patch.sh --check; если есть доступ к crates.io)
+#  13. vendor/rustls-reality-patch.diff и vendor/smoltcp-window-patch.diff
+#      совпадают с патчами (scripts/vendor_patch.sh <крейт> --check; если
+#      есть доступ к crates.io)
 #
 # Код возврата ненулевой, если упал любой обязательный шаг или любой
 # необязательный, который был запущен.
@@ -128,8 +129,9 @@ if [[ $QUICK -eq 0 ]]; then
 
     if curl -fsS --max-time 10 -o /dev/null https://index.crates.io/config.json 2>/dev/null; then
         step "патч rustls описан в .diff" bash scripts/rustls_patch.sh --check
+        step "патч smoltcp описан в .diff" bash scripts/vendor_patch.sh smoltcp --check
     else
-        skip "патч rustls описан в .diff" "нет доступа к crates.io"
+        skip "патчи vendor/ описаны в .diff" "нет доступа к crates.io"
     fi
 fi
 
