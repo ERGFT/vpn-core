@@ -82,6 +82,18 @@ pub struct Parsed {
     pub servers: Vec<(String, String)>,
     /// Пропущенные протоколы: схема → сколько.
     pub skipped: HashMap<String, usize>,
+    /// Серверы с неверными полями (порт вне 1–65535).
+    pub invalid: usize,
+}
+
+/// Порт сервера: по умолчанию 443; число вне `u16` или 0 — `None`
+/// (раньше `as u16` молча превращал 70000 в 4464).
+fn port_of(v: Option<&serde_json::Value>) -> Option<u16> {
+    let Some(v) = v else { return Some(443) };
+    let n = v
+        .as_u64()
+        .or_else(|| v.as_str().and_then(|s| s.trim().parse().ok()))?;
+    u16::try_from(n).ok().filter(|&p| p != 0)
 }
 
 fn pct_decode(s: &str) -> String {
@@ -170,6 +182,10 @@ fn parse_singbox(text: &str, out: &mut Parsed) -> Result<()> {
                 continue;
             }
         };
+        let Some(port) = port_of(js(&o, &["server_port"])) else {
+            out.invalid += 1;
+            continue;
+        };
         let mut b = LinkBuilder {
             scheme,
             uuid: if scheme == "trojan" {
@@ -178,9 +194,7 @@ fn parse_singbox(text: &str, out: &mut Parsed) -> Result<()> {
                 js_str(&o, &["uuid"])
             },
             host: js_str(&o, &["server"]),
-            port: js(&o, &["server_port"])
-                .and_then(|p| p.as_u64())
-                .unwrap_or(443) as u16,
+            port,
             params: Vec::new(),
             name: js_str(&o, &["tag"]),
         };
@@ -257,12 +271,10 @@ fn parse_clash(text: &str, out: &mut Parsed) -> Result<()> {
                 continue;
             }
         };
-        let port = js(&p, &["port"])
-            .and_then(|x| {
-                x.as_u64()
-                    .or_else(|| x.as_str().and_then(|s| s.parse().ok()))
-            })
-            .unwrap_or(443) as u16;
+        let Some(port) = port_of(js(&p, &["port"])) else {
+            out.invalid += 1;
+            continue;
+        };
         let mut b = LinkBuilder {
             scheme,
             uuid: if scheme == "trojan" {
@@ -452,7 +464,7 @@ impl Subscription {
         let parsed = parse(body)?;
         let mut built = Vec::new();
         let mut insecure = 0;
-        let mut broken = 0;
+        let mut broken = parsed.invalid;
         for (name, link) in &parsed.servers {
             if self.include.as_ref().is_some_and(|r| !r.is_match(name))
                 || self.exclude.as_ref().is_some_and(|r| r.is_match(name))
@@ -738,6 +750,28 @@ mod tests {
         assert_eq!(v.host, "nl.example");
         assert!(p.servers[1].1.contains("path=%2Fp") && p.servers[1].1.contains("host=h.example"));
         assert_eq!(p.skipped["shadowsocks"], 1);
+    }
+
+    #[test]
+    fn out_of_range_port_is_not_truncated() {
+        let y = r#"
+proxies:
+  - {name: big, type: vless, server: a.example, port: 70000, uuid: 44444444-4444-4444-4444-444444444444, tls: true}
+  - {name: ok, type: vless, server: b.example, port: "8443", uuid: 44444444-4444-4444-4444-444444444444, tls: true}
+"#;
+        let p = parse(y.as_bytes()).unwrap();
+        assert_eq!(p.invalid, 1);
+        assert_eq!(p.servers.len(), 1);
+        assert!(
+            p.servers[0].1.contains("@b.example:8443?"),
+            "{}",
+            p.servers[0].1
+        );
+        let j = r#"{"outbounds": [
+            {"type": "vless", "tag": "z", "server": "c.example", "server_port": 0,
+             "uuid": "44444444-4444-4444-4444-444444444444"}]}"#;
+        let p = parse(j.as_bytes()).unwrap();
+        assert_eq!((p.invalid, p.servers.len()), (1, 0));
     }
 
     #[test]

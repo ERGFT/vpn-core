@@ -377,7 +377,7 @@ async fn connect_tls_inner(
     let config = build_client_config(roots, alpn, cfg.browser);
     let connector = TlsConnector::from(Arc::new(config));
     let server_name =
-        ServerName::try_from(cfg.effective_sni().to_string()).map_err(Error::InvalidDnsName)?;
+        ServerName::try_from(cfg.tls_server_name().to_string()).map_err(Error::InvalidDnsName)?;
 
     let tls = with_handshake_timeout("TLS", connector.connect(server_name, tcp)).await?;
     Ok(tls)
@@ -436,7 +436,7 @@ pub async fn connect_tls_capturing_client_hello(
     let config = build_client_config(roots_for(cfg), default_alpn(cfg), cfg.browser);
     let connector = TlsConnector::from(Arc::new(config));
     let server_name =
-        ServerName::try_from(cfg.effective_sni().to_string()).map_err(Error::InvalidDnsName)?;
+        ServerName::try_from(cfg.tls_server_name().to_string()).map_err(Error::InvalidDnsName)?;
 
     let tls = with_handshake_timeout("TLS", connector.connect(server_name, captured_tcp)).await?;
     let captured = tls.get_ref().0.captured().to_vec();
@@ -524,7 +524,7 @@ async fn connect_tls_reality_inner(
         reality_client_config_inner(reality, alpn, Some(roots_for(cfg)), cfg.browser)?;
     let connector = TlsConnector::from(Arc::new(config));
     let server_name =
-        ServerName::try_from(cfg.effective_sni().to_string()).map_err(Error::InvalidDnsName)?;
+        ServerName::try_from(cfg.tls_server_name().to_string()).map_err(Error::InvalidDnsName)?;
 
     let tls = with_handshake_timeout("REALITY", connector.connect(server_name, tcp)).await?;
     // Единственная точка, через которую REALITY-соединение попадает к
