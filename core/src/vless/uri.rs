@@ -343,6 +343,17 @@ impl VlessConfig {
         self.sni.as_deref().unwrap_or(&self.host)
     }
 
+    /// Имя для проверки сертификата (rustls, quinn): [`Self::effective_sni`]
+    /// без скобок IPv6. `url` отдаёт IPv6-адрес сервера как `[2001:db8::1]`
+    /// — так он нужен в `Host` и URI, а `ServerName` со скобками не
+    /// разбирается, и TLS к такому серверу без `sni=` не поднимался.
+    pub fn tls_server_name(&self) -> &str {
+        let s = self.effective_sni();
+        s.strip_prefix('[')
+            .and_then(|r| r.strip_suffix(']'))
+            .unwrap_or(s)
+    }
+
     /// Путь для транспорта Этапа 4 (`path=` в ссылке, используется WS).
     pub fn path(&self) -> &str {
         self.raw_params
@@ -580,6 +591,22 @@ mod tests {
         let uri = "vless://11111111-1111-1111-1111-111111111111@example.com:443?encryption=aes-256";
         let err = VlessConfig::parse(uri).unwrap_err();
         assert!(matches!(err, Error::InvalidUri(_)));
+    }
+
+    #[test]
+    fn ipv6_server_name_without_brackets() {
+        let c = VlessConfig::parse(
+            "vless://11111111-1111-1111-1111-111111111111@[2001:db8::1]:443?security=tls",
+        )
+        .unwrap();
+        assert_eq!(c.ws_host(), "[2001:db8::1]", "в Host — со скобками");
+        assert_eq!(c.tls_server_name(), "2001:db8::1");
+        assert!(rustls::pki_types::ServerName::try_from(c.tls_server_name()).is_ok());
+        let c = VlessConfig::parse(
+            "vless://11111111-1111-1111-1111-111111111111@[2001:db8::1]:443?security=tls&sni=a.test",
+        )
+        .unwrap();
+        assert_eq!(c.tls_server_name(), "a.test");
     }
 
     #[test]

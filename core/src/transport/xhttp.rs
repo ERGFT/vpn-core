@@ -1065,7 +1065,7 @@ mod h3c {
         for addr in addrs {
             let ep = quic::direct_endpoint(addr.is_ipv6())?;
             let cfg = quic::client_config(roots.clone(), vec![b"h3".to_vec()])?;
-            let conn = match ep.connect_with(cfg, addr, c.effective_sni()) {
+            let conn = match ep.connect_with(cfg, addr, c.tls_server_name()) {
                 Ok(connecting) => tokio::time::timeout(CONNECT_TIMEOUT, connecting).await,
                 Err(e) => {
                     last = Some(quic::connect_error("xhttp", e));
