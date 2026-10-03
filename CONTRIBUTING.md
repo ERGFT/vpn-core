@@ -1,4 +1,4 @@
-[Русский](#как-внести-изменения) | [English](#english)
+[Русский](#как-внести-изменения) | [English](#contributing)
 
 # Как внести изменения
 
@@ -26,7 +26,7 @@ git commit -s -m "…"
 ## Перед pull request
 
 ```sh
-scripts/ci.sh --quick   # fmt, SPDX-метки, clippy без предупреждений, тесты
+scripts/ci.sh --quick   # fmt, SPDX-метки, ссылки в документации, clippy без предупреждений, тесты
 scripts/ci.sh           # плюс release-сборка, интероп с Xray-core и Go-стендом,
                         # режим библиотеки (C-программа через C ABI)
 ```
@@ -68,12 +68,11 @@ scripts/ci.sh           # плюс release-сборка, интероп с Xray-
 
 ---
 
-<a id="english"></a>
 
 # Contributing
 
 Thanks for helping out. Here is how things are done here. By taking part
-you agree to the [Code of Conduct](CODE_OF_CONDUCT.md#english).
+you agree to the [Code of Conduct](CODE_OF_CONDUCT.md#contributor-covenant-code-of-conduct).
 
 ## License of contributions
 
@@ -95,7 +94,7 @@ keep changes there minimal, regenerate `vendor/rustls-reality-patch.diff`
 ## Before a pull request
 
 ```sh
-scripts/ci.sh --quick   # fmt, SPDX headers, clippy with no warnings, tests
+scripts/ci.sh --quick   # fmt, SPDX headers, links in the docs, clippy with no warnings, tests
 scripts/ci.sh           # plus release build, interop with Xray-core and the Go test server,
                         # library mode (a C program over the C ABI)
 ```
@@ -133,4 +132,4 @@ CI on GitHub runs the same — on Linux and on real Windows.
 
 ## Vulnerabilities
 
-Do not open a public issue — see [SECURITY.md](SECURITY.md#english).
+Do not open a public issue — see [SECURITY.md](SECURITY.md#security).

@@ -9,15 +9,33 @@ What the client guarantees and what it protects against. How to report a vulnera
 What the client guarantees and what it protects against (details and
 history — `PLAN.md`, section "Аудит безопасности" / security audit):
 
-- **The UUID goes to nobody but the real REALITY server.** VLESS data is sent
-  only after a full handshake with REALITY verification (certificate HMAC,
-  ML-DSA-65 with `pqv=`). There is no fallback to regular certificate
-  verification; a degenerate `pbk=` is rejected.
-- **Replacing the server with a real site does not give the client away:**
+- **Who receives the UUID depends on `security`:**
+  - `reality` — only a server that passed REALITY verification. VLESS data
+    is sent after a full handshake with verification (certificate HMAC,
+    ML-DSA-65 with `pqv=`). There is no fallback to regular certificate
+    verification; a degenerate `pbk=` is rejected.
+  - `tls` — whoever presents a valid certificate for the `sni=` name (by
+    the built-in root set or `--ca`): the same protection as HTTPS, the
+    UUID goes to anyone holding a valid certificate for that name.
+  - `none` — in plain text: the UUID and traffic are visible to anyone on
+    the path to the server. That is why such a link does not run without
+    `--allow-insecure`.
+- **Replacing the server with a real site does not give the client away (REALITY):**
   like Xray, the client completes the handshake with the site, opens its home
   page like Chrome and only then reports an error — the UUID is not sent.
-- **No DNS leaks:** site names are resolved by the server; only the VLESS
-  server's own name is resolved locally.
+- **DNS for proxied traffic:** if the app passes the site name (SOCKS5 with a
+  hostname, HTTP proxy, TUN with fake-IP), the name is resolved by the
+  server and the local DNS does not see it. Visible to the local network may be:
+  - the VLESS server's own name;
+  - names the app resolved itself before connecting (for example, a
+    browser with SOCKS5 without "Proxy DNS when using SOCKS v5");
+  - names for the `direct` outbound — through the `dns` section or the
+    system DNS;
+  - queries to DNS servers with `"detour": "direct"` and to a
+    `"type": "local"` server (the system resolver);
+  - names that `domain_strategy: ip_if_non_match` resolves for IP rules —
+    if the `dns` section's server for them goes direct (by default `dns`
+    queries go through `route.final`, usually the VLESS server).
 - **The local proxy does not hold on to "dead" connections:** 10 s for the
   SOCKS5/HTTP greeting, idle timeout (300 s; 30 s if one side has already
   closed), a limit on concurrent connections.

@@ -10,6 +10,7 @@
 # Шаги:
 #   1. cargo fmt --check                         (обязательно)
 #      + SPDX-метки лицензии в исходниках         (обязательно)
+#      + ссылки и якоря в документации            (если есть python3)
 #   2. cargo clippy --workspace --all-targets    (обязательно, без предупреждений)
 #   3. cargo test --workspace                    (обязательно)
 #   4. cargo build --release                     (обязательно, кроме --quick)
@@ -56,6 +57,11 @@ skip() { RESULTS+=("SKIP  $1 — $2"); echo; echo "==> $1: SKIP ($2)"; }
 
 step "cargo fmt --check" cargo fmt --check
 step "SPDX-метки лицензии" bash scripts/check_license_headers.sh
+if command -v python3 >/dev/null 2>&1; then
+    step "ссылки в документации" python3 scripts/check_doc_links.py
+else
+    skip "ссылки в документации" "нужен python3"
+fi
 step "cargo clippy (без предупреждений)" \
     cargo clippy --locked --workspace --all-targets -- -D warnings
 step "cargo test --workspace" cargo test --locked --workspace

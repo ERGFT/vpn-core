@@ -31,4 +31,4 @@ and first run. This is the detailed reference.
 | [stage5-crypto-review-and-interop.en.md](stage5-crypto-review-and-interop.en.md) | checklist for a third-party crypto review of REALITY |
 
 Decision history by stage — [PLAN.md](../PLAN.md) (Russian), what changed —
-[CHANGELOG.md](../CHANGELOG.md#english).
+[CHANGELOG.md](../CHANGELOG.md#changelog).
