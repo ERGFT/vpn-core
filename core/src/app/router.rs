@@ -22,6 +22,9 @@ use crate::error::{Error, Result};
 use crate::transport::AsyncStream;
 use crate::vless::Address;
 
+/// Потолок длины имени: поле длины в заголовках выходов — один байт.
+const MAX_DOMAIN_LEN: usize = 255;
+
 pub struct Router {
     outbounds: HashMap<String, Arc<dyn Outbound>>,
     rules: Vec<Rule>,
@@ -209,6 +212,19 @@ impl Router {
                         )))
                     }
                 }
+            }
+        }
+        // Длина имени в заголовках VLESS, Mux.Cool, XUDP и Trojan — один
+        // байт: длиннее 255 закодировалось бы с обрезанной длиной (битый
+        // заголовок) или обрезанным именем. Такое имя бывает из fake-IP:
+        // текст имени DNS-запроса с экранированными байтами (`\.`)
+        // длиннее его 255 байт на проводе.
+        if let Address::Domain(d) = &meta.target {
+            if d.len() > MAX_DOMAIN_LEN {
+                return Err(Error::Protocol(format!(
+                    "имя длиннее {MAX_DOMAIN_LEN} байт ({}) — его нельзя передать серверу",
+                    d.len()
+                )));
             }
         }
         let mode = self.tracker.mode();
@@ -412,6 +428,20 @@ mod tests {
             "домен из sniffing"
         );
         assert_eq!(pick(meta(dom("example.com"), None)), "proxy");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[tokio::test]
+    async fn name_longer_than_255_bytes_is_rejected() {
+        let dir = std::env::temp_dir().join(format!("vpn-core-long-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("geosite.dat"), build_sites(&[])).unwrap();
+        std::fs::write(dir.join("geoip.dat"), build_ips(&[])).unwrap();
+        let r = router(&dir, "");
+        let mut ok = meta(dom(&"a".repeat(255)), None);
+        assert_eq!(r.route(&mut ok).await.unwrap().tag(), "proxy");
+        let mut long = meta(dom(&"a".repeat(256)), None);
+        assert!(r.route(&mut long).await.is_err());
         std::fs::remove_dir_all(&dir).ok();
     }
 
