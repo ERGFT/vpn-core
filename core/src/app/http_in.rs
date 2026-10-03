@@ -116,6 +116,9 @@ fn parse_authority(a: &str, default_port: Option<u16>) -> Result<(Address, u16)>
     let addr = match host.parse::<std::net::IpAddr>() {
         Ok(std::net::IpAddr::V4(v4)) => Address::Ipv4(v4),
         Ok(std::net::IpAddr::V6(v6)) => Address::Ipv6(v6),
+        Err(_) if crate::hostname::looks_like_legacy_ipv4(host) => {
+            return Err(bad("числовое имя, не являющееся IPv4-адресом"));
+        }
         Err(_) => Address::Domain(host.to_ascii_lowercase()),
     };
     Ok((addr, port))
@@ -257,6 +260,29 @@ pub fn check_auth(req: &HttpRequest, creds: &Credentials) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn numeric_hosts_are_rejected() {
+        for a in [
+            "2130706433:80",
+            "0x7f000001:80",
+            "0177.0.0.1:443",
+            "127.1:80",
+            "3232235777:80",
+        ] {
+            assert!(parse_authority(a, None).is_err(), "{a}");
+        }
+        assert!(matches!(
+            parse_authority("127.0.0.1:80", None).unwrap().0,
+            Address::Ipv4(_)
+        ));
+        assert!(matches!(
+            parse_authority("example.com:80", None).unwrap().0,
+            Address::Domain(_)
+        ));
+        let r = parse_request(b"GET http://0x7f000001/ HTTP/1.1\r\nHost: x");
+        assert!(r.is_err(), "обычный HTTP-запрос с числовым именем");
+    }
 
     #[test]
     fn connect_request() {

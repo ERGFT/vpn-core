@@ -277,10 +277,12 @@ impl Controller {
         let Some(dns) = dns else {
             // Без своего DNS — системный резолвер, только A/AAAA.
             let ips: Vec<IpAddr> = match t {
-                RecordType::A | RecordType::AAAA => tokio::net::lookup_host((name, 0))
-                    .await
-                    .map(|it| it.map(|a| a.ip()).collect())
-                    .unwrap_or_default(),
+                RecordType::A | RecordType::AAAA if !crate::hostname::is_disguised_ip(name) => {
+                    tokio::net::lookup_host((name, 0))
+                        .await
+                        .map(|it| it.map(|a| a.ip()).collect())
+                        .unwrap_or_default()
+                }
                 _ => Vec::new(),
             };
             let answer: Vec<Value> = ips

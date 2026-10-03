@@ -212,6 +212,12 @@ pub async fn resolve_host(host: &str, port: u16) -> Result<Vec<SocketAddr>> {
     if let Ok(ip) = host.trim_matches(['[', ']']).parse::<std::net::IpAddr>() {
         return Ok(vec![SocketAddr::new(ip, port)]);
     }
+    // Последний рубеж перед getaddrinfo: `2130706433` он прочтёт как IPv4.
+    if crate::hostname::looks_like_legacy_ipv4(host) {
+        return Err(Error::Protocol(
+            "числовое имя, не являющееся IPv4-адресом".into(),
+        ));
+    }
     if crate::net_protect::tun_active() {
         let r = tun_resolver()
             .read()

@@ -31,6 +31,7 @@ pub mod app;
 pub mod error;
 pub mod fingerprint;
 pub mod fsutil;
+pub mod hostname;
 pub mod http1;
 pub mod net_protect;
 pub mod reality;

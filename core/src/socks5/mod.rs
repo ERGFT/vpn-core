@@ -217,10 +217,10 @@ where
             let mut port = [0u8; 2];
             stream.read_exact(&mut port).await?;
             match String::from_utf8(b) {
-                Ok(d) if !d.is_empty() => {
+                Ok(d) if valid_domain(&d) => {
                     return Ok(Socks5Request {
                         command,
-                        addr: TargetAddr::Domain(d),
+                        addr: domain_or_ip(d),
                         port: u16::from_be_bytes(port),
                     })
                 }
@@ -231,7 +231,10 @@ where
                         default_bind(),
                     )
                     .await?;
-                    return Err(Error::Socks5("пустой домен или домен не в UTF-8".into()));
+                    return Err(Error::Socks5(
+                        "пустой домен, не в UTF-8, с управляющими символами или числовое имя"
+                            .into(),
+                    ));
                 }
             }
         }
@@ -260,6 +263,21 @@ where
         addr,
         port,
     })
+}
+
+/// Домен из запроса SOCKS5 можно принять: не пустой, без управляющих
+/// символов (иначе `\n` подделывал бы строки журнала) и не числовая форма
+/// IPv4 вроде `2130706433` (обходила бы правила по IP).
+pub(crate) fn valid_domain(d: &str) -> bool {
+    !d.is_empty() && !d.chars().any(char::is_control) && !crate::hostname::is_disguised_ip(d)
+}
+
+/// IP строкой в поле домена (так шлют некоторые программы) — адресом.
+pub(crate) fn domain_or_ip(d: String) -> TargetAddr {
+    match d.parse::<IpAddr>() {
+        Ok(ip) => TargetAddr::Ip(ip),
+        Err(_) => TargetAddr::Domain(d),
+    }
 }
 
 fn default_bind() -> SocketAddr {
@@ -403,6 +421,25 @@ mod tests {
             assert_eq!(&r[..2], &[0x05, 0x00]);
             assert_eq!(&r[2..4], &[0x05, ReplyCode::AddressTypeNotSupported as u8]);
         }
+    }
+
+    #[tokio::test]
+    async fn numeric_or_control_domain_is_rejected_and_ip_string_is_an_address() {
+        for domain in [&b"2130706433"[..], b"0x7f.1", b"a.test\nFAKE LOG LINE"] {
+            let (mut client, mut server) = duplex(256);
+            let mut req = vec![0x05, 0x01, 0x00, 0x05, 0x01, 0x00, 0x03, domain.len() as u8];
+            req.extend_from_slice(domain);
+            req.extend_from_slice(&[0, 80]);
+            client.write_all(&req).await.unwrap();
+            assert!(handshake(&mut server).await.is_err(), "{domain:?}");
+        }
+        let (mut client, mut server) = duplex(256);
+        let mut req = vec![0x05, 0x01, 0x00, 0x05, 0x01, 0x00, 0x03, 8];
+        req.extend_from_slice(b"10.0.0.1");
+        req.extend_from_slice(&[0, 80]);
+        client.write_all(&req).await.unwrap();
+        let r = handshake(&mut server).await.unwrap();
+        assert_eq!(r.addr, TargetAddr::Ip("10.0.0.1".parse().unwrap()));
     }
 
     #[tokio::test]

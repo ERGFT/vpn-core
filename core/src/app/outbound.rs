@@ -270,6 +270,11 @@ impl DirectUdp {
                 if let Some(ip) = self.resolved.lock().await.get(d) {
                     return Ok(*ip);
                 }
+                if crate::hostname::is_disguised_ip(d) {
+                    return Err(Error::Protocol(
+                        "direct: числовое имя, не являющееся IPv4-адресом".into(),
+                    ));
+                }
                 let ips: Vec<IpAddr> = match &self.dns {
                     Some(dns) => dns.lookup(d).await?,
                     None => tokio::time::timeout(

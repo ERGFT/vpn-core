@@ -634,6 +634,11 @@ async fn local_answer(q: &Message) -> Result<Message> {
     }
     let name = question.name().to_ascii();
     let host = name.trim_end_matches('.');
+    // getaddrinfo прочёл бы `2130706433` как IPv4 — у DNS такого имени нет.
+    if crate::hostname::is_disguised_ip(host) {
+        resp.metadata.response_code = ResponseCode::NXDomain;
+        return Ok(resp);
+    }
     match tokio::time::timeout(Duration::from_secs(5), tokio::net::lookup_host((host, 0))).await {
         Ok(Ok(addrs)) => {
             for a in addrs {
