@@ -13,7 +13,7 @@ In the development environment the Windows version is cross-compiled
 (`scripts/cross_windows.sh`: target `x86_64-pc-windows-gnu`, mingw-w64
 linker) and tested under **Wine 9**:
 
-- all 210 workspace tests, built for Windows, pass under Wine;
+- all workspace tests, built for Windows, pass under Wine;
 - a smoke test against real Xray-core with the same `.exe`: SOCKS5 with a
   password → REALITY → XTLS Vision (switch to direct copy in both
   directions), 1 MiB of inner TLS, UDP over XUDP; config file, subscription,
@@ -129,7 +129,7 @@ VPN: traffic goes through it only for programs that use this proxy.
   Windows paths in JSON (`"link_file": "C:\\Users\\me\\server.txt"`) or use
   forward slashes: `"C:/Users/me/server.txt"`. Check the file without
   starting anything: `--config config.json --check`.
-- **TUN — like a real VPN** (the `"type": "tun"` inbound, see the README):
+- **TUN — like a real VPN** (the `"type": "tun"` inbound, see [TUN.en.md](TUN.en.md)):
   traffic from all programs goes through the client. Run as administrator
   and put `wintun.dll` next to `reality-client.exe` (from
   [wintun.net](https://www.wintun.net/), the `amd64` folder).
@@ -143,7 +143,7 @@ VPN: traffic goes through it only for programs that use this proxy.
   on, site names may fail to resolve: Windows is still "identifying" the
   new interface; after a few seconds everything works through the tunnel.
 - Own DNS (the `dns` section and a DNS inbound in the config,
-  see the README): if you set `127.0.0.1` in "Settings → Network & Internet →
+  see [DNS.en.md](DNS.en.md)): if you set `127.0.0.1` in "Settings → Network & Internet →
   Adapter properties → DNS", all programs' name lookups go through the
   client — encrypted (DoH/DoT) and through the server, not in plain text over
   Wi-Fi. Remember to set DNS back to "Automatic" when the client is not
@@ -180,4 +180,4 @@ on the first UDP request).
 - No `kcp` transport; `quic`/`h2` have been removed from Xray-core itself
   (replaced by `xhttp`, including over HTTP/3 — `alpn=h3`).
 
-The full list is in [`README.en.md`](../README.en.md), section "Features".
+The full list — [FEATURES.en.md](FEATURES.en.md).

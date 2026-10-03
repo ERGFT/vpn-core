@@ -91,6 +91,20 @@
 - Криптография — новое поколение RustCrypto: sha2/md-5 0.11, hkdf/hmac
   0.13, aes-gcm 0.11, x25519-dalek 3, rand 0.10; проверено интероп-тестами
   против Xray-core. Минимальная версия Rust — 1.89 (её требует aes 0.9).
+- README перестроен для нового пользователя (названия, статус, быстрый
+  старт для Linux и Windows); справочник — в `docs/` (`CLI`, `CONFIG`,
+  `DNS`, `TUN`, `API`, `LINK`, `FEATURES`, оглавление `docs/README.md`).
+
+### Планируется
+Это намерения, а не обещания сроков.
+- Первый выпуск `v0.1.0` с готовыми сборками для Linux и Windows в
+  [Releases](https://github.com/ERGFT/vpn-core/releases) — и инструкции по
+  установке, обновлению и удалению в README.
+- Проверить на настоящей Windows то, что пока проверено только под Wine:
+  системный прокси, автозапуск при входе, интероп с Xray-core.
+- xhttp: `downloadSettings`.
+- Стороннее крипто-ревью REALITY — нужен независимый специалист
+  ([чек-лист](docs/stage5-crypto-review-and-interop.md)).
 
 [Не выпущено]: https://github.com/ERGFT/vpn-core/commits/main
 
@@ -191,5 +205,19 @@ It will include:
   hkdf/hmac 0.13, aes-gcm 0.11, x25519-dalek 3, rand 0.10; checked by
   interop tests against Xray-core. Minimum Rust version is now 1.89 (aes 0.9
   requires it).
+- The README is restructured for new users (names, status, quick start for
+  Linux and Windows); the reference moved to `docs/` (`CLI`, `CONFIG`,
+  `DNS`, `TUN`, `API`, `LINK`, `FEATURES`, index `docs/README.en.md`).
+
+### Planned
+These are intentions, not promised dates.
+- The first release `v0.1.0` with prebuilt binaries for Linux and Windows in
+  [Releases](https://github.com/ERGFT/vpn-core/releases) — and installation,
+  update and removal instructions in the README.
+- Test on real Windows what has only been tested under Wine so far: the
+  system proxy, autostart at logon, interop with Xray-core.
+- xhttp: `downloadSettings`.
+- A third-party crypto review of REALITY — needs an independent expert
+  ([checklist](docs/stage5-crypto-review-and-interop.en.md)).
 
 [Unreleased]: https://github.com/ERGFT/vpn-core/commits/main

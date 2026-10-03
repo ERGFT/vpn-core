@@ -14,7 +14,7 @@
 (`scripts/cross_windows.sh`: цель `x86_64-pc-windows-gnu`, компоновщик
 mingw-w64) и проверяется под **Wine 9**:
 
-- все 210 тестов workspace'а, собранные под Windows, проходят под Wine;
+- все тесты workspace'а, собранные под Windows, проходят под Wine;
 - smoke против настоящего Xray-core тем самым `.exe`: SOCKS5 с паролем →
   REALITY → XTLS Vision (переход на прямую передачу в обе стороны), 1 МиБ
   внутреннего TLS, UDP через XUDP; файл настроек, подписка, DNS-вход;
@@ -128,7 +128,7 @@ Set-Content ссылка.txt "vless://UUID@host:443?encryption=none&security=rea
   путях Windows в JSON удваивайте (`"link_file": "C:\\Users\\me\\server.txt"`)
   или пишите прямую: `"C:/Users/me/server.txt"`. Проверить файл, ничего не
   запуская: `--config config.json --check`.
-- **TUN — как настоящий VPN** (вход `"type": "tun"`, см. README): через
+- **TUN — как настоящий VPN** (вход `"type": "tun"`, см. [TUN.md](TUN.md)): через
   клиент идёт трафик всех программ. Нужно запускать от имени
   администратора и положить рядом с `reality-client.exe` файл
   `wintun.dll` (с [wintun.net](https://www.wintun.net/), папка `amd64`).
@@ -142,7 +142,7 @@ Set-Content ссылка.txt "vless://UUID@host:443?encryption=none&security=rea
   Windows ещё «опознаёт» новый интерфейс; через несколько секунд всё
   работает через туннель.
 - Свой DNS (раздел `dns` и DNS-вход в файле настроек, см.
-  README): если в «Параметры → Сеть и Интернет → Свойства адаптера →
+  [DNS.md](DNS.md)): если в «Параметры → Сеть и Интернет → Свойства адаптера →
   DNS» указать `127.0.0.1`, запросы имён всех программ пойдут через
   клиент — зашифрованно (DoH/DoT) и через сервер, а не открытым текстом в
   Wi-Fi. Не забудьте вернуть DNS «Автоматически», когда клиент не
@@ -176,4 +176,4 @@ Xray (Full Cone NAT); `--no-xudp` — старый способ, поток на
 - Нет транспорта `kcp`; `quic`/`h2` удалены из самого Xray-core (их
   заменяет `xhttp`, в том числе через HTTP/3 — `alpn=h3`).
 
-Полный список — в `README.md`, раздел «Что умеет и чего нет».
+Полный список — [FEATURES.md](FEATURES.md).
