@@ -103,6 +103,9 @@
 - TUN: стек smoltcp вместо ipstack — соединения не встают после потери
   пакетов, ~200 МиБ/с; на Windows TUN и служба проверены на настоящей
   машине, без IPv6 у компьютера нет петли через TUN.
+- TUN: данные сверх объявленного окна TCP больше не роняют стек smoltcp
+  паникой («attempt to subtract sequence numbers with underflow») —
+  бэкпорт исправления из smoltcp 0.13 (`vendor/smoltcp-window-patch`).
 - Документация на русском и английском; CONTRIBUTING, SECURITY,
   CODE_OF_CONDUCT, SUPPORT, шаблоны issue и PR; описание устройства ядра
   (`docs/ARCHITECTURE.md`).
@@ -235,6 +238,10 @@ It will include:
 - TUN: smoltcp stack instead of ipstack — connections no longer stall after
   packet loss, ~200 MiB/s; on Windows TUN and the service are checked on a
   real machine, no loop through TUN without IPv6 on the computer.
+- TUN: data beyond the advertised TCP window no longer crashes the smoltcp
+  stack with a panic ("attempt to subtract sequence numbers with
+  underflow") — a backport of the fix from smoltcp 0.13
+  (`vendor/smoltcp-window-patch`).
 - Documentation in Russian and English; CONTRIBUTING, SECURITY,
   CODE_OF_CONDUCT, SUPPORT, issue and PR templates; a description of how the
   core works (`docs/ARCHITECTURE.en.md`).
