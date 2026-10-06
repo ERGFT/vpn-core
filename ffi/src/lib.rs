@@ -31,6 +31,13 @@ type FfiTunFd = Arc<OwnedFd>;
 #[cfg(not(unix))]
 type FfiTunFd = i32;
 
+/// Ещё одна ссылка на владельца дескриптора: на Unix это `Arc`, на остальных
+/// системах — просто число (`Copy`), поэтому `clone_on_copy` здесь ожидаем.
+#[allow(clippy::clone_on_copy)]
+fn tun_fd_handle(fd: &Option<FfiTunFd>) -> Option<FfiTunFd> {
+    fd.clone()
+}
+
 /// Запущенное ядро.
 pub struct RcCore {
     rt: Option<tokio::runtime::Runtime>,
@@ -182,7 +189,7 @@ pub unsafe extern "C" fn rc_start(
         // SAFETY: обещание вызывающего (см. выше).
         let text = unsafe { arg(config) }?.ok_or("config — NULL")?;
         let base = PathBuf::from(unsafe { arg(base_dir) }?.unwrap_or("."));
-        let cfg = parse_config(text, &base, fd.clone())?;
+        let cfg = parse_config(text, &base, tun_fd_handle(&fd))?;
         let rt = tokio::runtime::Builder::new_multi_thread()
             .worker_threads(2)
             .thread_name("reality-core")
@@ -305,7 +312,7 @@ pub unsafe extern "C" fn rc_reload(
         let core = unsafe { core.as_ref() }.ok_or("core — NULL")?;
         let text = unsafe { arg(config) }?.ok_or("config — NULL")?;
         // Тот же дескриптор TUN: вход TUN на ходу не меняется.
-        let cfg = parse_config(text, &core.base, core.tun_fd.clone())?;
+        let cfg = parse_config(text, &core.base, tun_fd_handle(&core.tun_fd))?;
         let (Some(rt), Some(running)) = (&core.rt, &core.running) else {
             return Err("ядро остановлено".into());
         };
