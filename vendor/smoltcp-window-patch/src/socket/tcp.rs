@@ -260,6 +260,11 @@ enum Timer {
         delay: Duration,
     },
     FastRetransmit,
+    // vpn-core: пробы нулевого окна (бэкпорт smoltcp 0.13, #1026).
+    ZeroWindowProbe {
+        expires_at: Instant,
+        delay: Duration,
+    },
     Close {
         expires_at: Instant,
     },
@@ -294,6 +299,13 @@ impl Timer {
         }
     }
 
+    fn should_zero_window_probe(&self, timestamp: Instant) -> bool {
+        match *self {
+            Timer::ZeroWindowProbe { expires_at, .. } if timestamp >= expires_at => true,
+            _ => false,
+        }
+    }
+
     fn should_close(&self, timestamp: Instant) -> bool {
         match *self {
             Timer::Close { expires_at } if timestamp >= expires_at => true,
@@ -309,6 +321,7 @@ impl Timer {
             Timer::Idle {
                 keep_alive_at: None,
             } => PollAt::Ingress,
+            Timer::ZeroWindowProbe { expires_at, .. } => PollAt::Time(expires_at),
             Timer::Retransmit { expires_at, .. } => PollAt::Time(expires_at),
             Timer::FastRetransmit => PollAt::Now,
             Timer::Close { expires_at } => PollAt::Time(expires_at),
@@ -337,7 +350,7 @@ impl Timer {
 
     fn set_for_retransmit(&mut self, timestamp: Instant, delay: Duration) {
         match *self {
-            Timer::Idle { .. } | Timer::FastRetransmit { .. } => {
+            Timer::Idle { .. } | Timer::FastRetransmit { .. } | Timer::ZeroWindowProbe { .. } => {
                 *self = Timer::Retransmit {
                     expires_at: timestamp + delay,
                     delay,
@@ -369,6 +382,31 @@ impl Timer {
             Timer::Retransmit { .. } | Timer::FastRetransmit => true,
             _ => false,
         }
+    }
+
+    fn set_for_zero_window_probe(&mut self, timestamp: Instant, delay: Duration) {
+        *self = Timer::ZeroWindowProbe {
+            expires_at: timestamp + delay,
+            delay,
+        }
+    }
+
+    fn rewind_zero_window_probe(&mut self, timestamp: Instant) {
+        if let Timer::ZeroWindowProbe { mut delay, .. } = *self {
+            delay = (delay * 2).min(Duration::from_millis(RTTE_MAX_RTO as _));
+            *self = Timer::ZeroWindowProbe {
+                expires_at: timestamp + delay,
+                delay,
+            }
+        }
+    }
+
+    fn is_idle(&self) -> bool {
+        matches!(self, Timer::Idle { .. })
+    }
+
+    fn is_zero_window_probe(&self) -> bool {
+        matches!(self, Timer::ZeroWindowProbe { .. })
     }
 }
 
@@ -1174,6 +1212,16 @@ impl<'a> Socket<'a> {
                 self.remote_last_ts = None
             }
 
+            // vpn-core (бэкпорт smoltcp 0.13, #1026): окно собеседника 0, а
+            // данные для отправки только что появились — запустить таймер
+            // пробы нулевого окна. Времени здесь нет: Instant::ZERO, первая
+            // проба уйдёт сразу.
+            if self.remote_win_len == 0 && self.timer.is_idle() {
+                let delay = self.rtte.retransmission_timeout();
+                tcp_trace!("starting zero-window-probe timer for t+{}", delay);
+                self.timer.set_for_zero_window_probe(Instant::ZERO, delay);
+            }
+
             #[cfg(any(test, feature = "verbose"))]
             tcp_trace!(
                 "tx buffer: enqueueing {} octets (now {})",
@@ -1712,7 +1760,7 @@ impl<'a> Socket<'a> {
                         ack_of_fin = true;
                     }
 
-                    ack_all = self.remote_last_seq == ack_number
+                    ack_all = self.remote_last_seq <= ack_number
                 }
 
                 self.rtte.on_ack(cx.now(), ack_number);
@@ -1732,6 +1780,11 @@ impl<'a> Socket<'a> {
             tcp_trace!("ignoring FIN because we don't have full data yet. window_start={} segment_start={}", window_start, segment_start);
             control = TcpControl::None;
         }
+
+        // vpn-core: в 0.12 почти каждый пакет ставит таймер в Idle. Таймер
+        // пробы нулевого окна запоминаем, чтобы не сбросить его задержку
+        // пакетом, который ничего не подтвердил.
+        let zero_window_probe_timer = self.timer.is_zero_window_probe().then_some(self.timer);
 
         // Validate and update the state.
         match (self.state, control) {
@@ -2036,6 +2089,25 @@ impl<'a> Socket<'a> {
             self.last_remote_tsval = timestamp.tsval;
         }
 
+        // vpn-core (бэкпорт smoltcp 0.13, #1026): запустить или остановить
+        // таймер пробы нулевого окна. Без проб отправитель при окне 0 молчит,
+        // и если ACK с открытием окна потерян, соединение стоит навсегда.
+        if self.remote_win_len == 0 && !self.tx_buffer.is_empty() {
+            match zero_window_probe_timer {
+                Some(timer) if ack_len == 0 && self.timer.is_idle() => self.timer = timer,
+                _ if self.timer.is_idle() || ack_len > 0 => {
+                    let delay = self.rtte.retransmission_timeout();
+                    tcp_trace!("starting zero-window-probe timer for t+{}", delay);
+                    self.timer.set_for_zero_window_probe(cx.now(), delay);
+                }
+                _ => {}
+            }
+        }
+        if self.remote_win_len != 0 && self.timer.is_zero_window_probe() {
+            tcp_trace!("stopping zero-window-probe timer");
+            self.timer.set_for_idle(cx.now(), self.keep_alive);
+        }
+
         let payload_len = payload.len();
         if payload_len == 0 {
             return None;
@@ -2324,6 +2396,9 @@ impl<'a> Socket<'a> {
         } else if self.timer.should_keep_alive(cx.now()) {
             // If we need to transmit a keep-alive packet, do it.
             tcp_trace!("keep-alive timer expired");
+        } else if self.timer.should_zero_window_probe(cx.now()) {
+            // vpn-core (бэкпорт smoltcp 0.13, #1026).
+            tcp_trace!("sending zero-window probe");
         } else if self.timer.should_close(cx.now()) {
             // If we have spent enough time in the TIME-WAIT state, close the socket.
             tcp_trace!("TIME-WAIT timer expired");
@@ -2366,6 +2441,8 @@ impl<'a> Socket<'a> {
             payload: &[],
         };
 
+        let mut is_zero_window_probe = false;
+
         match self.state {
             // We transmit an RST in the CLOSED state. If we ended up in the CLOSED state
             // with a specified endpoint, it means that the socket was aborted.
@@ -2407,7 +2484,7 @@ impl<'a> Socket<'a> {
                 let win_right_edge = self.local_seq_no + self.remote_win_len;
 
                 // Max amount of octets we're allowed to send according to the remote window.
-                let win_limit = if win_right_edge >= self.remote_last_seq {
+                let mut win_limit = if win_right_edge >= self.remote_last_seq {
                     win_right_edge - self.remote_last_seq
                 } else {
                     // This can happen if we've sent some data and later the remote side
@@ -2417,6 +2494,13 @@ impl<'a> Socket<'a> {
                     // http://www.tcpipguide.com/free/t_TCPWindowManagementIssues.htm
                     0
                 };
+
+                // vpn-core (бэкпорт smoltcp 0.13, #1026): для пробы нулевого
+                // окна — хотя бы 1 байт.
+                if win_limit == 0 && self.timer.should_zero_window_probe(cx.now()) {
+                    win_limit = 1;
+                    is_zero_window_probe = true;
+                }
 
                 // Maximum size we're allowed to send. This can be limited by 3 factors:
                 // 1. remote window
@@ -2515,6 +2599,13 @@ impl<'a> Socket<'a> {
             }
         }
         self.ack_delay_timer = AckDelayTimer::Idle;
+
+        // vpn-core (бэкпорт smoltcp 0.13, #1026): после пробы нулевого окна
+        // состояние не меняется, только задержка следующей пробы удваивается.
+        if is_zero_window_probe {
+            self.timer.rewind_zero_window_probe(cx.now());
+            return Ok(());
+        }
 
         // Leave the rest of the state intact if sending a keep-alive packet, since those
         // carry a fake segment.
@@ -2824,6 +2915,11 @@ mod test {
         ($socket:ident, [$( $repr:expr ),*]) => ({
             $( recv!($socket, Ok($repr)); )*
             recv_nothing!($socket)
+        });
+        // vpn-core: форма из smoltcp 0.13 — для тестов проб нулевого окна.
+        ($socket:ident, time $time:expr, [$( $repr:expr ),*]) => ({
+            $( recv!($socket, time $time, Ok($repr)); )*
+            recv_nothing!($socket, time $time)
         });
         ($socket:ident, $result:expr) =>
             (recv!($socket, time 0, $result));
@@ -4321,6 +4417,315 @@ mod test {
         let mut buf = [0; 64];
         assert_eq!(s.recv_slice(&mut buf), Ok(62));
         assert!(s.window_to_update());
+    }
+
+    // =========================================================================================//
+    // Tests for zero-window probes.
+    // vpn-core: тесты из smoltcp 0.13 (#1026). Времена в трёх тестах с
+    // удвоением задержки пересчитаны под начальный RTO 0.12 (700 мс, а не
+    // 1 с): 700 → 1400 → 2800 мс.
+    // =========================================================================================//
+
+    #[test]
+    fn test_zero_window_probe_enter_on_win_update() {
+        let mut s = socket_established();
+
+        assert!(!s.timer.is_zero_window_probe());
+
+        s.send_slice(b"abcdef123456!@#$%^").unwrap();
+
+        assert!(!s.timer.is_zero_window_probe());
+
+        send!(
+            s,
+            TcpRepr {
+                seq_number: REMOTE_SEQ + 1,
+                ack_number: Some(LOCAL_SEQ + 1),
+                window_len: 0,
+                ..SEND_TEMPL
+            }
+        );
+
+        assert!(s.timer.is_zero_window_probe());
+    }
+
+    #[test]
+    fn test_zero_window_probe_enter_on_send() {
+        let mut s = socket_established();
+
+        send!(
+            s,
+            TcpRepr {
+                seq_number: REMOTE_SEQ + 1,
+                ack_number: Some(LOCAL_SEQ + 1),
+                window_len: 0,
+                ..SEND_TEMPL
+            }
+        );
+
+        assert!(!s.timer.is_zero_window_probe());
+
+        s.send_slice(b"abcdef123456!@#$%^").unwrap();
+
+        assert!(s.timer.is_zero_window_probe());
+    }
+
+    #[test]
+    fn test_zero_window_probe_exit() {
+        let mut s = socket_established();
+
+        s.send_slice(b"abcdef123456!@#$%^").unwrap();
+
+        assert!(!s.timer.is_zero_window_probe());
+
+        send!(
+            s,
+            TcpRepr {
+                seq_number: REMOTE_SEQ + 1,
+                ack_number: Some(LOCAL_SEQ + 1),
+                window_len: 0,
+                ..SEND_TEMPL
+            }
+        );
+
+        assert!(s.timer.is_zero_window_probe());
+
+        send!(
+            s,
+            TcpRepr {
+                seq_number: REMOTE_SEQ + 1,
+                ack_number: Some(LOCAL_SEQ + 1),
+                window_len: 6,
+                ..SEND_TEMPL
+            }
+        );
+
+        assert!(!s.timer.is_zero_window_probe());
+    }
+
+    #[test]
+    fn test_zero_window_probe_exit_ack() {
+        let mut s = socket_established();
+
+        s.send_slice(b"abcdef123456!@#$%^").unwrap();
+        send!(
+            s,
+            TcpRepr {
+                seq_number: REMOTE_SEQ + 1,
+                ack_number: Some(LOCAL_SEQ + 1),
+                window_len: 0,
+                ..SEND_TEMPL
+            }
+        );
+
+        recv!(
+            s,
+            time 1000,
+            [TcpRepr {
+                seq_number: LOCAL_SEQ + 1,
+                ack_number: Some(REMOTE_SEQ + 1),
+                payload: &b"a"[..],
+                ..RECV_TEMPL
+            }]
+        );
+
+        send!(
+            s,
+            time 1010,
+            TcpRepr {
+                seq_number: REMOTE_SEQ + 1,
+                ack_number: Some(LOCAL_SEQ + 2),
+                window_len: 6,
+                ..SEND_TEMPL
+            }
+        );
+
+        recv!(
+            s,
+            time 1010,
+            [TcpRepr {
+                seq_number: LOCAL_SEQ + 2,
+                ack_number: Some(REMOTE_SEQ + 1),
+                payload: &b"bcdef1"[..],
+                ..RECV_TEMPL
+            }]
+        );
+    }
+
+    #[test]
+    fn test_zero_window_probe_backoff_nack_reply() {
+        let mut s = socket_established();
+        s.send_slice(b"abcdef123456!@#$%^").unwrap();
+        send!(
+            s,
+            TcpRepr {
+                seq_number: REMOTE_SEQ + 1,
+                ack_number: Some(LOCAL_SEQ + 1),
+                window_len: 0,
+                ..SEND_TEMPL
+            }
+        );
+
+        recv_nothing!(s, time 699);
+        recv!(
+            s,
+            time 700,
+            [TcpRepr {
+                seq_number: LOCAL_SEQ + 1,
+                ack_number: Some(REMOTE_SEQ + 1),
+                payload: &b"a"[..],
+                ..RECV_TEMPL
+            }]
+        );
+        send!(
+            s,
+            time 800,
+            TcpRepr {
+                seq_number: REMOTE_SEQ + 1,
+                ack_number: Some(LOCAL_SEQ + 1),
+                window_len: 0,
+                ..SEND_TEMPL
+            }
+        );
+
+        recv_nothing!(s, time 2099);
+        recv!(
+            s,
+            time 2100,
+            [TcpRepr {
+                seq_number: LOCAL_SEQ + 1,
+                ack_number: Some(REMOTE_SEQ + 1),
+                payload: &b"a"[..],
+                ..RECV_TEMPL
+            }]
+        );
+        send!(
+            s,
+            time 2200,
+            TcpRepr {
+                seq_number: REMOTE_SEQ + 1,
+                ack_number: Some(LOCAL_SEQ + 1),
+                window_len: 0,
+                ..SEND_TEMPL
+            }
+        );
+
+        recv_nothing!(s, time 4899);
+        recv!(
+            s,
+            time 4900,
+            [TcpRepr {
+                seq_number: LOCAL_SEQ + 1,
+                ack_number: Some(REMOTE_SEQ + 1),
+                payload: &b"a"[..],
+                ..RECV_TEMPL
+            }]
+        );
+    }
+
+    #[test]
+    fn test_zero_window_probe_backoff_no_reply() {
+        let mut s = socket_established();
+        s.send_slice(b"abcdef123456!@#$%^").unwrap();
+        send!(
+            s,
+            TcpRepr {
+                seq_number: REMOTE_SEQ + 1,
+                ack_number: Some(LOCAL_SEQ + 1),
+                window_len: 0,
+                ..SEND_TEMPL
+            }
+        );
+
+        recv_nothing!(s, time 699);
+        recv!(
+            s,
+            time 700,
+            [TcpRepr {
+                seq_number: LOCAL_SEQ + 1,
+                ack_number: Some(REMOTE_SEQ + 1),
+                payload: &b"a"[..],
+                ..RECV_TEMPL
+            }]
+        );
+
+        recv_nothing!(s, time 2099);
+        recv!(
+            s,
+            time 2100,
+            [TcpRepr {
+                seq_number: LOCAL_SEQ + 1,
+                ack_number: Some(REMOTE_SEQ + 1),
+                payload: &b"a"[..],
+                ..RECV_TEMPL
+            }]
+        );
+    }
+
+    #[test]
+    fn test_zero_window_probe_shift() {
+        let mut s = socket_established();
+
+        s.send_slice(b"abcdef123456!@#$%^").unwrap();
+        send!(
+            s,
+            TcpRepr {
+                seq_number: REMOTE_SEQ + 1,
+                ack_number: Some(LOCAL_SEQ + 1),
+                window_len: 0,
+                ..SEND_TEMPL
+            }
+        );
+
+        recv_nothing!(s, time 699);
+        recv!(
+            s,
+            time 700,
+            [TcpRepr {
+                seq_number: LOCAL_SEQ + 1,
+                ack_number: Some(REMOTE_SEQ + 1),
+                payload: &b"a"[..],
+                ..RECV_TEMPL
+            }]
+        );
+
+        recv_nothing!(s, time 2099);
+        recv!(
+            s,
+            time 2100,
+            [TcpRepr {
+                seq_number: LOCAL_SEQ + 1,
+                ack_number: Some(REMOTE_SEQ + 1),
+                payload: &b"a"[..],
+                ..RECV_TEMPL
+            }]
+        );
+
+        // ack the ZWP byte, but still advertise zero window.
+        // this should restart the ZWP timer.
+        send!(
+            s,
+            time 2200,
+            TcpRepr {
+                seq_number: REMOTE_SEQ + 1,
+                ack_number: Some(LOCAL_SEQ + 2),
+                window_len: 0,
+                ..SEND_TEMPL
+            }
+        );
+
+        // ZWP should be sent at 3100+1000 = 4100
+        recv_nothing!(s, time 2899);
+        recv!(
+            s,
+            time 2900,
+            [TcpRepr {
+                seq_number: LOCAL_SEQ + 2,
+                ack_number: Some(REMOTE_SEQ + 1),
+                payload: &b"b"[..],
+                ..RECV_TEMPL
+            }]
+        );
     }
 
     #[test]
