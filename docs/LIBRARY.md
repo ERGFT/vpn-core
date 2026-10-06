@@ -92,7 +92,8 @@ rc_stop(core);
    `VpnService.protect(fd)` для каждого сокета ядра (соединения к
    серверу, `direct`, DNS) — иначе они ушли бы в свой же VPN.
 3. `rc_start(config, filesDir, pfd.detachFd(), &err)` — владение
-   дескриптором переходит ядру (он закроется в `rc_stop`). В настройках —
+   дескриптором переходит ядру при вызове: ядро закроет его и при ошибке
+   запуска, и в `rc_stop` после успешного запуска. В настройках —
    вход `{"type": "tun", "tag": "tun"}`: адреса, маршруты и kill switch
    задаёт `VpnService`, поэтому `auto_route`/`strict_route` не
    применяются. Перехват DNS (`hijack-dns`), sniffing, fake-IP работают

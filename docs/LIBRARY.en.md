@@ -100,8 +100,8 @@ data over to your own (UI) thread and return quickly.
    `VpnService.protect(fd)` for every core socket (connections to the
    server, `direct`, DNS). Otherwise they would go into your own VPN.
 3. Call `rc_start(config, filesDir, pfd.detachFd(), &err)`:
-   - ownership of the descriptor passes to the core (it is closed in
-     `rc_stop`);
+   - ownership passes to the core on call; it closes the descriptor on
+     startup failure and in `rc_stop` after a successful start;
    - the config needs a `{"type": "tun", "tag": "tun"}` inbound;
    - `VpnService` sets addresses, routes and the kill switch, so
      `auto_route`/`strict_route` do not apply;

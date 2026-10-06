@@ -14,7 +14,11 @@ mod singbox;
 mod xray;
 
 use std::net::SocketAddr;
+#[cfg(unix)]
+use std::os::fd::OwnedFd;
 use std::path::{Path, PathBuf};
+#[cfg(unix)]
+use std::sync::Arc;
 
 use super::access::IpNet;
 pub use super::rules::{PortSpec, RuleConfig};
@@ -101,6 +105,10 @@ pub struct InboundConfig {
     /// только программно, в режиме библиотеки; маршруты тогда ставит
     /// система, а не клиент.
     pub tun_fd: Option<i32>,
+    /// Владелец системного дескриптора TUN: держит его открытым при разборе
+    /// настроек и запуске, чтобы при ошибке он не остался незакрытым.
+    #[cfg(unix)]
+    pub tun_fd_owner: Option<Arc<OwnedFd>>,
 }
 
 impl std::fmt::Debug for InboundConfig {
@@ -160,6 +168,8 @@ impl InboundConfig {
             strict_route: None,
             dns_hijack: None,
             tun_fd: None,
+            #[cfg(unix)]
+            tun_fd_owner: None,
         }
     }
 
