@@ -185,8 +185,15 @@ int main(void) {
         rc_free_string(body);
         rc_stop(t);
         printf("OK: ядро с готовым дескриптором TUN\n");
-        if (rc_start(CONFIG, NULL, 3, &err) != NULL) FAIL("дескриптор без входа tun принят");
+        /* Владение дескриптором переходит ядру и при ошибке: передаём
+         * свой, свежий (не чужой номер — ядро его закроет), и проверяем,
+         * что он закрыт. */
+        int stray = open("/dev/null", O_RDONLY);
+        if (stray < 0) FAIL("не удалось открыть /dev/null");
+        if (rc_start(CONFIG, NULL, stray, &err) != NULL) FAIL("дескриптор без входа tun принят");
         rc_free_string(err);
+        if (fcntl(stray, F_GETFD) != -1) FAIL("rc_start не закрыл дескриптор при ошибке");
+        printf("OK: при ошибке rc_start закрыл переданный дескриптор\n");
     } else {
         printf("SKIP: дескриптор TUN — нужен root\n");
     }
