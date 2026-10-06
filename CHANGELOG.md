@@ -111,6 +111,9 @@
 - TUN: данные сверх объявленного окна TCP больше не роняют стек smoltcp
   паникой («attempt to subtract sequence numbers with underflow») —
   бэкпорт исправления из smoltcp 0.13 (`vendor/smoltcp-window-patch`).
+- TUN: соединение больше не встаёт навсегда, когда окно приёма у
+  приложения было нулевым и сообщение о его открытии потерялось — стек
+  шлёт пробы нулевого окна (бэкпорт из smoltcp 0.13, туда же).
 - Документация на русском и английском; CONTRIBUTING, SECURITY,
   CODE_OF_CONDUCT, SUPPORT, шаблоны issue и PR; описание устройства ядра
   (`docs/ARCHITECTURE.md`).
@@ -252,6 +255,9 @@ It will include:
   stack with a panic ("attempt to subtract sequence numbers with
   underflow") — a backport of the fix from smoltcp 0.13
   (`vendor/smoltcp-window-patch`).
+- TUN: a connection no longer stalls forever when the application's receive
+  window was zero and the update reopening it got lost — the stack sends
+  zero-window probes (backported from smoltcp 0.13, same place).
 - Documentation in Russian and English; CONTRIBUTING, SECURITY,
   CODE_OF_CONDUCT, SUPPORT, issue and PR templates; a description of how the
   core works (`docs/ARCHITECTURE.en.md`).
