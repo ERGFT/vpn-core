@@ -49,6 +49,11 @@
 - Windows: системный прокси, служба, автозапуск при входе; Linux: systemd.
 
 ### Безопасность
+- Встраивание (`libreality`): дескриптор TUN, переданный в `rc_start`,
+  закрывается ядром при любой ошибке разбора настроек и запуска (раньше
+  при ошибке разбора оставался открытым); живому устройству отдаётся его
+  собственный дубликат. Системный TUN (Android, iOS) не берёт блокировку
+  `auto_route`, а имена серверов по-прежнему разрешает DNS ядра.
 - `auto_route` — один владелец на компьютер: второй экземпляр и
   `--tun-cleanup` больше не снимают маршруты и kill switch работающего.
 - `auto_route` на Linux не трогает чужие правила и маршруты: свои
@@ -183,6 +188,11 @@ It will include:
 - Windows: system proxy, service, autostart at logon; Linux: systemd.
 
 ### Security
+- Embedding (`libreality`): the TUN descriptor passed to `rc_start` is closed
+  by the core on every config-parse and startup error (it used to stay open
+  after a parse error); the live device gets its own duplicate. A system-owned
+  TUN (Android, iOS) does not take the `auto_route` lock, and server names are
+  still resolved by the core's DNS.
 - `auto_route` has one owner per computer: a second instance and
   `--tun-cleanup` no longer remove the routes and kill switch of a running
   one.

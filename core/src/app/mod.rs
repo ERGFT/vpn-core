@@ -633,6 +633,20 @@ fn build_proxy_inbound(i: &config::InboundConfig, tag: &str) -> Result<Arc<Proxy
     }))
 }
 
+fn core_manages_tun_routes(auto_route: bool, external_fd: bool) -> bool {
+    auto_route && !external_fd
+}
+
+#[cfg(test)]
+mod external_tun_route_tests {
+    #[test]
+    fn system_tun_descriptor_keeps_routes_under_system_control() {
+        assert!(!super::core_manages_tun_routes(true, true));
+        assert!(super::core_manages_tun_routes(true, false));
+        assert!(!super::core_manages_tun_routes(false, false));
+    }
+}
+
 fn build_tun_inbound(
     i: &config::InboundConfig,
     tag: &str,
@@ -1208,14 +1222,15 @@ impl App {
             if let InboundSvc::Tun(t) = &i.svc {
                 // Владение auto_route — до создания интерфейса: второй
                 // экземпляр не тронет ни адаптер, ни маршруты первого.
-                let lock = if t.settings.auto_route {
-                    Some(
-                        tun::route::HostLock::acquire()
-                            .map_err(|e| Error::Config(format!("tun: {e}")))?,
-                    )
-                } else {
-                    None
-                };
+                let lock =
+                    if core_manages_tun_routes(t.settings.auto_route, t.settings.fd.is_some()) {
+                        Some(
+                            tun::route::HostLock::acquire()
+                                .map_err(|e| Error::Config(format!("tun: {e}")))?,
+                        )
+                    } else {
+                        None
+                    };
                 let dev = t.create_device()?;
                 tracing::info!(inbound = %t.tag, interface = %dev.name, "TUN создан");
                 let (dev_name, dev_index, dev_v6) = (dev.name.clone(), dev.if_index, dev.has_v6);
@@ -1258,28 +1273,26 @@ impl App {
                         task.abort();
                     }
                     routes.push(guard?);
-                    if dns.is_some() {
-                        // Новые имена (серверы из обновлённой подписки) —
-                        // у своего DNS, а не у системы: её запросы теперь
-                        // идут через TUN и могли бы получить fake-IP.
-                        // DNS — текущий (после перечитывания настроек —
-                        // новый).
-                        let r = Arc::downgrade(&routers);
-                        crate::transport::tcp_tls::set_tun_resolver(Some(Arc::new(
-                            move |host: String| {
-                                let r = r.clone();
-                                Box::pin(async move {
-                                    let d = r
-                                        .upgrade()
-                                        .and_then(|r| r.get().dns().cloned())
-                                        .ok_or_else(|| Error::Protocol("DNS остановлен".into()))?;
-                                    d.lookup(&host).await
-                                })
-                                    as futures_util::future::BoxFuture<'static, _>
-                            },
-                        )));
-                        tun_resolver = true;
-                    }
+                }
+                // У системного TUN (Android/iOS) маршруты уже стоят до
+                // запуска ядра, но имена серверов всё равно разрешает DNS
+                // ядра — когда его рабочая часть TUN запущена.
+                if t.settings.auto_route && dns.is_some() {
+                    let r = Arc::downgrade(&routers);
+                    crate::transport::tcp_tls::set_tun_resolver(Some(Arc::new(
+                        move |host: String| {
+                            let r = r.clone();
+                            Box::pin(async move {
+                                let d = r
+                                    .upgrade()
+                                    .and_then(|r| r.get().dns().cloned())
+                                    .ok_or_else(|| Error::Protocol("DNS остановлен".into()))?;
+                                d.lookup(&host).await
+                            })
+                                as futures_util::future::BoxFuture<'static, _>
+                        },
+                    )));
+                    tun_resolver = true;
                 }
                 inbounds.push((i.tag.clone(), i.kind, SocketAddr::from(([0, 0, 0, 0], 0))));
                 live.push(Live {

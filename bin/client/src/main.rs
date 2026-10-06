@@ -219,6 +219,8 @@ fn config_from_args(args: &Args) -> Result<Config> {
             strict_route: None,
             dns_hijack: None,
             tun_fd: None,
+            #[cfg(unix)]
+            tun_fd_owner: None,
         }],
         outbounds: vec![OutboundConfig {
             tag: "proxy".into(),

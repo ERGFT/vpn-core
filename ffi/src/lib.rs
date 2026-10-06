@@ -14,6 +14,8 @@
 //! C: функция возвращает ошибку.
 
 use std::ffi::{c_char, c_int, c_void, CStr, CString};
+#[cfg(unix)]
+use std::os::fd::{FromRawFd, OwnedFd};
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, Once};
@@ -24,6 +26,18 @@ use reality_core::app::config::{Config, InboundKind};
 use reality_core::app::{events, App, Running};
 use tokio::sync::broadcast::error::RecvError;
 
+#[cfg(unix)]
+type FfiTunFd = Arc<OwnedFd>;
+#[cfg(not(unix))]
+type FfiTunFd = i32;
+
+/// Ещё одна ссылка на владельца дескриптора: на Unix это `Arc`, на остальных
+/// системах — просто число (`Copy`), поэтому `clone_on_copy` здесь ожидаем.
+#[allow(clippy::clone_on_copy)]
+fn tun_fd_handle(fd: &Option<FfiTunFd>) -> Option<FfiTunFd> {
+    fd.clone()
+}
+
 /// Запущенное ядро.
 pub struct RcCore {
     rt: Option<tokio::runtime::Runtime>,
@@ -32,7 +46,7 @@ pub struct RcCore {
     /// Папка для относительных путей в настройках.
     base: PathBuf,
     /// Дескриптор TUN, если его дало приложение.
-    tun_fd: Option<i32>,
+    tun_fd: Option<FfiTunFd>,
     events: Mutex<Option<tokio::task::JoinHandle<()>>>,
     logs: Mutex<Option<tokio::task::JoinHandle<()>>>,
 }
@@ -117,15 +131,30 @@ pub extern "C" fn rc_version() -> *const c_char {
     concat!(env!("CARGO_PKG_VERSION"), "\0").as_ptr().cast()
 }
 
-fn parse_config(text: &str, base: &std::path::Path, tun_fd: Option<i32>) -> Result<Config, String> {
+fn parse_config(
+    text: &str,
+    base: &std::path::Path,
+    tun_fd: Option<FfiTunFd>,
+) -> Result<Config, String> {
+    #[cfg(unix)]
+    let raw_fd = tun_fd.as_ref().map(|fd| {
+        use std::os::fd::AsRawFd;
+        fd.as_raw_fd()
+    });
+    #[cfg(not(unix))]
+    let raw_fd = tun_fd;
     let mut cfg = Config::parse_at(text, base).map_err(|e| e.to_string())?;
-    if let Some(fd) = tun_fd {
+    if let Some(fd) = raw_fd {
         let tun = cfg
             .inbounds
             .iter_mut()
             .find(|i| i.kind == InboundKind::Tun)
             .ok_or("дескриптор TUN передан, но в настройках нет входа tun")?;
         tun.tun_fd = Some(fd);
+        #[cfg(unix)]
+        {
+            tun.tun_fd_owner = tun_fd.clone();
+        }
     }
     Ok(cfg)
 }
@@ -150,13 +179,17 @@ pub unsafe extern "C" fn rc_start(
     tun_fd: c_int,
     error: *mut *mut c_char,
 ) -> *mut RcCore {
+    // Владение переходит сразу: охранник закроет дескриптор на любом пути ошибки.
+    #[cfg(unix)]
+    let fd = (tun_fd >= 0).then(|| Arc::new(unsafe { OwnedFd::from_raw_fd(tun_fd) }));
+    #[cfg(not(unix))]
+    let fd = (tun_fd >= 0).then_some(tun_fd);
     let r = catch_unwind(AssertUnwindSafe(|| -> Result<RcCore, String> {
         init_logging();
         // SAFETY: обещание вызывающего (см. выше).
         let text = unsafe { arg(config) }?.ok_or("config — NULL")?;
         let base = PathBuf::from(unsafe { arg(base_dir) }?.unwrap_or("."));
-        let fd = (tun_fd >= 0).then_some(tun_fd);
-        let cfg = parse_config(text, &base, fd)?;
+        let cfg = parse_config(text, &base, tun_fd_handle(&fd))?;
         let rt = tokio::runtime::Builder::new_multi_thread()
             .worker_threads(2)
             .thread_name("reality-core")
@@ -279,7 +312,7 @@ pub unsafe extern "C" fn rc_reload(
         let core = unsafe { core.as_ref() }.ok_or("core — NULL")?;
         let text = unsafe { arg(config) }?.ok_or("config — NULL")?;
         // Тот же дескриптор TUN: вход TUN на ходу не меняется.
-        let cfg = parse_config(text, &core.base, core.tun_fd)?;
+        let cfg = parse_config(text, &core.base, tun_fd_handle(&core.tun_fd))?;
         let (Some(rt), Some(running)) = (&core.rt, &core.running) else {
             return Err("ядро остановлено".into());
         };
@@ -457,5 +490,36 @@ pub unsafe extern "C" fn rc_free_string(s: *mut c_char) {
     if !s.is_null() {
         // SAFETY: строка создана CString::into_raw в этой библиотеке.
         drop(unsafe { CString::from_raw(s) });
+    }
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod tun_fd_ownership_tests {
+    use super::rc_start;
+    use std::{ffi::CString, fs::File, os::fd::IntoRawFd, path::PathBuf};
+
+    #[test]
+    fn rc_start_closes_system_tun_fd_when_config_parse_fails() {
+        let fd = File::open("/dev/null").unwrap().into_raw_fd();
+        let config = CString::new("{invalid json").unwrap();
+        let base = CString::new(".").unwrap();
+        let mut error = std::ptr::null_mut();
+        let core = unsafe { rc_start(config.as_ptr(), base.as_ptr(), fd, &mut error) };
+        assert!(core.is_null());
+        assert!(!error.is_null());
+        let open = PathBuf::from(format!("/proc/self/fd/{fd}")).exists();
+        if open {
+            unsafe extern "C" {
+                fn close(fd: i32) -> i32;
+            }
+            unsafe {
+                let _ = close(fd);
+            }
+        }
+        assert!(
+            !open,
+            "rc_start leaked the TUN descriptor on a parse failure"
+        );
+        unsafe { super::rc_free_string(error) };
     }
 }

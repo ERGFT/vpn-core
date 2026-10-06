@@ -60,6 +60,9 @@ pub struct TunSettings {
     pub max_conns: usize,
     /// Готовый дескриптор TUN от системы (режим библиотеки, Android/iOS).
     pub fd: Option<i32>,
+    /// Общий владелец: держит дескриптор, пока устройство не продублирует его.
+    #[cfg(unix)]
+    pub fd_owner: Option<Arc<std::os::fd::OwnedFd>>,
 }
 
 pub struct TunInbound {
@@ -138,6 +141,16 @@ impl TunInbound {
     pub fn create_device(&self) -> Result<TunDevice> {
         let s = &self.settings;
         if let Some(fd) = s.fd {
+            #[cfg(unix)]
+            if let Some(owner) = &s.fd_owner {
+                use std::os::fd::IntoRawFd;
+                let duplicate = owner.try_clone().map_err(|e| {
+                    Error::Config(format!(
+                        "tun: не удалось дублировать системный дескриптор: {e}"
+                    ))
+                })?;
+                return self.device_from_fd(duplicate.into_raw_fd());
+            }
             return self.device_from_fd(fd);
         }
         #[cfg(any(target_os = "android", target_os = "ios"))]
@@ -521,6 +534,8 @@ pub fn settings(i: &super::config::InboundConfig) -> Result<TunSettings> {
         sniff_override: i.sniff_override_destination,
         max_conns: i.max_conns.unwrap_or(4096),
         fd: i.tun_fd,
+        #[cfg(unix)]
+        fd_owner: i.tun_fd_owner.clone(),
     })
 }
 
