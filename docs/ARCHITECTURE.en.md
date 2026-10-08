@@ -1089,8 +1089,11 @@ No third-party cryptographic review has been done; this is noted in
   Neither is possible without replacing the TLS stack.
 - **Checks**:
   - `core/tests/fingerprint_*.rs` compare against the references;
-  - `scripts/check_chrome_fingerprint.sh` watches whether the reference has
-    moved on;
+  - `scripts/check_chrome_fingerprint.sh` checks the implemented profiles
+    against the utls commit in `scripts/utls.rev`, the same source reference
+    used by the Xray test harness. `--upstream` separately checks for drift
+    in `utls/master`; upstream updates do not change regression CI results
+    without a source change;
   - `fpcheck` captures the real fingerprint on the wire.
 
 ## 16. API, connection tracking and events

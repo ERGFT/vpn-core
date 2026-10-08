@@ -129,13 +129,13 @@ ml-kem = { version = "0.3", features = ["zeroize", "getrandom"] }
 # графе (включая tokio-rustls); версия закреплена, dependabot её не
 # обновляет.
 #
-# smoltcp 0.12.0 (стек входа TUN, через netstack-smoltcp) с одной правкой
-# из smoltcp 0.13 (#1079): данные сверх объявленного окна приёма
-# отвергаются. Без неё такие данные роняли стек паникой «attempt to
-# subtract sequence numbers with underflow», и TUN останавливался. 0.13
+# smoltcp 0.12.0 (стек входа TUN, через netstack-smoltcp): бэкпорты
+# проверки окна (#1079), persist-проб (#1026), ACK повторных данных
+# (#1162), плюс сохранение ранее разрешённой границы scaled-окна.
+# Без последнего округление отбрасывало байты в пути и блокировало TUN. 0.13
 # требует Rust 1.91 (у нас MSRV 1.89), а netstack-smoltcp — 0.12. Патч —
 # vendor/smoltcp-window-patch.diff (scripts/vendor_patch.sh smoltcp),
-# убрать его — при переходе на smoltcp ≥ 0.13.
+# При обновлении сверить все правки из vendor/smoltcp-window-patch.md.
 [patch.crates-io]
 rustls = { path = "vendor/rustls-reality-patch" }
 smoltcp = { path = "vendor/smoltcp-window-patch" }

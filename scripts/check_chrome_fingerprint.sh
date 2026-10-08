@@ -20,15 +20,26 @@
 #      опираются chrome_profile.rs и core/tests/fingerprint_chrome_full.rs),
 #      и печатает расхождения.
 #
-# Ненулевой код возврата = эталон разошёлся, профиль пора обновлять.
-# Годится для ручного запуска и для scheduled-задачи.
+# По умолчанию сверяет реализованные профили с закреплённым utls:
+# одинаковые исходники должны давать одинаковый результат CI.
+# --upstream сверяет с master и сообщает о необходимости обновления
+# профиля. Этот режим — отдельная проверка актуальности, не регрессий.
+# Ненулевой код возврата = эталон разошёлся или не удалось его разобрать.
 set -euo pipefail
 
-RAW="https://raw.githubusercontent.com/refraction-networking/utls/master"
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+REF="$(cat "$ROOT/scripts/utls.rev")"
+case "${1:-}" in
+    "") ;;
+    --upstream) REF=master ;;
+    *) echo "использование: $0 [--upstream]" >&2; exit 2 ;;
+esac
+RAW="https://raw.githubusercontent.com/refraction-networking/utls/$REF"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
 echo "== сверка эталона Chrome-отпечатка с utls =="
+echo "utls ref: $REF"
 
 curl -fsSL --max-time 30 "$RAW/u_common.go"  -o "$TMP/u_common.go"
 curl -fsSL --max-time 30 "$RAW/u_parrots.go" -o "$TMP/u_parrots.go"
@@ -141,8 +152,8 @@ else
     DRIFT=1
 fi
 
-sigalgs="$(awk '/SignatureAlgorithmsExtension\{/{f=1; next} f && /\}\},/{exit} f' <<<"$block" \
-           | grep -oE '[A-Za-z0-9]+' | grep -vE '^(SupportedSignatureAlgorithms|SignatureScheme)$')"
+sigalgs="$(awk '/SignatureAlgorithmsExtension\{/{f=1; next} f && /\}\},/{exit} f {sub(/\/\/.*/, ""); print}' <<<"$block" \
+           | grep -oE '[A-Za-z0-9_]+' | grep -vE '^(SupportedSignatureAlgorithms|SignatureScheme)$')"
 EXPECTED_SIG="ECDSAWithP256AndSHA256
 PSSWithSHA256
 PKCS1WithSHA256

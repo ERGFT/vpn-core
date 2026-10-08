@@ -121,7 +121,7 @@ if [[ $QUICK -eq 0 ]]; then
     fi
 
     if curl -fsS --max-time 10 -o /dev/null \
-        https://raw.githubusercontent.com/refraction-networking/utls/master/u_common.go 2>/dev/null; then
+        "https://raw.githubusercontent.com/refraction-networking/utls/$(cat scripts/utls.rev)/u_common.go" 2>/dev/null; then
         step "сверка эталона Chrome-отпечатка" bash scripts/check_chrome_fingerprint.sh
     else
         skip "сверка эталона Chrome-отпечатка" "нет доступа к raw.githubusercontent.com"
