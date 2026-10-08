@@ -483,6 +483,9 @@ pub struct Socket<'a> {
     remote_last_ack: Option<TcpSeqNumber>,
     /// The last window length sent.
     remote_last_win: u16,
+    // vpn-core: ранее объявленный правый край окна. Округление window
+    // scale не отзывает разрешение на байты, уже отправленные собеседником.
+    remote_rx_right_edge: Option<TcpSeqNumber>,
     /// The sending window scaling factor advertised to remotes which support RFC 1323.
     /// It is zero if the window <= 64KiB and/or the remote does not support it.
     remote_win_shift: u8,
@@ -572,6 +575,7 @@ impl<'a> Socket<'a> {
             remote_last_seq: TcpSeqNumber::default(),
             remote_last_ack: None,
             remote_last_win: 0,
+            remote_rx_right_edge: None,
             remote_win_len: 0,
             remote_win_shift: rx_cap_log2.saturating_sub(16) as u8,
             remote_win_scale: None,
@@ -733,7 +737,14 @@ impl<'a> Socket<'a> {
         let next_ack = self.remote_seq_no + self.rx_buffer.len();
 
         let last_win = (self.remote_last_win as usize) << self.remote_win_shift;
-        let last_win_adjusted = last_ack + last_win - next_ack;
+        let last_edge = last_ack + last_win;
+        let last_win_adjusted = if last_edge >= next_ack {
+            last_edge - next_ack
+        } else {
+            // Ранее разрешённые байты могут пройти за округлённый край
+            // последнего ACK; оставшаяся часть этого окна тогда равна 0.
+            0
+        };
 
         Some(u16::try_from(last_win_adjusted >> self.remote_win_shift).unwrap_or(u16::MAX))
     }
@@ -873,6 +884,7 @@ impl<'a> Socket<'a> {
         self.remote_last_seq = TcpSeqNumber::default();
         self.remote_last_ack = None;
         self.remote_last_win = 0;
+        self.remote_rx_right_edge = None;
         self.remote_win_len = 0;
         self.remote_win_scale = None;
         self.remote_win_shift = rx_cap_log2.saturating_sub(16) as u8;
@@ -1418,6 +1430,20 @@ impl<'a> Socket<'a> {
         (ip_reply_repr, reply_repr)
     }
 
+    fn record_receive_window(&mut self, ack: Option<TcpSeqNumber>, window: u16, shift: u8) {
+        if let Some(ack) = ack {
+            let edge = ack + ((window as usize) << shift);
+            let previous = self.remote_rx_right_edge.or_else(|| {
+                self.remote_last_ack.map(|old_ack| {
+                    old_ack + ((self.remote_last_win as usize) << self.remote_win_shift)
+                })
+            });
+            self.remote_rx_right_edge = Some(previous.map_or(edge, |old| old.max(edge)));
+        }
+        self.remote_last_ack = ack;
+        self.remote_last_win = window;
+    }
+
     fn ack_reply(&mut self, ip_repr: &IpRepr, repr: &TcpRepr) -> (IpRepr, TcpRepr<'static>) {
         let (mut ip_reply_repr, mut reply_repr) = Self::reply(ip_repr, repr);
         reply_repr.timestamp = repr
@@ -1430,13 +1456,16 @@ impl<'a> Socket<'a> {
         // to be received.
         reply_repr.seq_number = self.remote_last_seq;
         reply_repr.ack_number = Some(self.remote_seq_no + self.rx_buffer.len());
-        self.remote_last_ack = reply_repr.ack_number;
 
         // From RFC 1323:
         // The window field [...] of every outgoing segment, with the exception of SYN
         // segments, is right-shifted by [advertised scale value] bits[...]
         reply_repr.window_len = self.scaled_window();
-        self.remote_last_win = reply_repr.window_len;
+        self.record_receive_window(
+            reply_repr.ack_number,
+            reply_repr.window_len,
+            self.remote_win_shift,
+        );
 
         // If the remote supports selective acknowledgement, add the option to the outgoing
         // segment.
@@ -1647,11 +1676,15 @@ impl<'a> Socket<'a> {
         // vpn-core: правый край окна — объявленный собеседнику, а не весь
         // буфер (бэкпорт smoltcp 0.13, #1079). Байты сверх объявленного окна
         // потом роняли `last_scaled_window` паникой.
-        let window_end = if let Some(last_ack) = self.remote_last_ack {
+        let latest_window_end = if let Some(last_ack) = self.remote_last_ack {
             last_ack + ((self.remote_last_win as usize) << self.remote_win_shift)
         } else {
             window_start
         };
+        let window_end = self
+            .remote_rx_right_edge
+            .unwrap_or(latest_window_end)
+            .min(self.remote_seq_no + self.rx_buffer.capacity());
         let segment_start = repr.seq_number;
         let segment_end = repr.seq_number + repr.payload.len();
 
@@ -2631,8 +2664,6 @@ impl<'a> Socket<'a> {
 
         // We've sent a packet successfully, so we can update the internal state now.
         self.remote_last_seq = repr.seq_number + repr.segment_len();
-        self.remote_last_ack = repr.ack_number;
-        self.remote_last_win = repr.window_len;
 
         if repr.segment_len() > 0 {
             self.rtte
@@ -2648,6 +2679,16 @@ impl<'a> Socket<'a> {
             self.timer
                 .set_for_retransmit(cx.now(), self.rtte.retransmission_timeout());
         }
+
+        self.record_receive_window(
+            repr.ack_number,
+            repr.window_len,
+            if repr.control == TcpControl::Syn {
+                0
+            } else {
+                self.remote_win_shift
+            },
+        );
 
         if self.state == State::Closed {
             // When aborting a connection, forget about it after sending a single RST packet.
@@ -4384,10 +4425,69 @@ mod test {
         );
     }
 
-    // vpn-core: байт сверх объявленного окна (окно 0 после масштабирования,
-    // но в буфере ещё есть место) не принимается. Раньше он принимался, и
-    // `last_scaled_window` паниковал: «attempt to subtract sequence numbers
-    // with underflow» (исправлено в smoltcp 0.13, #1079).
+    #[test]
+    fn test_scaled_window_preserves_in_flight_bytes_and_reverse_ack() {
+        let mut s = socket_established_with_buffer_sizes(64, 64);
+        s.remote_win_scale = Some(0);
+        s.remote_win_shift = 2;
+        s.remote_last_win = 16;
+        s.send_slice(b"abcdef").unwrap();
+        recv!(
+            s,
+            [TcpRepr {
+                seq_number: LOCAL_SEQ + 1,
+                ack_number: Some(REMOTE_SEQ + 1),
+                payload: b"abcdef",
+                window_len: 16,
+                ..RECV_TEMPL
+            }]
+        );
+        send!(
+            s,
+            TcpRepr {
+                seq_number: REMOTE_SEQ + 1,
+                ack_number: Some(LOCAL_SEQ + 1),
+                payload: &[0; 62],
+                ..SEND_TEMPL
+            }
+        );
+        recv!(
+            s,
+            [TcpRepr {
+                seq_number: LOCAL_SEQ + 7,
+                ack_number: Some(REMOTE_SEQ + 63),
+                window_len: 0,
+                ..RECV_TEMPL
+            }]
+        );
+        // Остаток ранее разрешённых 64 байт уже в пути. Округлённое окно
+        // 0 не отзывает разрешение и не блокирует ACK обратного потока.
+        send!(
+            s,
+            TcpRepr {
+                seq_number: REMOTE_SEQ + 63,
+                ack_number: Some(LOCAL_SEQ + 7),
+                payload: &[0; 2],
+                ..SEND_TEMPL
+            }
+        );
+        assert_eq!(s.rx_buffer.len(), 64);
+        assert_eq!(s.tx_buffer.len(), 0);
+        assert_eq!(s.last_scaled_window(), Some(0));
+        recv!(
+            s,
+            [TcpRepr {
+                seq_number: LOCAL_SEQ + 7,
+                ack_number: Some(REMOTE_SEQ + 65),
+                window_len: 0,
+                ..RECV_TEMPL
+            }]
+        );
+        let mut buf = [0; 64];
+        assert_eq!(s.recv_slice(&mut buf), Ok(64));
+        assert!(s.window_to_update());
+    }
+
     #[test]
     fn test_old_data_ack_not_rate_limited() {
         let mut s = socket_established();
@@ -4510,17 +4610,22 @@ mod test {
         );
     }
 
+    // vpn-core: байт сверх объявленного окна (окно 0 после масштабирования,
+    // но в буфере ещё есть место) не принимается. Раньше он принимался, и
+    // `last_scaled_window` паниковал: «attempt to subtract sequence numbers
+    // with underflow» (исправлено в smoltcp 0.13, #1079).
     #[test]
     fn test_established_rejects_data_beyond_advertised_window() {
-        let mut s = socket_established_with_buffer_sizes(64, 64);
+        let mut s = socket_established_with_buffer_sizes(64, 63);
         s.remote_win_scale = Some(0);
         s.remote_win_shift = 2;
+        s.remote_last_win = 15;
         send!(
             s,
             TcpRepr {
                 seq_number: REMOTE_SEQ + 1,
                 ack_number: Some(LOCAL_SEQ + 1),
-                payload: &[0; 62],
+                payload: &[0; 60],
                 ..SEND_TEMPL
             }
         );
@@ -4528,32 +4633,32 @@ mod test {
             s,
             [TcpRepr {
                 seq_number: LOCAL_SEQ + 1,
-                ack_number: Some(REMOTE_SEQ + 1 + 62),
+                ack_number: Some(REMOTE_SEQ + 1 + 60),
                 window_len: 0,
                 ..RECV_TEMPL
             }]
         );
-        // Объявлено окно 0, свободно 2 байта: байт за окном отвергается.
+        // Объявлено окно 0, свободно 3 байта: байт за окном отвергается.
         send!(
             s,
             TcpRepr {
-                seq_number: REMOTE_SEQ + 1 + 62,
+                seq_number: REMOTE_SEQ + 1 + 60,
                 ack_number: Some(LOCAL_SEQ + 1),
                 payload: &[0; 1],
                 ..SEND_TEMPL
             },
             Some(TcpRepr {
                 seq_number: LOCAL_SEQ + 1,
-                ack_number: Some(REMOTE_SEQ + 1 + 62),
+                ack_number: Some(REMOTE_SEQ + 1 + 60),
                 window_len: 0,
                 ..RECV_TEMPL
             })
         );
-        assert_eq!(s.rx_buffer.len(), 62);
+        assert_eq!(s.rx_buffer.len(), 60);
         // Приложение прочитало данные: проверка «не пора ли обновить окно»
         // не паникует.
         let mut buf = [0; 64];
-        assert_eq!(s.recv_slice(&mut buf), Ok(62));
+        assert_eq!(s.recv_slice(&mut buf), Ok(60));
         assert!(s.window_to_update());
     }
 
