@@ -1,4 +1,4 @@
-# smoltcp 0.12.0 с бэкпортом из 0.13
+# smoltcp 0.12.0 с бэкпортами TCP
 
 Стек входа TUN — smoltcp через netstack-smoltcp 0.2.4, которому нужен
 smoltcp 0.12. В 0.12 сегмент TCP принимался, если помещался в весь буфер
@@ -34,6 +34,15 @@ window probe support»). В 0.12 отправитель при окне собе
 (`scripts/vendor_patch.sh smoltcp`, проверка — `--check` в
 `scripts/ci.sh`).
 
+Третья правка — [#1162] из upstream: повторные сегменты с данными и
+пробы нулевого окна подтверждаются без лимита защитных ACK. Иначе
+потеря ACK может загнать собеседника в retransmission/persist backoff.
+Пустые ACK по-прежнему ограничены, чтобы не возникал ACK-loop.
+Тесты `test_old_data_ack_not_rate_limited` и
+`test_zero_window_ack_not_rate_limited` взяты из upstream; без правки
+оба падают. CI выполняет пять отдельных передач по 32 МиБ с проверкой
+SHA-256, сохраняя ограничение 60 с на каждую.
+
 Обновиться на smoltcp ≥ 0.13 нельзя: ему нужен Rust 1.91 (MSRV проекта —
 1.89), а netstack-smoltcp пока требует 0.12. Когда netstack-smoltcp
 перейдёт на новую версию, патч убрать (`[patch.crates-io]` в `Cargo.toml`).
@@ -44,3 +53,4 @@ smoltcp 0.12 смотреть вручную в RustSec.
 [#1079]: https://github.com/smoltcp-rs/smoltcp/pull/1079
 [#1026]: https://github.com/smoltcp-rs/smoltcp/pull/1026
 [#1023]: https://github.com/smoltcp-rs/smoltcp/pull/1023
+[#1162]: https://github.com/smoltcp-rs/smoltcp/pull/1162

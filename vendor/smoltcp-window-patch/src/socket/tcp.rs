@@ -1732,6 +1732,22 @@ impl<'a> Socket<'a> {
                         self.timer.set_for_close(cx.now());
                     }
 
+                    // vpn-core: бэкпорт smoltcp #1162. Повторные данные и
+                    // пробы окна требуют ACK без лимита защитных ACK.
+                    // Пустые ACK по-прежнему ограничены: они могут зациклиться.
+                    if !repr.payload.is_empty() {
+                        return Some(self.ack_reply(ip_repr, repr));
+                    }
+
+                    if cx.now() >= self.challenge_ack_timer {
+                        net_debug!(
+                            "out-of-window: recv={}..{} seg={}..{} ack={:?} send={}..{} peer_win={} rx={} tx={} timer={:?}",
+                            window_start, window_end, segment_start, segment_end,
+                            repr.ack_number, self.local_seq_no, self.remote_last_seq,
+                            self.remote_win_len, self.rx_buffer.len(), self.tx_buffer.len(), self.timer
+                        );
+                    }
+
                     return self.challenge_ack_reply(cx, ip_repr, repr);
                 }
             }
@@ -4372,6 +4388,128 @@ mod test {
     // но в буфере ещё есть место) не принимается. Раньше он принимался, и
     // `last_scaled_window` паниковал: «attempt to subtract sequence numbers
     // with underflow» (исправлено в smoltcp 0.13, #1079).
+    #[test]
+    fn test_old_data_ack_not_rate_limited() {
+        let mut s = socket_established();
+        send!(
+            s,
+            TcpRepr {
+                seq_number: REMOTE_SEQ + 1,
+                ack_number: Some(LOCAL_SEQ + 1),
+                payload: &b"abcdef"[..],
+                ..SEND_TEMPL
+            }
+        );
+        recv!(
+            s,
+            [TcpRepr {
+                seq_number: LOCAL_SEQ + 1,
+                ack_number: Some(REMOTE_SEQ + 1 + 6),
+                window_len: 58,
+                ..RECV_TEMPL
+            }]
+        );
+        s.recv(|data| {
+            assert_eq!(data, b"abcdef");
+            (6, ())
+        })
+        .unwrap();
+        // The remote retransmits data we already acknowledged, e.g. because
+        // the ACK above was lost. Each retransmission must elicit a duplicate
+        // ACK, even within the challenge ACK rate limit window: withholding it
+        // strands the remote in retransmission backoff.
+        send!(
+            s,
+            time 100,
+            TcpRepr {
+                seq_number: REMOTE_SEQ + 1,
+                ack_number: Some(LOCAL_SEQ + 1),
+                payload: &b"abcdef"[..],
+                ..SEND_TEMPL
+            },
+            Some(TcpRepr {
+                seq_number: LOCAL_SEQ + 1,
+                ack_number: Some(REMOTE_SEQ + 1 + 6),
+                ..RECV_TEMPL
+            })
+        );
+        send!(
+            s,
+            time 200,
+            TcpRepr {
+                seq_number: REMOTE_SEQ + 1,
+                ack_number: Some(LOCAL_SEQ + 1),
+                payload: &b"abcdef"[..],
+                ..SEND_TEMPL
+            },
+            Some(TcpRepr {
+                seq_number: LOCAL_SEQ + 1,
+                ack_number: Some(REMOTE_SEQ + 1 + 6),
+                ..RECV_TEMPL
+            })
+        );
+    }
+
+    #[test]
+    fn test_zero_window_ack_not_rate_limited() {
+        let mut s = socket_established();
+        s.rx_buffer = SocketBuffer::new(vec![0; 6]);
+        s.assembler = Assembler::new();
+        send!(
+            s,
+            TcpRepr {
+                seq_number: REMOTE_SEQ + 1,
+                ack_number: Some(LOCAL_SEQ + 1),
+                payload: &b"abcdef"[..],
+                ..SEND_TEMPL
+            }
+        );
+        recv!(
+            s,
+            [TcpRepr {
+                seq_number: LOCAL_SEQ + 1,
+                ack_number: Some(REMOTE_SEQ + 1 + 6),
+                window_len: 0,
+                ..RECV_TEMPL
+            }]
+        );
+        send!(
+            s,
+            TcpRepr {
+                seq_number: REMOTE_SEQ + 1 + 6,
+                ack_number: Some(LOCAL_SEQ + 1),
+                payload: &b"123456"[..],
+                ..SEND_TEMPL
+            },
+            Some(TcpRepr {
+                seq_number: LOCAL_SEQ + 1,
+                ack_number: Some(REMOTE_SEQ + 1 + 6),
+                window_len: 0,
+                ..RECV_TEMPL
+            })
+        );
+        // The remote retransmits into the zero window again within a second,
+        // e.g. because the ACK above was lost. The ACK must not be withheld by
+        // challenge ACK rate limiting: it is the remote's only way to learn
+        // the window state, and a data segment cannot cause an ACK loop.
+        send!(
+            s,
+            time 100,
+            TcpRepr {
+                seq_number: REMOTE_SEQ + 1 + 6,
+                ack_number: Some(LOCAL_SEQ + 1),
+                payload: &b"123456"[..],
+                ..SEND_TEMPL
+            },
+            Some(TcpRepr {
+                seq_number: LOCAL_SEQ + 1,
+                ack_number: Some(REMOTE_SEQ + 1 + 6),
+                window_len: 0,
+                ..RECV_TEMPL
+            })
+        );
+    }
+
     #[test]
     fn test_established_rejects_data_beyond_advertised_window() {
         let mut s = socket_established_with_buffer_sizes(64, 64);

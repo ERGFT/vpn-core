@@ -219,38 +219,40 @@ big = os.urandom(2 * 1024 * 1024)
 assert tcp(host, echo, big) == host
 print("OK: 2 МиБ через TUN без искажений")
 import time
-data = os.urandom(32 * 1024 * 1024)
-s = socket.create_connection((host, echo), timeout=60); s.makefile("rb").readline()
-t0 = time.time()
-import threading
-writer_errors = []
-def w():
+for iteration in range(1, 6):
+    print(f'== full-duplex TUN: прогон {iteration}/5 ==')
+    data = os.urandom(32 * 1024 * 1024)
+    s = socket.create_connection((host, echo), timeout=60); s.makefile("rb").readline()
+    t0 = time.time()
+    import threading
+    writer_errors = []
+    def w():
+        try:
+            s.sendall(data)
+        except Exception as e:
+            writer_errors.append(e)
+    th = threading.Thread(target=w, daemon=True); th.start()
+    got = 0
+    digest = hashlib.sha256()
+    print("START: 32 МиБ full-duplex через TUN + VLESS")
     try:
-        s.sendall(data)
-    except Exception as e:
-        writer_errors.append(e)
-th = threading.Thread(target=w, daemon=True); th.start()
-got = 0
-digest = hashlib.sha256()
-print("START: 32 МиБ full-duplex через TUN + VLESS")
-try:
-    while got < len(data):
-        b = s.recv(1 << 20); assert b; got += len(b); digest.update(b)
-    th.join(timeout=5)
-    assert not th.is_alive(), "отправитель не завершился после получения всего эха"
-    assert not writer_errors, f"ошибка отправителя: {writer_errors}"
-    assert digest.digest() == hashlib.sha256(data).digest(), "32 МиБ: данные искажены"
-except Exception:
-    print(f"FAIL: получено {got}/{len(data)} байт за {time.time()-t0:.1f} с; ошибки отправителя: {writer_errors}")
-    raise
-finally:
-    try: s.shutdown(socket.SHUT_RDWR)
-    except OSError: pass
-    th.join(timeout=5)
-    s.close()
-dt = time.time() - t0
-print(f"OK: 32 МиБ туда и обратно через TUN + VLESS за {dt:.1f} с ({2*32/dt:.0f} МиБ/с)")
-assert dt < 60
+        while got < len(data):
+            b = s.recv(1 << 20); assert b; got += len(b); digest.update(b)
+        th.join(timeout=5)
+        assert not th.is_alive(), "отправитель не завершился после получения всего эха"
+        assert not writer_errors, f"ошибка отправителя: {writer_errors}"
+        assert digest.digest() == hashlib.sha256(data).digest(), "32 МиБ: данные искажены"
+    except Exception:
+        print(f"FAIL: получено {got}/{len(data)} байт за {time.time()-t0:.1f} с; ошибки отправителя: {writer_errors}")
+        raise
+    finally:
+        try: s.shutdown(socket.SHUT_RDWR)
+        except OSError: pass
+        th.join(timeout=5)
+        s.close()
+    dt = time.time() - t0
+    print(f"OK: 32 МиБ туда и обратно через TUN + VLESS за {dt:.1f} с ({2*32/dt:.0f} МиБ/с)")
+    assert dt < 60
 
 peer = tcp(host, direct_echo)
 assert peer == "10.99.0.2", f"direct должен идти напрямую (эхо видит {peer})"
