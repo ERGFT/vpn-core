@@ -53,6 +53,21 @@ cleanup() {
 trap cleanup EXIT
 nsx() { ip netns exec "$NS" "$@"; }
 
+# До cleanup: TCP-окна и очереди обоих концов тестового соединения.
+# Конфиги с ключами в лог не выводятся.
+diagnostics() {
+    echo "== TUN failure: namespace TCP sockets =="
+    nsx ss -tin || true
+    echo "== TUN failure: namespace interface =="
+    nsx ip -s link show rtun0 || true
+    echo "== TUN failure: host test TCP sockets =="
+    ss -tin src "$HOST_IP" || true
+    echo "== TUN failure: client log =="
+    cat "$TMP/client.log"
+    echo "== TUN failure: Xray log =="
+    cat "$TMP/xray.log"
+}
+
 ip netns add "$NS"
 ip link add "veth$$" type veth peer name vpeer$$
 ip link set "vpeer$$" netns "$NS"
@@ -175,7 +190,8 @@ JSON
 start_client() {
     # Без функции-обёртки: $! должен быть самим клиентом (ip netns exec
     # заменяет себя им), иначе сигнал уйдёт подоболочке.
-    ip netns exec "$NS" "$CLIENT_BIN" --config "$TMP/client.json" > "$TMP/client.log" 2>&1 &
+    ip netns exec "$NS" env RUST_LOG="${RUST_LOG:-info,reality_core::app::tun=debug,netstack_smoltcp=debug,smoltcp=debug}" \
+        "$CLIENT_BIN" --config "$TMP/client.json" > "$TMP/client.log" 2>&1 &
     CLIENT_PID=$!
     PIDS+=($CLIENT_PID)
     for _ in $(seq 1 100); do grep -q 'весь трафик направлен в TUN' "$TMP/client.log" && return; sleep 0.1; done
@@ -184,8 +200,8 @@ start_client() {
 start_client
 
 QUIC_HEX="$ROOT/core/src/app/testdata/chromium140_quic_initial.hex"
-nsx python3 - "$HOST_IP" "$ECHO" "$DIRECT_ECHO" "$UDPE" "$EXCL_ECHO" "$QUIC_HEX" <<'PY' || { cat "$TMP/client.log"; exit 1; }
-import os, socket, struct, sys
+nsx python3 -u - "$HOST_IP" "$ECHO" "$DIRECT_ECHO" "$UDPE" "$EXCL_ECHO" "$QUIC_HEX" <<'PY' || { diagnostics; exit 1; }
+import hashlib, os, socket, struct, sys
 host, echo, direct_echo, udpe, excl = sys.argv[1], *map(int, sys.argv[2:6])
 quic = [bytes.fromhex(l.strip()) for l in open(sys.argv[6]) if l.strip()]
 def tcp(addr, port, data=b"hello over tun"):
@@ -207,12 +223,32 @@ data = os.urandom(32 * 1024 * 1024)
 s = socket.create_connection((host, echo), timeout=60); s.makefile("rb").readline()
 t0 = time.time()
 import threading
-def w(): s.sendall(data)
-th = threading.Thread(target=w); th.start()
+writer_errors = []
+def w():
+    try:
+        s.sendall(data)
+    except Exception as e:
+        writer_errors.append(e)
+th = threading.Thread(target=w, daemon=True); th.start()
 got = 0
-while got < len(data):
-    b = s.recv(1 << 20); assert b; got += len(b)
-th.join(); dt = time.time() - t0
+digest = hashlib.sha256()
+print("START: 32 МиБ full-duplex через TUN + VLESS")
+try:
+    while got < len(data):
+        b = s.recv(1 << 20); assert b; got += len(b); digest.update(b)
+    th.join(timeout=5)
+    assert not th.is_alive(), "отправитель не завершился после получения всего эха"
+    assert not writer_errors, f"ошибка отправителя: {writer_errors}"
+    assert digest.digest() == hashlib.sha256(data).digest(), "32 МиБ: данные искажены"
+except Exception:
+    print(f"FAIL: получено {got}/{len(data)} байт за {time.time()-t0:.1f} с; ошибки отправителя: {writer_errors}")
+    raise
+finally:
+    try: s.shutdown(socket.SHUT_RDWR)
+    except OSError: pass
+    th.join(timeout=5)
+    s.close()
+dt = time.time() - t0
 print(f"OK: 32 МиБ туда и обратно через TUN + VLESS за {dt:.1f} с ({2*32/dt:.0f} МиБ/с)")
 assert dt < 60
 
