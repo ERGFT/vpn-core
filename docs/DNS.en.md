@@ -83,6 +83,8 @@ An existing direct outbound named `direct` is required by this example.
 Bootstrap accepts only IP-literal UDP: local/fake-IP, DNS hostnames and proxy
 detours are rejected. Omitting the field does not automatically enable direct
 DNS; external-TUN transport hostname lookup fails without fallback. Bootstrap
+is not needed for literal transport IPs; omitting the entire `dns` section also
+does not enable system fallback for transport hostnames. Bootstrap
 uses `prefer_ipv4` independently of application rules; cache entries are scoped
 by server tag. Direct DNS can see VPN/DoH server names, but normal query rules
 and `final` remain unchanged. CLI-managed TUN retains its existing lookup path.

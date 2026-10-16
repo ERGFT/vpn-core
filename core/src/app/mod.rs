@@ -659,6 +659,11 @@ fn core_manages_tun_routes(auto_route: bool, external_fd: bool) -> bool {
     auto_route && !external_fd
 }
 
+fn core_uses_tun_resolver(auto_route: bool, external_fd: bool, dns_present: bool) -> bool {
+    // Внешний TUN не должен возвращаться к системному DNS даже без раздела dns.
+    external_fd || (auto_route && dns_present)
+}
+
 #[cfg(test)]
 mod external_tun_route_tests {
     #[test]
@@ -666,6 +671,19 @@ mod external_tun_route_tests {
         assert!(!super::core_manages_tun_routes(true, true));
         assert!(super::core_manages_tun_routes(true, false));
         assert!(!super::core_manages_tun_routes(false, false));
+    }
+
+    #[test]
+    fn external_tun_never_enables_system_dns_fallback() {
+        for auto_route in [false, true] {
+            for dns_present in [false, true] {
+                assert!(super::core_uses_tun_resolver(auto_route, true, dns_present));
+                assert_eq!(
+                    super::core_uses_tun_resolver(auto_route, false, dns_present),
+                    auto_route && dns_present
+                );
+            }
+        }
     }
 
     #[test]
@@ -1353,7 +1371,11 @@ impl App {
                 // У системного TUN (Android/iOS) маршруты уже стоят до
                 // запуска ядра, но имена серверов всё равно разрешает DNS
                 // ядра — когда его рабочая часть TUN запущена.
-                if (t.settings.auto_route || t.settings.fd.is_some()) && dns.is_some() {
+                if core_uses_tun_resolver(
+                    t.settings.auto_route,
+                    t.settings.fd.is_some(),
+                    dns.is_some(),
+                ) {
                     let r = Arc::downgrade(&routers);
                     let external_fd = t.settings.fd.is_some();
                     crate::transport::tcp_tls::set_tun_resolver(Some(Arc::new(
@@ -1363,7 +1385,13 @@ impl App {
                                 let d = r
                                     .upgrade()
                                     .and_then(|r| r.get().dns().cloned())
-                                    .ok_or_else(|| Error::Protocol("DNS остановлен".into()))?;
+                                    .ok_or_else(|| {
+                                        Error::Protocol(if external_fd {
+                                            "внешний TUN: для имён транспорта требуется dns.bootstrap".into()
+                                        } else {
+                                            "DNS остановлен".into()
+                                        })
+                                    })?;
                                 if external_fd {
                                     d.lookup_server_host(&host).await
                                 } else {
