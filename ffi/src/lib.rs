@@ -140,17 +140,27 @@ pub extern "C" fn rc_version() -> *const c_char {
 #[no_mangle]
 pub unsafe extern "C" fn rc_validate(config: *const c_char, base_dir: *const c_char) -> c_int {
     catch_unwind(|| {
-        let Some(text) = (unsafe { arg(config) }).ok().flatten() else { return 0; };
-        let Ok(dir) = (unsafe { arg(base_dir) }) else { return 0; };
-        let rt = match tokio::runtime::Builder::new_current_thread().enable_all().build() {
+        let Some(text) = (unsafe { arg(config) }).ok().flatten() else {
+            return 0;
+        };
+        let Ok(dir) = (unsafe { arg(base_dir) }) else {
+            return 0;
+        };
+        let rt = match tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+        {
             Ok(rt) => rt,
             Err(_) => return 0,
         };
         rt.block_on(async {
-            let Ok(cfg) = parse_config(text, std::path::Path::new(dir.unwrap_or(".")), None) else { return 0; };
+            let Ok(cfg) = parse_config(text, std::path::Path::new(dir.unwrap_or(".")), None) else {
+                return 0;
+            };
             c_int::from(App::build(&cfg).is_ok())
         })
-    }).unwrap_or(0)
+    })
+    .unwrap_or(0)
 }
 
 fn parse_config(
@@ -542,11 +552,20 @@ mod health_tests {
 
     #[test]
     fn validation_rejects_invalid_input_without_returning_config_values() {
-        assert_eq!(unsafe { super::rc_validate(std::ptr::null(), std::ptr::null()) }, 0);
+        assert_eq!(
+            unsafe { super::rc_validate(std::ptr::null(), std::ptr::null()) },
+            0
+        );
         let invalid = CString::new("{not-json-secret}").unwrap();
-        assert_eq!(unsafe { super::rc_validate(invalid.as_ptr(), std::ptr::null()) }, 0);
+        assert_eq!(
+            unsafe { super::rc_validate(invalid.as_ptr(), std::ptr::null()) },
+            0
+        );
         let invalid_utf8 = [0xffu8, 0];
-        assert_eq!(unsafe { super::rc_validate(invalid_utf8.as_ptr().cast(), std::ptr::null()) }, 0);
+        assert_eq!(
+            unsafe { super::rc_validate(invalid_utf8.as_ptr().cast(), std::ptr::null()) },
+            0
+        );
     }
 
     #[test]
@@ -556,10 +575,17 @@ mod health_tests {
             "inbounds": [{"type":"mixed", "listen":"127.0.0.1", "listen_port":occupied.local_addr().unwrap().port()}],
             "outbounds": [{"type":"direct", "tag":"direct"}]
         }).to_string()).unwrap();
-        assert_eq!(unsafe { super::rc_validate(preflight.as_ptr(), std::ptr::null()) }, 1);
+        assert_eq!(
+            unsafe { super::rc_validate(preflight.as_ptr(), std::ptr::null()) },
+            1
+        );
         let config = CString::new(r#"{"inbounds":[{"type":"mixed","listen":"127.0.0.1","listen_port":0}],"outbounds":[{"type":"direct","tag":"direct"}]}"#).unwrap();
-        assert_eq!(unsafe { super::rc_validate(config.as_ptr(), std::ptr::null()) }, 1);
-        let core = unsafe { super::rc_start(config.as_ptr(), std::ptr::null(), -1, std::ptr::null_mut()) };
+        assert_eq!(
+            unsafe { super::rc_validate(config.as_ptr(), std::ptr::null()) },
+            1
+        );
+        let core =
+            unsafe { super::rc_start(config.as_ptr(), std::ptr::null(), -1, std::ptr::null_mut()) };
         assert!(!core.is_null());
         assert_eq!(unsafe { super::rc_is_alive(core) }, 1);
         unsafe { super::rc_stop(core) };

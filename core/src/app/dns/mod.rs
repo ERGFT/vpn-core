@@ -224,7 +224,11 @@ impl Dns {
             Some(t) => index(t, "dns.final")?,
             None => 0,
         };
-        let bootstrap = cfg.bootstrap.as_deref().map(|tag| index(tag, "dns.bootstrap")).transpose()?;
+        let bootstrap = cfg
+            .bootstrap
+            .as_deref()
+            .map(|tag| index(tag, "dns.bootstrap"))
+            .transpose()?;
         let mut rules = Vec::new();
         for (i, r) in cfg.rules.iter().enumerate() {
             let set = DomainSet::build(
@@ -469,11 +473,11 @@ impl Dns {
             m.add_query(Query::query(fqdn.clone(), t));
             async move {
                 let resp = match server {
-                    Some(s) => {
-                        tokio::time::timeout(QUERY_TIMEOUT, self.forward(s, &m, name, t))
-                            .await
-                            .map_err(|_| Error::Protocol("истекло время ожидания bootstrap DNS".into()))??
-                    }
+                    Some(s) => tokio::time::timeout(QUERY_TIMEOUT, self.forward(s, &m, name, t))
+                        .await
+                        .map_err(|_| {
+                            Error::Protocol("истекло время ожидания bootstrap DNS".into())
+                        })??,
                     None => self.handle(&m, false).await,
                 };
                 Ok::<Vec<IpAddr>, Error>(
@@ -644,11 +648,10 @@ mod bootstrap_tests {
             60,
             RData::A(A::new(203, 0, 113, 7)),
         ));
-        dns.cache.as_ref().unwrap().put(
-            &format!("{BOOTSTRAP_DNS}|{name}"),
-            RecordType::A,
-            &answer,
-        );
+        dns.cache
+            .as_ref()
+            .unwrap()
+            .put(&format!("{BOOTSTRAP_DNS}|{name}"), RecordType::A, &answer);
         let mut q6 = Message::query();
         q6.add_query(Query::query(
             Name::from_ascii("proxy.example.").unwrap(),
@@ -686,7 +689,10 @@ mod bootstrap_tests {
                         RData::A(A::new(203, 0, 113, 9)),
                     ));
                 }
-                socket.send_to(&answer.to_vec().unwrap(), peer).await.unwrap();
+                socket
+                    .send_to(&answer.to_vec().unwrap(), peer)
+                    .await
+                    .unwrap();
             }
         });
         let ips = tokio::time::timeout(
