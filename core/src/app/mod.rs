@@ -44,6 +44,8 @@ pub mod vless_out;
 use std::net::SocketAddr;
 use std::sync::Arc;
 
+use futures_util::FutureExt;
+
 use tokio::net::{TcpListener, UdpSocket};
 use tokio::sync::mpsc;
 use tokio::task::AbortHandle;
@@ -177,6 +179,7 @@ pub struct Running {
     pub api_addr: Option<SocketAddr>,
     ctl: Arc<Controller>,
     errors: mpsc::UnboundedReceiver<Error>,
+    terminal_error: Option<Error>,
     api_task: Option<AbortHandle>,
     /// Маршруты TUN: держатся ради `Drop` — снимаются при уничтожении.
     #[allow(dead_code)]
@@ -186,8 +189,25 @@ pub struct Running {
 }
 
 impl Running {
+    /// Неблокирующая проверка терминальной ошибки; false остаётся до перезапуска.
+    pub fn is_alive(&mut self) -> bool {
+        if self.terminal_error.is_none() {
+            self.terminal_error = match self.errors.try_recv() {
+                Ok(error) => Some(error),
+                Err(mpsc::error::TryRecvError::Disconnected) => {
+                    Some(Error::Protocol("канал ошибок ядра закрыт".into()))
+                }
+                Err(mpsc::error::TryRecvError::Empty) => None,
+            };
+        }
+        self.terminal_error.is_none()
+    }
+
     /// Ждать, пока какой-нибудь вход не завершится с ошибкой.
     pub async fn wait(mut self) -> Result<()> {
+        if let Some(error) = self.terminal_error.take() {
+            return Err(error);
+        }
         match self.errors.recv().await {
             Some(e) => Err(e),
             None => Ok(()),
@@ -278,7 +298,9 @@ where
 {
     let tx = errors.clone();
     tokio::spawn(async move {
-        if let Err(e) = f.await {
+        let result = std::panic::AssertUnwindSafe(f).catch_unwind().await;
+        let result = result.unwrap_or_else(|_| Err(Error::Protocol("core task panicked".into())));
+        if let Err(e) = result {
             let _ = tx.send(e);
         }
     })
@@ -639,6 +661,11 @@ fn core_manages_tun_routes(auto_route: bool, external_fd: bool) -> bool {
     auto_route && !external_fd
 }
 
+fn core_uses_tun_resolver(auto_route: bool, external_fd: bool, dns_present: bool) -> bool {
+    // Внешний TUN не должен возвращаться к системному DNS даже без раздела dns.
+    external_fd || (auto_route && dns_present)
+}
+
 #[cfg(test)]
 mod external_tun_route_tests {
     #[test]
@@ -646,6 +673,73 @@ mod external_tun_route_tests {
         assert!(!super::core_manages_tun_routes(true, true));
         assert!(super::core_manages_tun_routes(true, false));
         assert!(!super::core_manages_tun_routes(false, false));
+    }
+
+    #[test]
+    fn external_tun_never_enables_system_dns_fallback() {
+        for auto_route in [false, true] {
+            for dns_present in [false, true] {
+                assert!(super::core_uses_tun_resolver(auto_route, true, dns_present));
+                assert_eq!(
+                    super::core_uses_tun_resolver(auto_route, false, dns_present),
+                    auto_route && dns_present
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn external_tun_rejects_system_dns_without_managing_routes() {
+        let mut cfg = super::Config::parse(
+            r#"{"inbounds":[{"type":"tun","tag":"tun"}],
+                "outbounds":[{"type":"direct","tag":"direct"}],
+                "dns":{"servers":[{"type":"local","tag":"local"}]}}"#,
+        )
+        .unwrap();
+        cfg.inbounds[0].tun_fd = Some(123);
+        assert!(!cfg.inbounds[0].wants_auto_route());
+        assert!(super::App::build(&cfg).is_err());
+    }
+
+    #[tokio::test]
+    async fn health_failure_is_sticky() {
+        let cfg = super::Config::parse(
+            r#"{"inbounds":[{"type":"mixed","listen":"127.0.0.1","listen_port":0}],
+                "outbounds":[{"type":"direct","tag":"direct"}]}"#,
+        )
+        .unwrap();
+        let mut running = super::App::build(&cfg).unwrap().start().await.unwrap();
+        assert!(running.is_alive());
+        running
+            .ctl
+            .errors
+            .send(super::Error::Protocol("test failure".into()))
+            .unwrap();
+        assert!(!running.is_alive());
+        assert!(!running.is_alive());
+        let result = tokio::time::timeout(std::time::Duration::from_secs(1), running.wait())
+            .await
+            .unwrap();
+        assert_eq!(result.unwrap_err().to_string(), "test failure");
+    }
+
+    #[tokio::test]
+    async fn task_errors_and_panics_reach_health_channel() {
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        super::spawn_task(&tx, async {
+            Err(super::Error::Protocol("test failure".into()))
+        });
+        let error = tokio::time::timeout(std::time::Duration::from_secs(1), rx.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(error.to_string(), "test failure");
+        super::spawn_task(&tx, async { panic!("test panic") });
+        let error = tokio::time::timeout(std::time::Duration::from_secs(1), rx.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(error.to_string(), "core task panicked");
     }
 }
 
@@ -661,7 +755,7 @@ fn build_tun_inbound(
              добавьте раздел dns или уберите правило"
         )));
     }
-    if settings.auto_route && dns.is_some_and(|d| d.has_local()) {
+    if (settings.auto_route || settings.fd.is_some()) && dns.is_some_and(|d| d.has_local()) {
         return Err(Error::Config(format!(
             "вход {tag}: DNS-сервер address = \"local\" (системный) вместе с TUN — петля: \
              системный DNS сам идёт через TUN; укажите сервер адресом"
@@ -1279,8 +1373,13 @@ impl App {
                 // У системного TUN (Android/iOS) маршруты уже стоят до
                 // запуска ядра, но имена серверов всё равно разрешает DNS
                 // ядра — когда его рабочая часть TUN запущена.
-                if t.settings.auto_route && dns.is_some() {
+                if core_uses_tun_resolver(
+                    t.settings.auto_route,
+                    t.settings.fd.is_some(),
+                    dns.is_some(),
+                ) {
                     let r = Arc::downgrade(&routers);
+                    let external_fd = t.settings.fd.is_some();
                     crate::transport::tcp_tls::set_tun_resolver(Some(Arc::new(
                         move |host: String| {
                             let r = r.clone();
@@ -1288,8 +1387,18 @@ impl App {
                                 let d = r
                                     .upgrade()
                                     .and_then(|r| r.get().dns().cloned())
-                                    .ok_or_else(|| Error::Protocol("DNS остановлен".into()))?;
-                                d.lookup(&host).await
+                                    .ok_or_else(|| {
+                                        Error::Protocol(if external_fd {
+                                            "внешний TUN: для имён транспорта требуется dns.bootstrap".into()
+                                        } else {
+                                            "DNS остановлен".into()
+                                        })
+                                    })?;
+                                if external_fd {
+                                    d.lookup_server_host(&host).await
+                                } else {
+                                    d.lookup(&host).await
+                                }
                             })
                                 as futures_util::future::BoxFuture<'static, _>
                         },
@@ -1353,6 +1462,7 @@ impl App {
             api_addr,
             ctl,
             errors: errors_rx,
+            terminal_error: None,
             api_task,
             routes,
             tun_resolver,

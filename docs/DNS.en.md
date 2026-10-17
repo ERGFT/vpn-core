@@ -51,3 +51,40 @@ In Xray: `"dns": {"servers": ["https://1.1.1.1/dns-query",
   kept across restarts (`cache_file` — extension).
 - A DNS inbound open to the network requires `allow_ip`: otherwise it is an
   "open resolver" used for DDoS attacks.
+
+## Per-rule strategy
+
+A sing-box `dns.rules[]` rule may set `strategy`: `prefer_ipv4`, `prefer_ipv6`,
+`ipv4_only` or `ipv6_only`. An absent field inherits global `dns.strategy`.
+The first matching rule selects both server and strategy. `ipv4_only` suppresses
+AAAA; `ipv6_only` suppresses A. `prefer_*` queries both families and orders
+internal lookup results. The same filtering applies to fake-IP. When real
+lookup skips a fake-IP rule, it also skips that rule's strategy. Xray rules
+continue to inherit global `queryStrategy`.
+
+## Bootstrap for external TUN (experimental)
+
+`dns.bootstrap` is a **vpn-core extension**, not a standard sing-box/Xray field.
+In sing-box JSON it is the tag of a dedicated server for transport hostnames
+when TUN comes from the OS (Android/iOS). Example:
+
+```json
+"dns": {
+  "servers": [
+    {"type": "udp", "tag": "transport-dns", "server": "1.1.1.1", "detour": "direct"},
+    {"type": "https", "tag": "remote", "server": "1.1.1.1", "detour": "proxy"}
+  ],
+  "bootstrap": "transport-dns",
+  "final": "remote"
+}
+```
+
+An existing direct outbound named `direct` is required by this example.
+Bootstrap accepts only IP-literal UDP: local/fake-IP, DNS hostnames and proxy
+detours are rejected. Omitting the field does not automatically enable direct
+DNS; external-TUN transport hostname lookup fails without fallback. Bootstrap
+is not needed for literal transport IPs; omitting the entire `dns` section also
+does not enable system fallback for transport hostnames. Bootstrap
+uses `prefer_ipv4` independently of application rules; cache entries are scoped
+by server tag. Direct DNS can see VPN/DoH server names, but normal query rules
+and `final` remain unchanged. CLI-managed TUN retains its existing lookup path.

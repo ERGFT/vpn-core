@@ -91,11 +91,36 @@ rc_stop(core);
 - **`rc_stop(core)`** — stop: inbounds close, routes are restored.
 - **`rc_free_string(s)`** — free a string returned by the library.
 
-Functions may be called from any thread. Callbacks arrive on the core's
+Functions may be called from any thread, but the application must serialize
+operations on the same `RcCore`. Do not call `rc_is_alive` concurrently with
+another operation on that handle; the handle is invalid after `rc_stop`.
+Callbacks arrive on the core's
 background threads and the core waits until each one returns, so hand the
 data over to your own (UI) thread and return quickly.
 
 ## Android
+
+Before transferring the FD, `rc_validate(config, base_dir)` returns 1 when
+parsing/building the configuration succeeds, otherwise 0 without potentially
+sensitive error text. It reads files (CA, rules) but starts no listeners and
+does not check VPN permission, FD validity or connectivity. Success does not
+guarantee a successful `rc_start`.
+
+On a live handle `rc_is_alive(core)` returns 1 until the task channel reports
+a terminal error, then 0 persistently. NULL returns 0. This is not a ping,
+connectivity check or complete monitor of every background task. Errors from
+`spawn_task`, including unwinding panics, reach this channel; `panic=abort`
+cannot be caught. `Running::wait` retains an error observed by polling.
+The application stops the core and informs the user after failure; the
+library does not automatically switch traffic to a direct connection.
+
+With external TUN, VPN/DoH server hostnames must not use a DNS path that
+itself requires a connection to that VPN server. Set the vpn-core extension
+`dns.bootstrap` to the tag of a direct IP-literal UDP DNS server
+([DNS.en.md](DNS.en.md)). Without it transport hostname resolution fails,
+rather than falling back to system/proxy DNS. This direct DNS can see
+transport server names; application queries continue to use their own rules.
+System `local` DNS with external TUN is rejected because it would loop.
 
 1. Call `VpnService.Builder` — addresses, routes (`addRoute("0.0.0.0", 0)`),
    DNS — then `establish()` → `ParcelFileDescriptor`.

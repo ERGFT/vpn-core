@@ -32,6 +32,11 @@ compatible server.
 - **Android, iOS** — only as a library for your own app: experimental
   ([LIBRARY.en.md](docs/LIBRARY.en.md)).
 
+Embedding includes `rc_validate` preflight validation and `rc_is_alive` terminal
+error polling. External TUN uses an explicit `dns.bootstrap` for transport
+hostnames; DNS rules support their own `strategy` ([DNS.en.md](docs/DNS.en.md)).
+Mobile integration remains experimental.
+
 This is an educational and research project. Everything listed as "ready"
 is covered by tests, including against real Xray-core, but there has been
 no third-party security audit or crypto review of REALITY. It is not a

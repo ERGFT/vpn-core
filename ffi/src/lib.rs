@@ -142,6 +142,38 @@ pub extern "C" fn rc_version() -> *const c_char {
     concat!(env!("CARGO_PKG_VERSION"), "\0").as_ptr().cast()
 }
 
+/// Проверить настройки без запуска входов и передачи дескриптора TUN.
+/// Возвращает 1 при успехе, 0 при ошибке; текст с секретами не возвращается.
+/// Это предварительная проверка, а не гарантия успешного rc_start.
+///
+/// # Safety
+/// Строки — UTF-8 с нулём в конце. config не NULL; base_dir может быть NULL.
+#[no_mangle]
+pub unsafe extern "C" fn rc_validate(config: *const c_char, base_dir: *const c_char) -> c_int {
+    catch_unwind(|| {
+        let Some(text) = (unsafe { arg(config) }).ok().flatten() else {
+            return 0;
+        };
+        let Ok(dir) = (unsafe { arg(base_dir) }) else {
+            return 0;
+        };
+        let rt = match tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+        {
+            Ok(rt) => rt,
+            Err(_) => return 0,
+        };
+        rt.block_on(async {
+            let Ok(cfg) = parse_config(text, std::path::Path::new(dir.unwrap_or(".")), None) else {
+                return 0;
+            };
+            c_int::from(App::build(&cfg).is_ok())
+        })
+    })
+    .unwrap_or(0)
+}
+
 fn parse_config(
     text: &str,
     base: &std::path::Path,
@@ -232,6 +264,22 @@ pub unsafe extern "C" fn rc_start(
             std::ptr::null_mut()
         }
     }
+}
+
+/// Неблокирующая проверка ошибки ядра; false остаётся до перезапуска.
+/// Для NULL — 0. Вызовы с одним handle нужно сериализовать.
+///
+/// # Safety
+/// `core` — живой handle из rc_start, с исключительным доступом на время вызова.
+#[no_mangle]
+pub unsafe extern "C" fn rc_is_alive(core: *mut RcCore) -> c_int {
+    catch_unwind(AssertUnwindSafe(|| {
+        let Some(core) = (unsafe { core.as_mut() }) else {
+            return 0;
+        };
+        c_int::from(core.running.as_mut().is_some_and(Running::is_alive))
+    }))
+    .unwrap_or(0)
 }
 
 /// Остановить ядро и освободить его: входы закрываются, маршруты
@@ -575,6 +623,57 @@ pub unsafe extern "C" fn rc_free_string(s: *mut c_char) {
     if !s.is_null() {
         // SAFETY: строка создана CString::into_raw в этой библиотеке.
         drop(unsafe { CString::from_raw(s) });
+    }
+}
+
+#[cfg(test)]
+mod health_tests {
+    use std::ffi::CString;
+
+    #[test]
+    fn null_handle_is_not_alive() {
+        assert_eq!(unsafe { super::rc_is_alive(std::ptr::null_mut()) }, 0);
+    }
+
+    #[test]
+    fn validation_rejects_invalid_input_without_returning_config_values() {
+        assert_eq!(
+            unsafe { super::rc_validate(std::ptr::null(), std::ptr::null()) },
+            0
+        );
+        let invalid = CString::new("{not-json-secret}").unwrap();
+        assert_eq!(
+            unsafe { super::rc_validate(invalid.as_ptr(), std::ptr::null()) },
+            0
+        );
+        let invalid_utf8 = [0xffu8, 0];
+        assert_eq!(
+            unsafe { super::rc_validate(invalid_utf8.as_ptr().cast(), std::ptr::null()) },
+            0
+        );
+    }
+
+    #[test]
+    fn validation_does_not_open_listener_and_health_accepts_live_handle() {
+        let occupied = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let preflight = CString::new(serde_json::json!({
+            "inbounds": [{"type":"mixed", "listen":"127.0.0.1", "listen_port":occupied.local_addr().unwrap().port()}],
+            "outbounds": [{"type":"direct", "tag":"direct"}]
+        }).to_string()).unwrap();
+        assert_eq!(
+            unsafe { super::rc_validate(preflight.as_ptr(), std::ptr::null()) },
+            1
+        );
+        let config = CString::new(r#"{"inbounds":[{"type":"mixed","listen":"127.0.0.1","listen_port":0}],"outbounds":[{"type":"direct","tag":"direct"}]}"#).unwrap();
+        assert_eq!(
+            unsafe { super::rc_validate(config.as_ptr(), std::ptr::null()) },
+            1
+        );
+        let core =
+            unsafe { super::rc_start(config.as_ptr(), std::ptr::null(), -1, std::ptr::null_mut()) };
+        assert!(!core.is_null());
+        assert_eq!(unsafe { super::rc_is_alive(core) }, 1);
+        unsafe { super::rc_stop(core) };
     }
 }
 

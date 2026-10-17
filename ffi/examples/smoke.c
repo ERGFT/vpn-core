@@ -106,6 +106,9 @@ static int64_t on_connection_owner(int protocol, const char *source,
 
 int main(void) {
     printf("reality-core %s\n", rc_version());
+    if (rc_validate(CONFIG, NULL) != 1) FAIL("rc_validate: корректные настройки отклонены");
+    if (rc_validate("{bad-json}", NULL) != 0) FAIL("rc_validate: битые настройки приняты");
+    if (rc_is_alive(NULL) != 0) FAIL("rc_is_alive: NULL принят");
 
     char *err = NULL;
     if (rc_start("{ битые настройки", NULL, -1, &err) != NULL) FAIL("битые настройки приняты");
@@ -118,6 +121,7 @@ int main(void) {
     rc_set_connection_owner(on_connection_owner, NULL);
     RcCore *core = rc_start(CONFIG, NULL, -1, &err);
     if (!core) FAIL("rc_start: %s", err);
+    if (rc_is_alive(core) != 1) FAIL("rc_is_alive: ядро не работает");
     if (rc_set_event_callback(core, on_event, NULL) != 0) FAIL("rc_set_event_callback");
 
     int status = 0;

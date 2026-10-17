@@ -670,6 +670,7 @@ fn dns_section(d: Obj<'_>) -> Result<DnsConfig> {
         servers: Vec::new(),
         rules: Vec::new(),
         final_: d.str("final")?,
+        bootstrap: d.str("bootstrap")?,
         fakeip: None,
         strategy: strategy(&d, "strategy")?,
         cache_size: d.u64("cache_capacity")?.map(|n| n as usize),
@@ -786,6 +787,11 @@ fn dns_section(d: Obj<'_>) -> Result<DnsConfig> {
             geosite: r.strs("geosite")?,
             rule_set: r.strs("rule_set")?,
             server: r.req_str("server")?,
+            strategy: if r.has("strategy") {
+                Some(strategy(&r, "strategy")?)
+            } else {
+                None
+            },
         });
         r.ignore(&["disable_cache", "rewrite_ttl"]);
         r.finish()?;

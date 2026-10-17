@@ -93,6 +93,9 @@ pub struct DnsRuleConfig {
     pub rule_set: Vec<String>,
     /// tag сервера.
     pub server: String,
+    /// Переопределение общей стратегии только для этого правила.
+    #[serde(default)]
+    pub strategy: Option<Strategy>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -116,6 +119,8 @@ pub struct DnsConfig {
     /// Сервер по умолчанию; не задан — первый.
     #[serde(rename = "final")]
     pub final_: Option<String>,
+    /// Явный сервер для имён транспорта при внешнем TUN; расширение vpn-core.
+    pub bootstrap: Option<String>,
     pub fakeip: Option<FakeIpConfig>,
     #[serde(default)]
     pub strategy: Strategy,
@@ -125,8 +130,9 @@ pub struct DnsConfig {
 
 pub struct Dns {
     servers: Vec<Arc<Upstream>>,
-    rules: Vec<(DomainSet, usize)>,
+    rules: Vec<(DomainSet, usize, Option<Strategy>)>,
     final_: usize,
+    bootstrap: Option<usize>,
     cache: Option<Cache>,
     fakeip: Option<Arc<FakeIp>>,
     /// Настройки fake-IP — чтобы при перечитывании настроек сохранить ту
@@ -168,8 +174,17 @@ impl Dns {
             }
             let detour_tag = s.detour.as_deref().unwrap_or(default_detour);
             let detour = outbound(detour_tag);
-            let (kind, _, _) = upstream::parse_address(&s.address)
+            let (kind, host, _) = upstream::parse_address(&s.address)
                 .map_err(|e| Error::Config(format!("dns-сервер {}: {e}", s.tag)))?;
+            if cfg.bootstrap.as_deref() == Some(s.tag.as_str())
+                && (kind != upstream::Kind::Udp
+                    || matches!(host, crate::vless::Address::Domain(_))
+                    || !detour.as_ref().is_some_and(|d| d.clash_type() == "Direct"))
+            {
+                return Err(Error::Config(
+                    "dns.bootstrap требует UDP-сервер с IP-адресом и прямой detour".into(),
+                ));
+            }
             let needs_detour = !matches!(kind, upstream::Kind::Local | upstream::Kind::FakeIp);
             if needs_detour && detour.is_none() {
                 return Err(Error::Config(format!(
@@ -209,6 +224,11 @@ impl Dns {
             Some(t) => index(t, "dns.final")?,
             None => 0,
         };
+        let bootstrap = cfg
+            .bootstrap
+            .as_deref()
+            .map(|tag| index(tag, "dns.bootstrap"))
+            .transpose()?;
         let mut rules = Vec::new();
         for (i, r) in cfg.rules.iter().enumerate() {
             let set = DomainSet::build(
@@ -228,7 +248,11 @@ impl Dns {
                     i + 1
                 )));
             }
-            rules.push((set, index(&r.server, &format!("dns-правило {}", i + 1))?));
+            rules.push((
+                set,
+                index(&r.server, &format!("dns-правило {}", i + 1))?,
+                r.strategy,
+            ));
         }
         let mut fakeip_key = String::new();
         let fakeip = if servers.iter().any(|s| s.is_fake()) {
@@ -263,6 +287,7 @@ impl Dns {
             servers,
             rules,
             final_,
+            bootstrap,
             cache: (cache_size > 0).then(|| Cache::new(cache_size)),
             fakeip,
             fakeip_key,
@@ -273,19 +298,24 @@ impl Dns {
     /// Сервер для имени. `allow_fake = false` — нужен настоящий ответ
     /// (для `direct` и правил по IP): fakeip пропускается.
     fn pick(&self, name: &str, allow_fake: bool) -> &Arc<Upstream> {
-        for (set, idx) in &self.rules {
+        self.policy(name, allow_fake).0
+    }
+
+    /// Сервер и стратегия выбираются одним первым совпавшим правилом.
+    fn policy(&self, name: &str, allow_fake: bool) -> (&Arc<Upstream>, Strategy) {
+        for (set, idx, strategy) in &self.rules {
             let s = &self.servers[*idx];
             if set.matches(name) && (allow_fake || !s.is_fake()) {
-                return s;
+                return (s, strategy.unwrap_or(self.strategy));
             }
         }
         let f = &self.servers[self.final_];
         if allow_fake || !f.is_fake() {
-            return f;
+            return (f, self.strategy);
         }
         let real = self.servers.iter().find(|s| !s.is_fake());
         #[allow(clippy::expect_used, reason = "инвариант: проверено при сборке")]
-        real.expect("проверено при сборке")
+        (real.expect("проверено при сборке"), self.strategy)
     }
 
     /// Серверы, заданные именем (их адреса нужно узнать до включения TUN).
@@ -333,7 +363,7 @@ impl Dns {
         };
         let name = normalize(&question.name().to_ascii());
         let qtype = question.query_type();
-        let server = self.pick(&name, allow_fake);
+        let (server, strategy) = self.policy(&name, allow_fake);
         if server.is_fake() {
             #[allow(
                 clippy::expect_used,
@@ -345,14 +375,14 @@ impl Dns {
                 .expect("fakeip создан вместе с сервером");
             let mut resp = reply(query, ResponseCode::NoError);
             match qtype {
-                RecordType::A if self.strategy != Strategy::Ipv6Only => {
+                RecordType::A if strategy != Strategy::Ipv6Only => {
                     resp.add_answer(Record::from_rdata(
                         question.name().clone(),
                         FAKE_TTL,
                         RData::A(A(fake.ipv4_for(&name))),
                     ));
                 }
-                RecordType::AAAA if self.strategy != Strategy::Ipv4Only => {
+                RecordType::AAAA if strategy != Strategy::Ipv4Only => {
                     if let Some(v6) = fake.ipv6_for(&name) {
                         resp.add_answer(Record::from_rdata(
                             question.name().clone(),
@@ -373,8 +403,8 @@ impl Dns {
             }
             return Ok(resp);
         }
-        if (qtype == RecordType::A && self.strategy == Strategy::Ipv6Only)
-            || (qtype == RecordType::AAAA && self.strategy == Strategy::Ipv4Only)
+        if (qtype == RecordType::A && strategy == Strategy::Ipv6Only)
+            || (qtype == RecordType::AAAA && strategy == Strategy::Ipv4Only)
         {
             return Ok(reply(query, ResponseCode::NoError));
         }
@@ -407,33 +437,70 @@ impl Dns {
     /// Настоящие адреса имени (для `direct` и правил по IP): без fake-IP,
     /// с учётом стратегии.
     pub async fn lookup(&self, name: &str) -> Result<Vec<IpAddr>> {
+        self.lookup_with_server(name, None).await
+    }
+
+    /// Имена транспорта/DNS без proxy DNS и fake-IP. Без неявного отката:
+    /// приложение должно явно выбрать прямой сервер через dns.bootstrap.
+    pub async fn lookup_server_host(&self, name: &str) -> Result<Vec<IpAddr>> {
+        let index = self.bootstrap.ok_or_else(|| {
+            Error::Config("внешний TUN: для имён транспорта требуется dns.bootstrap".into())
+        })?;
+        let server = &self.servers[index];
+        self.lookup_with_server(name, Some(server)).await
+    }
+
+    async fn lookup_with_server(
+        &self,
+        name: &str,
+        server: Option<&Arc<Upstream>>,
+    ) -> Result<Vec<IpAddr>> {
         let name = normalize(name);
+        // Bootstrap не наследует правила приложений и их IPv6-only стратегию.
+        let strategy = if server.is_some() {
+            Strategy::PreferIpv4
+        } else {
+            self.policy(&name, false).1
+        };
         let fqdn = Name::from_ascii(format!("{name}.")).map_err(|e| {
             tracing::debug!(%name, error = %e, "DNS: неверное имя");
             Error::Protocol(format!("DNS: неверное имя: {e}"))
         })?;
+        let name = name.as_str();
         let ask = |t: RecordType| {
             let mut m = Message::query();
             m.metadata.recursion_desired = true;
             m.add_query(Query::query(fqdn.clone(), t));
             async move {
-                let resp = self.handle(&m, false).await;
-                resp.answers
-                    .iter()
-                    .filter_map(|r| match &r.data {
-                        RData::A(a) => Some(IpAddr::V4(a.0)),
-                        RData::AAAA(a) => Some(IpAddr::V6(a.0)),
-                        _ => None,
-                    })
-                    .collect::<Vec<_>>()
+                let resp = match server {
+                    Some(s) => tokio::time::timeout(QUERY_TIMEOUT, self.forward(s, &m, name, t))
+                        .await
+                        .map_err(|_| {
+                            Error::Protocol("истекло время ожидания bootstrap DNS".into())
+                        })??,
+                    None => self.handle(&m, false).await,
+                };
+                Ok::<Vec<IpAddr>, Error>(
+                    resp.answers
+                        .iter()
+                        .filter_map(|r| match &r.data {
+                            RData::A(a) => Some(IpAddr::V4(a.0)),
+                            RData::AAAA(a) => Some(IpAddr::V6(a.0)),
+                            _ => None,
+                        })
+                        .collect::<Vec<_>>(),
+                )
             }
         };
-        let (v4, v6) = match self.strategy {
-            Strategy::Ipv4Only => (ask(RecordType::A).await, Vec::new()),
-            Strategy::Ipv6Only => (Vec::new(), ask(RecordType::AAAA).await),
-            _ => tokio::join!(ask(RecordType::A), ask(RecordType::AAAA)),
+        let (v4, v6) = match strategy {
+            Strategy::Ipv4Only => (ask(RecordType::A).await?, Vec::new()),
+            Strategy::Ipv6Only => (Vec::new(), ask(RecordType::AAAA).await?),
+            _ => {
+                let (v4, v6) = tokio::join!(ask(RecordType::A), ask(RecordType::AAAA));
+                (v4?, v6?)
+            }
         };
-        let mut out = match self.strategy {
+        let mut out = match strategy {
             Strategy::PreferIpv6 | Strategy::Ipv6Only => [v6, v4].concat(),
             _ => [v4, v6].concat(),
         };
@@ -504,4 +571,374 @@ pub async fn answer_bytes(dns: &Dns, packet: &[u8], allow_fake: bool) -> Option<
     }
     let resp = dns.handle(&query, allow_fake).await;
     resp.to_vec().ok()
+}
+
+#[cfg(test)]
+mod bootstrap_tests {
+    use super::*;
+    use crate::app::outbound::{BlockOutbound, DirectOutbound};
+
+    const BOOTSTRAP_DNS: &str = "transport-dns";
+
+    fn build_bootstrap(address: &str, detour: &str, tag: &str) -> Result<Dns> {
+        let cfg: DnsConfig = serde_json::from_value(serde_json::json!({
+            "servers": [
+                {"tag": "remote", "address": "1.1.1.1", "detour": "blocked"},
+                {"tag": tag, "address": address, "detour": detour}
+            ],
+            "final": "remote", "strategy": "ipv4_only",
+            "bootstrap": if tag == BOOTSTRAP_DNS { Some(tag) } else { None }
+        }))
+        .unwrap();
+        let geo = GeoFiles::load(Vec::new(), Vec::new(), "unused".as_ref(), "unused".as_ref())?;
+        Dns::build(
+            &cfg,
+            &|tag| match tag {
+                "direct" => Some(Arc::new(DirectOutbound::new("direct")) as Arc<dyn Outbound>),
+                "blocked" => Some(Arc::new(BlockOutbound::new("blocked")) as Arc<dyn Outbound>),
+                _ => None,
+            },
+            "blocked",
+            &geo,
+            None,
+        )
+    }
+
+    #[test]
+    fn bootstrap_requires_ip_udp_and_direct() {
+        assert!(build_bootstrap("1.1.1.1", "direct", BOOTSTRAP_DNS).is_ok());
+        for (address, detour) in [
+            ("tcp://1.1.1.1", "direct"),
+            ("tls://dns.example", "direct"),
+            ("local", "direct"),
+            ("fakeip", "direct"),
+            ("1.1.1.1", "blocked"),
+        ] {
+            assert!(build_bootstrap(address, detour, BOOTSTRAP_DNS).is_err());
+        }
+    }
+
+    #[test]
+    fn bootstrap_tag_is_explicit_and_must_exist() {
+        for (tag, valid) in [("configured-dns", true), ("missing", false)] {
+            let cfg = crate::app::config::Config::parse(&serde_json::json!({
+                "inbounds": [{"type":"mixed", "listen":"127.0.0.1", "listen_port":0}],
+                "outbounds": [{"type":"direct", "tag":"direct"}],
+                "dns": {
+                    "servers": [{"type":"udp", "tag":"configured-dns", "server":"127.0.0.1", "detour":"direct"}],
+                    "bootstrap": tag
+                }
+            }).to_string()).unwrap();
+            assert_eq!(crate::app::App::build(&cfg).is_ok(), valid);
+        }
+    }
+
+    #[tokio::test]
+    async fn bootstrap_uses_its_own_cache_and_preserves_application_dns() {
+        let dns = build_bootstrap("1.1.1.1", "direct", BOOTSTRAP_DNS).unwrap();
+        let name = "proxy.example";
+        let mut q = Message::query();
+        q.add_query(Query::query(
+            Name::from_ascii("proxy.example.").unwrap(),
+            RecordType::A,
+        ));
+        let mut answer = reply(&q, ResponseCode::NoError);
+        answer.add_answer(Record::from_rdata(
+            q.queries[0].name().clone(),
+            60,
+            RData::A(A::new(203, 0, 113, 7)),
+        ));
+        dns.cache
+            .as_ref()
+            .unwrap()
+            .put(&format!("{BOOTSTRAP_DNS}|{name}"), RecordType::A, &answer);
+        let mut q6 = Message::query();
+        q6.add_query(Query::query(
+            Name::from_ascii("proxy.example.").unwrap(),
+            RecordType::AAAA,
+        ));
+        dns.cache.as_ref().unwrap().put(
+            &format!("{BOOTSTRAP_DNS}|{name}"),
+            RecordType::AAAA,
+            &reply(&q6, ResponseCode::NoError),
+        );
+        assert_eq!(
+            dns.lookup_server_host(name).await.unwrap(),
+            vec!["203.0.113.7".parse::<IpAddr>().unwrap()],
+        );
+        // Обычный запрос по-прежнему выбирает намеренно заблокированный DNS.
+        assert!(dns.lookup(name).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn bootstrap_queries_direct_ip_when_default_dns_is_blocked() {
+        let socket = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let address = socket.local_addr().unwrap().to_string();
+        let dns = build_bootstrap(&address, "direct", BOOTSTRAP_DNS).unwrap();
+        let reply_task = tokio::spawn(async move {
+            let mut buf = [0u8; 4096];
+            for _ in 0..2 {
+                let (n, peer) = socket.recv_from(&mut buf).await.unwrap();
+                let query = Message::from_vec(&buf[..n]).unwrap();
+                assert_eq!(query.queries[0].name().to_ascii(), "proxy.example.");
+                let mut answer = reply(&query, ResponseCode::NoError);
+                if query.queries[0].query_type() == RecordType::A {
+                    answer.add_answer(Record::from_rdata(
+                        query.queries[0].name().clone(),
+                        60,
+                        RData::A(A::new(203, 0, 113, 9)),
+                    ));
+                }
+                socket
+                    .send_to(&answer.to_vec().unwrap(), peer)
+                    .await
+                    .unwrap();
+            }
+        });
+        let ips = tokio::time::timeout(
+            Duration::from_secs(2),
+            dns.lookup_server_host("proxy.example"),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        assert_eq!(ips, vec!["203.0.113.9".parse::<IpAddr>().unwrap()]);
+        reply_task.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn missing_bootstrap_fails_without_falling_back_to_remote() {
+        let dns = build_bootstrap("1.1.1.1", "direct", "other").unwrap();
+        let error = dns.lookup_server_host("proxy.example").await.unwrap_err();
+        assert!(error.to_string().contains("dns.bootstrap"));
+    }
+}
+
+#[cfg(test)]
+mod rule_strategy_tests {
+    use super::*;
+    use crate::app::{config::Config, outbound::DirectOutbound};
+    use std::sync::Mutex;
+
+    const BOOTSTRAP_DNS: &str = "transport-dns";
+
+    struct LoopbackDns {
+        address: String,
+        queries: Arc<Mutex<Vec<(String, RecordType)>>>,
+        task: tokio::task::JoinHandle<()>,
+    }
+
+    impl Drop for LoopbackDns {
+        fn drop(&mut self) {
+            self.task.abort();
+        }
+    }
+
+    async fn loopback_dns() -> LoopbackDns {
+        let socket = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let address = socket.local_addr().unwrap().to_string();
+        let queries = Arc::new(Mutex::new(Vec::new()));
+        let received = queries.clone();
+        let task = tokio::spawn(async move {
+            let mut buf = [0u8; 4096];
+            loop {
+                let (n, peer) = socket.recv_from(&mut buf).await.unwrap();
+                let query = Message::from_vec(&buf[..n]).unwrap();
+                let question = &query.queries[0];
+                let qtype = question.query_type();
+                received
+                    .lock()
+                    .unwrap()
+                    .push((question.name().to_ascii(), qtype));
+                let mut answer = reply(&query, ResponseCode::NoError);
+                let data = match qtype {
+                    RecordType::A => RData::A(A::new(203, 0, 113, 42)),
+                    RecordType::AAAA => RData::AAAA(AAAA("2001:db8::42".parse().unwrap())),
+                    _ => continue,
+                };
+                answer.add_answer(Record::from_rdata(question.name().clone(), 60, data));
+                socket
+                    .send_to(&answer.to_vec().unwrap(), peer)
+                    .await
+                    .unwrap();
+            }
+        });
+        LoopbackDns {
+            address,
+            queries,
+            task,
+        }
+    }
+
+    fn config(address: &str, strategy: &str, rules: serde_json::Value) -> Result<Config> {
+        Config::parse(
+            &serde_json::json!({
+                "inbounds": [{"type": "mixed", "listen": "127.0.0.1", "listen_port": 0}],
+                "outbounds": [{"type": "direct", "tag": "direct"}],
+                "dns": {
+                    "servers": [
+                        {"tag": "test", "address": address, "detour": "direct"},
+                        {"tag": BOOTSTRAP_DNS, "address": address, "detour": "direct"},
+                        {"tag": "fake", "address": "fakeip"}
+                    ],
+                    "final": "test", "strategy": strategy, "rules": rules,
+                    "bootstrap": BOOTSTRAP_DNS
+                }
+            })
+            .to_string(),
+        )
+    }
+
+    fn build(cfg: Config) -> Dns {
+        let geo =
+            GeoFiles::load(Vec::new(), Vec::new(), "unused".as_ref(), "unused".as_ref()).unwrap();
+        Dns::build(
+            cfg.dns.as_ref().unwrap(),
+            &|_| Some(Arc::new(DirectOutbound::new("direct")) as Arc<dyn Outbound>),
+            "direct",
+            &geo,
+            None,
+        )
+        .unwrap()
+    }
+
+    fn query(name: &str, qtype: RecordType) -> Message {
+        let mut q = Message::query();
+        q.add_query(Query::query(
+            Name::from_ascii(format!("{name}.")).unwrap(),
+            qtype,
+        ));
+        q
+    }
+
+    fn rule(name: &str, strategy: &str) -> serde_json::Value {
+        serde_json::json!({"domain": [name], "server": "test", "strategy": strategy})
+    }
+
+    #[test]
+    fn parser_preserves_optional_strategy_and_rejects_invalid_values() {
+        let cfg = config(
+            "127.0.0.1:53",
+            "ipv6_only",
+            serde_json::json!([
+                rule("a.example", "prefer_ipv4"),
+                {"domain": ["b.example"], "server": "test"}
+            ]),
+        )
+        .unwrap();
+        let rules = &cfg.dns.unwrap().rules;
+        assert_eq!(rules[0].strategy, Some(Strategy::PreferIpv4));
+        assert_eq!(rules[1].strategy, None);
+        assert!(config(
+            "127.0.0.1:53",
+            "prefer_ipv4",
+            serde_json::json!([rule("a.example", "unsupported")]),
+        )
+        .is_err());
+        let rule: DnsRuleConfig = serde_json::from_value(serde_json::json!({
+            "domain": ["a.example"], "server": "test"
+        }))
+        .unwrap();
+        assert_eq!(rule.strategy, None);
+    }
+
+    #[tokio::test]
+    async fn matching_policy_filters_queries_and_orders_lookup_addresses() {
+        let server = loopback_dns().await;
+        let dns = build(
+            config(
+                &server.address,
+                "ipv6_only",
+                serde_json::json!([
+                    rule("v4.example", "ipv4_only"),
+                    rule("v6.example", "ipv6_only"),
+                    rule("prefer4.example", "prefer_ipv4"),
+                    rule("prefer6.example", "prefer_ipv6"),
+                    rule("first.example", "ipv4_only"),
+                    rule("first.example", "ipv6_only"),
+                    {"domain": ["inherit.example"], "server": "test"}
+                ]),
+            )
+            .unwrap(),
+        );
+        let v4 = "203.0.113.42".parse::<IpAddr>().unwrap();
+        let v6 = "2001:db8::42".parse::<IpAddr>().unwrap();
+        for (name, expected) in [
+            ("v4.example", vec![v4]),
+            ("v6.example", vec![v6]),
+            ("PREFER4.EXAMPLE.", vec![v4, v6]),
+            ("prefer6.example", vec![v6, v4]),
+            ("first.example", vec![v4]),
+            ("inherit.example", vec![v6]),
+            ("unmatched.example", vec![v6]),
+        ] {
+            let actual = tokio::time::timeout(Duration::from_secs(2), dns.lookup(name))
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(actual, expected, "{name}");
+        }
+        for (name, qtype) in [
+            ("v4.example", RecordType::AAAA),
+            ("v6.example", RecordType::A),
+            ("inherit.example", RecordType::A),
+        ] {
+            let answer = dns.handle(&query(name, qtype), true).await;
+            assert_eq!(answer.metadata.response_code, ResponseCode::NoError);
+            assert!(answer.answers.is_empty());
+            assert!(!server
+                .queries
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|(host, ty)| { host == &format!("{name}.") && *ty == qtype }));
+        }
+        // Bootstrap не наследует ни IPv6-only по умолчанию, ни правило приложения.
+        let ips = dns.lookup_server_host("v6.example").await.unwrap();
+        assert_eq!(ips, vec![v4, v6]);
+    }
+
+    #[test]
+    fn xray_dns_rule_inherits_global_strategy() {
+        let cfg = Config::parse(
+            r#"{"inbounds":[{"protocol":"socks","listen":"127.0.0.1","port":1080}],
+                "outbounds":[{"protocol":"freedom","tag":"direct"}],
+                "dns":{"queryStrategy":"UseIPv6","servers":[
+                    {"address":"1.1.1.1","domains":["full:xray.example"]}
+                ]}}"#,
+        )
+        .unwrap();
+        let dns = cfg.dns.unwrap();
+        assert_eq!(dns.strategy, Strategy::Ipv6Only);
+        assert_eq!(dns.rules[0].strategy, None);
+    }
+
+    #[tokio::test]
+    async fn fakeip_uses_the_matching_rule_strategy() {
+        let server = loopback_dns().await;
+        let dns = build(
+            config(
+                &server.address,
+                "ipv6_only",
+                serde_json::json!([
+                    {"domain": ["fake4.example"], "server": "fake", "strategy": "ipv4_only"},
+                    {"domain": ["fake6.example"], "server": "fake", "strategy": "ipv6_only"}
+                ]),
+            )
+            .unwrap(),
+        );
+        for (name, allowed, suppressed) in [
+            ("fake4.example", RecordType::A, RecordType::AAAA),
+            ("fake6.example", RecordType::AAAA, RecordType::A),
+        ] {
+            let answer = dns.handle(&query(name, allowed), true).await;
+            assert_eq!(answer.answers.len(), 1);
+            assert!(dns
+                .handle(&query(name, suppressed), true)
+                .await
+                .answers
+                .is_empty());
+        }
+        assert!(server.queries.lock().unwrap().is_empty());
+    }
 }

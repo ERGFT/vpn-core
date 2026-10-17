@@ -1463,3 +1463,17 @@ for protocol changes (see [CONTRIBUTING](../CONTRIBUTING.md)).
 | Connection tracking | 65,536 | `stats.rs` |
 | Event bus | 1024 events per listener | `events.rs` |
 | TUN | 256 KiB TCP window, 4096-packet queues | `tun/mod.rs` |
+
+### Embedding with external TUN
+
+An external FD does not manage OS routes, but installs the core's transport
+resolver. It uses only explicit `dns.bootstrap` (IP-literal UDP through direct),
+separate from `dns.final` and application rules; missing bootstrap does not
+enable implicit system fallback. The first DNS rule returns a server/strategy
+pair; skipping fake-IP for real lookup also skips that rule's strategy.
+
+`Running` retains terminal errors: `is_alive` polls the channel without losing
+the error for `wait`. `spawn_task` forwards errors and unwinding panics into
+that channel. C ABI exports `rc_validate` (build, not start) and `rc_is_alive`
+(local status, not a connectivity check). See [LIBRARY.en.md](LIBRARY.en.md)
+and [DNS.en.md](DNS.en.md) for details and limitations.

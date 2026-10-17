@@ -12,6 +12,15 @@
   нового TUN-потока через Rust/C ABI, fail-closed для неизвестного нужного UID.
   Сайты и приложения сохраняют first-match; Android JNI/адаптер требует интеграции.
 
+### Встраивание и DNS
+- `rc_validate`: предварительная проверка без запуска входов/TUN и без текста
+  ошибки; `rc_is_alive`: неблокирующий sticky-статус терминальной ошибки задач.
+- Внешний TUN сохраняет резолвер ядра и проверку петли системного DNS.
+  Имена транспорта разрешаются только явно выбранным `dns.bootstrap`
+  (расширение vpn-core: прямой UDP-сервер с IP, без неявного отката).
+- `dns.rules[].strategy`: фильтрация A/AAAA и порядок адресов для конкретного
+  правила, включая fake-IP; прежняя общая стратегия остаётся по умолчанию.
+
 Первый выпуск ещё не сделан (`git tag v0.1.0 && git push origin v0.1.0`).
 В него войдёт:
 
@@ -157,6 +166,15 @@ stage-by-stage decision history is in [PLAN.md](PLAN.md) (in Russian).
 - Experimental route.rules.user_id/invert and trusted Rust/C ABI TUN flow-owner
   resolver; unknown required UIDs fail closed. Site/app first-match order is
   preserved; Android JNI/adapter integration is still required.
+
+### Embedding and DNS
+- `rc_validate`: preflight without starting listeners/TUN or returning error text;
+  `rc_is_alive`: nonblocking sticky terminal task-error status.
+- External TUN retains the core resolver and system-DNS-loop validation.
+  Transport hostnames use only an explicit `dns.bootstrap` (vpn-core extension:
+  direct IP-literal UDP server, no implicit fallback).
+- `dns.rules[].strategy`: per-rule A/AAAA filtering and address ordering,
+  including fake-IP; the existing global strategy remains the default.
 
 No release has been made yet (`git tag v0.1.0 && git push origin v0.1.0`).
 It will include:
