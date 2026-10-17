@@ -413,7 +413,8 @@ impl Rule {
             return false;
         }
         let hit = self.matches_traffic(meta)
-            && (self.user_ids.is_empty() || meta.user_id.is_some_and(|uid| self.user_ids.contains(&uid)));
+            && (self.user_ids.is_empty()
+                || meta.user_id.is_some_and(|uid| self.user_ids.contains(&uid)));
         hit != self.invert
     }
 
@@ -544,7 +545,12 @@ pub fn compile(
         .map(PortSpec::range)
         .collect::<Result<Vec<_>>>()
         .map_err(|e| Error::Config(format!("правило {n}: {e}")))?;
-    if !has_dest && ports.is_empty() && c.network.is_none() && c.inbound.is_empty() && c.user_id.is_empty() {
+    if !has_dest
+        && ports.is_empty()
+        && c.network.is_none()
+        && c.inbound.is_empty()
+        && c.user_id.is_empty()
+    {
         return Err(Error::Config(format!(
             "правило {n} без условий подошло бы ко всему — для этого есть route.final"
         )));

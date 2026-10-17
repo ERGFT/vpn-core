@@ -398,11 +398,14 @@ mod tests {
 
     #[test]
     fn uid_and_site_rules_keep_order_and_fail_closed() {
-        let r = router(Path::new("."), r#"
+        let r = router(
+            Path::new("."),
+            r#"
             {"domain_suffix":["bypass.test"],"outbound":"direct"},
             {"user_id":[10001],"outbound":"proxy"},
             {"user_id":[10001],"invert":true,"outbound":"direct"}
-        "#);
+        "#,
+        );
         for network in [Network::Tcp, Network::Udp] {
             for (uid, host, expected) in [
                 (Some(10001), "remote.test", "proxy"),
@@ -421,7 +424,10 @@ mod tests {
 
     #[test]
     fn inverted_uid_unknown_never_uses_direct_or_final() {
-        let r = router(Path::new("."), r#"{"user_id":[10001],"invert":true,"outbound":"direct"}"#);
+        let r = router(
+            Path::new("."),
+            r#"{"user_id":[10001],"invert":true,"outbound":"direct"}"#,
+        );
         let mut m = meta(dom("remote.test"), None);
         assert_eq!(r.select(&m).tag(), "connection-owner-unavailable");
         m.user_id = Some(10001);
@@ -432,7 +438,10 @@ mod tests {
 
     #[test]
     fn uid_and_domain_conditions_are_anded_and_inverted_together() {
-        let r = router(Path::new("."), r#"{"domain_suffix":["site.test"],"user_id":[10001],"outbound":"direct"}"#);
+        let r = router(
+            Path::new("."),
+            r#"{"domain_suffix":["site.test"],"user_id":[10001],"outbound":"direct"}"#,
+        );
         let mut m = meta(dom("site.test"), None);
         m.user_id = Some(10001);
         assert_eq!(r.select(&m).tag(), "direct");
@@ -441,7 +450,10 @@ mod tests {
         m.target = dom("elsewhere.test");
         m.user_id = None;
         assert_eq!(r.select(&m).tag(), "proxy");
-        let inverted = router(Path::new("."), r#"{"domain_suffix":["site.test"],"user_id":[10001],"invert":true,"outbound":"direct"}"#);
+        let inverted = router(
+            Path::new("."),
+            r#"{"domain_suffix":["site.test"],"user_id":[10001],"invert":true,"outbound":"direct"}"#,
+        );
         assert_eq!(inverted.select(&m).tag(), "direct");
         m.target = dom("site.test");
         assert_eq!(inverted.select(&m).tag(), "connection-owner-unavailable");
@@ -449,16 +461,25 @@ mod tests {
 
     #[test]
     fn uid_rules_do_not_override_an_earlier_site_or_probe_rule() {
-        let r = router(Path::new("."), r#"
+        let r = router(
+            Path::new("."),
+            r#"
             {"inbound":["in"],"outbound":"proxy"},
             {"user_id":[10001],"outbound":"direct"}
-        "#);
+        "#,
+        );
         assert_eq!(r.select(&meta(dom("remote.test"), None)).tag(), "proxy");
-        let r = router(Path::new("."), r#"
+        let r = router(
+            Path::new("."),
+            r#"
             {"domain_suffix":["site.test"],"outbound":"direct"},
             {"user_id":[10001],"outbound":"proxy"}
-        "#);
-        let mut m = meta(Address::Ipv4("198.18.0.1".parse().unwrap()), Some("site.test"));
+        "#,
+        );
+        let mut m = meta(
+            Address::Ipv4("198.18.0.1".parse().unwrap()),
+            Some("site.test"),
+        );
         m.source = "[fd00::1]:32100".parse().unwrap();
         assert_eq!(r.select(&m).tag(), "direct");
         m.sniffed = None;
@@ -468,7 +489,9 @@ mod tests {
     #[test]
     fn invalid_uids_are_config_errors_not_ignored() {
         for uid in ["-1", "4294967296", "true", "1.5", "\"not-a-uid\""] {
-            let json = format!(r#"{{"outbounds":[{{"type":"direct","tag":"direct"}}],"route":{{"rules":[{{"user_id":[{uid}],"outbound":"direct"}}]}}}}"#);
+            let json = format!(
+                r#"{{"outbounds":[{{"type":"direct","tag":"direct"}}],"route":{{"rules":[{{"user_id":[{uid}],"outbound":"direct"}}]}}}}"#
+            );
             assert!(Config::parse(&json).is_err(), "некорректный UID принят");
         }
         let empty = Config::parse(r#"{"outbounds":[{"type":"direct","tag":"direct"}],"route":{"rules":[{"user_id":[],"invert":true,"outbound":"direct"}]}}"#).unwrap();

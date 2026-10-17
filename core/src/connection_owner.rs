@@ -15,12 +15,17 @@ static OWNER: RwLock<Option<Arc<OwnerFn>>> = RwLock::new(None);
 /// Установить до запуска TUN; снять после остановки всех ядер процесса.
 /// Замыкание может вызываться одновременно из нескольких рабочих потоков.
 pub fn set_callback(callback: Option<Arc<OwnerFn>>) {
-    *OWNER.write().unwrap_or_else(std::sync::PoisonError::into_inner) = callback;
+    *OWNER
+        .write()
+        .unwrap_or_else(std::sync::PoisonError::into_inner) = callback;
 }
 
 /// Один запрос на новый TCP/UDP-поток; отрицательного/бессрочного кеша нет.
 pub fn resolve(network: Network, source: SocketAddr, destination: SocketAddr) -> Option<u32> {
-    let callback = OWNER.read().unwrap_or_else(std::sync::PoisonError::into_inner).clone();
+    let callback = OWNER
+        .read()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clone();
     callback.and_then(|callback| callback(network, source, destination))
 }
 
@@ -42,7 +47,14 @@ mod tests {
         })));
         assert_eq!(resolve(Network::Udp, src, dst), Some(10001));
         set_callback(Some(Arc::new(|_, _, _| None)));
-        assert_eq!(resolve(Network::Tcp, "192.0.2.2:1234".parse().unwrap(), "198.18.0.1:443".parse().unwrap()), None);
+        assert_eq!(
+            resolve(
+                Network::Tcp,
+                "192.0.2.2:1234".parse().unwrap(),
+                "198.18.0.1:443".parse().unwrap()
+            ),
+            None
+        );
         set_callback(None);
     }
 }

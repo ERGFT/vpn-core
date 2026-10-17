@@ -360,7 +360,10 @@ impl TunInbound {
             inbound: self.tag.clone(),
             source: src,
             network: Network::Tcp,
-            user_id: router.needs_owner().then(|| crate::connection_owner::resolve(Network::Tcp, src, dst)).flatten(),
+            user_id: router
+                .needs_owner()
+                .then(|| crate::connection_owner::resolve(Network::Tcp, src, dst))
+                .flatten(),
             target: ip_address(dst.ip()),
             port: dst.port(),
             sniffed: None,
@@ -419,7 +422,10 @@ impl TunInbound {
             inbound: self.tag.clone(),
             source: src,
             network: Network::Udp,
-            user_id: router.needs_owner().then(|| crate::connection_owner::resolve(Network::Udp, src, dst)).flatten(),
+            user_id: router
+                .needs_owner()
+                .then(|| crate::connection_owner::resolve(Network::Udp, src, dst))
+                .flatten(),
             target: ip_address(dst.ip()),
             port: dst.port(),
             sniffed: None,

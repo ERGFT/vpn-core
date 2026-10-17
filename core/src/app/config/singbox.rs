@@ -624,9 +624,14 @@ fn conditions(r: &Obj<'_>, inbound: Vec<String>, outbound: String) -> Result<Rul
         port: r.strs("port")?.into_iter().map(PortSpec::Str).collect(),
         network: None,
         inbound,
-        user_id: r.strs("user_id")?.into_iter().map(|uid| {
-            uid.parse::<u32>().map_err(|_| r.err("user_id", "ожидался UID от 0 до 4294967295"))
-        }).collect::<Result<Vec<_>>>()?,
+        user_id: r
+            .strs("user_id")?
+            .into_iter()
+            .map(|uid| {
+                uid.parse::<u32>()
+                    .map_err(|_| r.err("user_id", "ожидался UID от 0 до 4294967295"))
+            })
+            .collect::<Result<Vec<_>>>()?,
         invert: r.bool("invert")?.unwrap_or(false),
         outbound,
         label: None,
