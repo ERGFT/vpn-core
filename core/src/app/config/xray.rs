@@ -696,6 +696,7 @@ fn dns_section(d: Obj<'_>, direct: Option<&str>) -> Result<DnsConfig> {
         servers: Vec::new(),
         rules: Vec::new(),
         final_: None,
+        bootstrap: None,
         fakeip: None,
         strategy: strategy(&d, "queryStrategy")?,
         cache_size: None,
@@ -767,6 +768,7 @@ fn dns_section(d: Obj<'_>, direct: Option<&str>) -> Result<DnsConfig> {
                 geosite: Vec::new(),
                 rule_set: Vec::new(),
                 server: tag.clone(),
+                strategy: None,
             };
             for dm in domains {
                 match dm.split_once(':') {
