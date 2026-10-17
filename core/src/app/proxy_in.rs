@@ -348,6 +348,7 @@ impl ProxyInbound {
             port,
             sniffed: None,
             inbound_type: self.kind.name(),
+            user_id: None,
             rule: None,
         };
         // Sniffing нужен, только когда домена нет. Ответ «соединено»
@@ -485,6 +486,7 @@ async fn udp_associate(
                     port,
                     sniffed: None,
                     inbound_type: "socks",
+                    user_id: None,
                     rule: None,
                 };
                 let original = meta.target.clone();

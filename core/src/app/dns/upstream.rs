@@ -256,6 +256,7 @@ impl Upstream {
             port: self.port,
             sniffed: None,
             inbound_type: "dns",
+            user_id: None,
             rule: None,
         }
     }

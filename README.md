@@ -1,5 +1,9 @@
 # vpn-core
 
+Экспериментально: [совместные правила приложений и сайтов](docs/APPLICATION_ROUTING.md)
+через UID владельца TUN-потока и callback приложения. Android-клиенту необходима
+отдельная интеграция; это не встроенный поиск package_name.
+
 **Русский** | [English](README.en.md)
 
 [![CI](https://github.com/ERGFT/vpn-core/actions/workflows/ci.yml/badge.svg)](https://github.com/ERGFT/vpn-core/actions/workflows/ci.yml)

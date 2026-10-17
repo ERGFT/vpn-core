@@ -2,6 +2,10 @@
 
 # How the core works
 
+TUN can populate Metadata with a trusted UID through `connection_owner` before
+fake-IP/sniffing. Router preserves site/UID first-match ordering and blocks an
+unknown required UID, including invert. [Contract](APPLICATION_ROUTING.en.md).
+
 A technical description for anyone who will read, change or embed the core:
 what it consists of, what happens to a connection from the inbound to the
 server, where each decision is made and why. How to use the client is in
