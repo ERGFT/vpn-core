@@ -611,7 +611,6 @@ fn conditions(r: &Obj<'_>, inbound: Vec<String>, outbound: String) -> Result<Rul
         return Err(r.err("type", "логические правила (and/or) не поддерживаются"));
     }
     r.ignore(&["type", "outbound", "action"]);
-    r.unsupported("invert", "invert")?;
     let mut c = RuleConfig {
         domain: r.strs("domain")?,
         domain_suffix: r.strs("domain_suffix")?,
@@ -625,6 +624,10 @@ fn conditions(r: &Obj<'_>, inbound: Vec<String>, outbound: String) -> Result<Rul
         port: r.strs("port")?.into_iter().map(PortSpec::Str).collect(),
         network: None,
         inbound,
+        user_id: r.strs("user_id")?.into_iter().map(|uid| {
+            uid.parse::<u32>().map_err(|_| r.err("user_id", "ожидался UID от 0 до 4294967295"))
+        }).collect::<Result<Vec<_>>>()?,
+        invert: r.bool("invert")?.unwrap_or(false),
         outbound,
         label: None,
     };

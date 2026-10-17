@@ -98,6 +98,12 @@ static int socks_echo(void) {
     return (n == 4 && memcmp(back, "ping", 4) == 0) ? 0 : -3;
 }
 
+static int64_t on_connection_owner(int protocol, const char *source,
+                                 const char *destination, void *user) {
+    (void)protocol; (void)source; (void)destination; (void)user;
+    return -1;
+}
+
 int main(void) {
     printf("reality-core %s\n", rc_version());
 
@@ -109,6 +115,7 @@ int main(void) {
     err = NULL;
 
     rc_set_protect(on_protect, NULL);
+    rc_set_connection_owner(on_connection_owner, NULL);
     RcCore *core = rc_start(CONFIG, NULL, -1, &err);
     if (!core) FAIL("rc_start: %s", err);
     if (rc_set_event_callback(core, on_event, NULL) != 0) FAIL("rc_set_event_callback");
@@ -166,6 +173,7 @@ int main(void) {
 
     rc_stop(core);
     rc_set_protect(NULL, NULL);
+    rc_set_connection_owner(NULL, NULL);
 
 #ifdef __linux__
     /* Готовый дескриптор TUN (как от Android VpnService) — нужен root. */

@@ -2,6 +2,9 @@
 
 # Ядро как библиотека
 
+Для совместных правил приложений/сайтов добавлен `rc_set_connection_owner`:
+[контракт, fail-closed и интеграция Android](APPLICATION_ROUTING.md).
+
 Ядро можно встроить прямо в приложение — Android (`VpnService`), iOS
 (Network Extension), десктопный клиент — вместо того чтобы запускать
 `reality-client` отдельным процессом. Интерфейс — C ABI: подходит для

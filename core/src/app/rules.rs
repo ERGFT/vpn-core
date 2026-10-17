@@ -89,6 +89,12 @@ pub struct RuleConfig {
     /// tag входов, к которым относится правило.
     #[serde(default)]
     pub inbound: Vec<String>,
+    /// UID владельцев соединений (Android/Linux), группа «или».
+    #[serde(default)]
+    pub user_id: Vec<u32>,
+    /// Инверсия всего предиката; неизвестный UID не считается «другим приложением».
+    #[serde(default)]
+    pub invert: bool,
     /// Куда: tag выхода.
     pub outbound: String,
     /// Описание правила для API (`GET /rules`, поле `rule` у соединений);
@@ -148,6 +154,10 @@ pub fn describe(c: &RuleConfig) -> String {
         ));
     }
     list(&mut out, "inbound", &c.inbound);
+    list(&mut out, "user_id", &c.user_id);
+    if c.invert {
+        out.push("invert=true".into());
+    }
     out.join(" ")
 }
 
@@ -368,6 +378,8 @@ pub struct Rule {
     ports: Vec<RangeInclusive<u16>>,
     network: Option<Network>,
     inbounds: Vec<String>,
+    user_ids: HashSet<u32>,
+    invert: bool,
     pub outbound: Arc<dyn Outbound>,
 }
 
@@ -387,7 +399,25 @@ impl Rule {
         !self.ips.is_empty()
     }
 
+    /// Нужен ли UID для принятия решения этим правилом.
+    pub fn missing_owner(&self, meta: &Metadata) -> bool {
+        !self.user_ids.is_empty() && meta.user_id.is_none() && self.matches_traffic(meta)
+    }
+
+    pub fn needs_owner(&self) -> bool {
+        !self.user_ids.is_empty()
+    }
+
     pub fn matches(&self, meta: &Metadata) -> bool {
+        if self.missing_owner(meta) {
+            return false;
+        }
+        let hit = self.matches_traffic(meta)
+            && (self.user_ids.is_empty() || meta.user_id.is_some_and(|uid| self.user_ids.contains(&uid)));
+        hit != self.invert
+    }
+
+    fn matches_traffic(&self, meta: &Metadata) -> bool {
         if let Some(n) = self.network {
             if n != meta.network {
                 return false;
@@ -514,7 +544,7 @@ pub fn compile(
         .map(PortSpec::range)
         .collect::<Result<Vec<_>>>()
         .map_err(|e| Error::Config(format!("правило {n}: {e}")))?;
-    if !has_dest && ports.is_empty() && c.network.is_none() && c.inbound.is_empty() {
+    if !has_dest && ports.is_empty() && c.network.is_none() && c.inbound.is_empty() && c.user_id.is_empty() {
         return Err(Error::Config(format!(
             "правило {n} без условий подошло бы ко всему — для этого есть route.final"
         )));
@@ -528,6 +558,8 @@ pub fn compile(
         ports,
         network: c.network,
         inbounds: c.inbound.clone(),
+        user_ids: c.user_id.iter().copied().collect(),
+        invert: c.invert,
         outbound,
     })
 }

@@ -585,6 +585,7 @@ mod tests {
             port,
             sniffed: None,
             inbound_type: "socks",
+            user_id: None,
             rule: None,
         }
     }

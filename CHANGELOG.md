@@ -8,6 +8,10 @@
 
 ## [Не выпущено]
 
+- Экспериментально: route.rules.user_id и invert; доверенный resolver владельца
+  нового TUN-потока через Rust/C ABI, fail-closed для неизвестного нужного UID.
+  Сайты и приложения сохраняют first-match; Android JNI/адаптер требует интеграции.
+
 Первый выпуск ещё не сделан (`git tag v0.1.0 && git push origin v0.1.0`).
 В него войдёт:
 
@@ -149,6 +153,10 @@ and the project follows [SemVer](https://semver.org/). The detailed
 stage-by-stage decision history is in [PLAN.md](PLAN.md) (in Russian).
 
 ## [Unreleased]
+
+- Experimental route.rules.user_id/invert and trusted Rust/C ABI TUN flow-owner
+  resolver; unknown required UIDs fail closed. Site/app first-match order is
+  preserved; Android JNI/adapter integration is still required.
 
 No release has been made yet (`git tag v0.1.0 && git push origin v0.1.0`).
 It will include:

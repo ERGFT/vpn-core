@@ -30,6 +30,13 @@ typedef void (*rc_callback)(const char *json, void *user);
  * вернуть 1 — защищён, 0 — нет (сокет тогда не используется). */
 typedef int (*rc_protect)(int64_t fd, void *user);
 
+/* UID владельца TUN-потока: protocol = 6 (TCP) или 17 (UDP).
+ * source/destination — исходные числовые SocketAddr (IPv6 в [скобках]),
+ * до fake-IP и sniffing; строки действительны только во время callback.
+ * Вернуть UID 0..UINT32_MAX или -1 (неизвестен). */
+typedef int64_t (*rc_connection_owner)(int protocol, const char *source,
+                                     const char *destination, void *user);
+
 /* Версия ядра, например "0.1.0" (освобождать не нужно). */
 const char *rc_version(void);
 
@@ -85,6 +92,15 @@ int rc_set_log_callback(RcCore *core, const char *level, rc_callback cb, void *u
 /* Защищать каждый новый сокет ядра обратным вызовом (Android). Вызывать до
  * rc_start; действует на весь процесс. cb = NULL — перестать. */
 void rc_set_protect(rc_protect cb, void *user);
+
+/* Resolver UID: вызывать до rc_start, действует на весь процесс.
+ * cb/user потокобезопасны, не блокируют и живут до остановки всех ядер и
+ * завершения callback. NULL снимает resolver; снимать только после rc_stop.
+ * Нужен для user_id-правил в TUN. Неизвестный UID при нужном правиле
+ * блокирует поток, а не отправляет его через route.final/direct.
+ * Android: ConnectivityManager.getConnectionOwnerUid (API 29+).
+ * Имена пакетов и shared UID преобразует приложение, не ядро. */
+void rc_set_connection_owner(rc_connection_owner cb, void *user);
 
 /* Windows: каталог для файла блокировки auto_route — запись в него только
  * у SYSTEM и администраторов. Без него вход TUN с auto_route на Windows не

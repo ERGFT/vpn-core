@@ -58,6 +58,12 @@ pub type RcCallback = Option<unsafe extern "C" fn(json: *const c_char, user: *mu
 /// вернуть 1 — защищён, 0 — нет.
 pub type RcProtect = Option<unsafe extern "C" fn(fd: i64, user: *mut c_void) -> c_int>;
 
+/// Владелец исходного TUN-потока: TCP=6/UDP=17, числовые SocketAddr.
+/// Возвращает UID или -1, если ОС не установила владельца.
+pub type RcConnectionOwner = Option<unsafe extern "C" fn(
+    protocol: c_int, source: *const c_char, destination: *const c_char, user: *mut c_void,
+) -> i64>;
+
 /// Указатель приложения, который ядро только передаёт обратно.
 #[derive(Clone, Copy)]
 struct User(*mut c_void);
@@ -456,6 +462,66 @@ pub unsafe extern "C" fn rc_set_protect(cb: RcProtect, user: *mut c_void) {
         }) as Arc<reality_core::net_protect::ProtectFn>
     });
     reality_core::net_protect::set_callback(f);
+}
+
+/// Установить доверенный resolver UID для новых TUN-потоков.
+/// Вызывать до запуска; снимать после остановки всех ядер процесса.
+///
+/// # Safety
+/// `cb` и `user` живут до остановки ядер и завершения всех вызовов callback.
+/// Callback потокобезопасен, не блокирует и не переносит исключения через C ABI.
+#[no_mangle]
+pub unsafe extern "C" fn rc_set_connection_owner(cb: RcConnectionOwner, user: *mut c_void) {
+    let resolver = cb.map(|cb| {
+        let user = User(user);
+        Arc::new(move |network, source: std::net::SocketAddr, destination: std::net::SocketAddr| {
+            let protocol = match network {
+                reality_core::app::Network::Tcp => 6,
+                reality_core::app::Network::Udp => 17,
+            };
+            let source = CString::new(source.to_string()).ok()?;
+            let destination = CString::new(destination.to_string()).ok()?;
+            // SAFETY: время жизни и потокобезопасность гарантирует приложение.
+            let uid = unsafe { cb(protocol, source.as_ptr(), destination.as_ptr(), user.ptr()) };
+            u32::try_from(uid).ok()
+        }) as Arc<reality_core::connection_owner::OwnerFn>
+    });
+    reality_core::connection_owner::set_callback(resolver);
+}
+
+#[cfg(test)]
+mod connection_owner_tests {
+    use super::*;
+    use reality_core::{app::Network, connection_owner};
+
+    unsafe extern "C" fn owner(protocol: c_int, source: *const c_char, destination: *const c_char, user: *mut c_void) -> i64 {
+        // SAFETY: строки предоставлены rc_set_connection_owner на время вызова.
+        let source = unsafe { CStr::from_ptr(source) }.to_bytes();
+        let destination = unsafe { CStr::from_ptr(destination) }.to_bytes();
+        if protocol != 17 || source != b"[fd00::2]:32100" || destination != b"[fd00::3]:443" {
+            return -1;
+        }
+        match user as usize {
+            1 => 10001,
+            2 => i64::MAX,
+            3 => 0,
+            _ => -1,
+        }
+    }
+
+    #[test]
+    fn ffi_owner_tuple_lifetime_uid_range_and_unset() {
+        let source = "[fd00::2]:32100".parse().unwrap();
+        let destination = "[fd00::3]:443".parse().unwrap();
+        for (user, expected) in [(0, None), (1, Some(10001)), (2, None), (3, Some(0))] {
+            // SAFETY: статический callback не разыменовывает тестовый указатель.
+            unsafe { rc_set_connection_owner(Some(owner), user as *mut c_void) };
+            assert_eq!(connection_owner::resolve(Network::Udp, source, destination), expected);
+        }
+        // SAFETY: ядер и конкурентных callback в этом тесте нет.
+        unsafe { rc_set_connection_owner(None, std::ptr::null_mut()) };
+        assert_eq!(connection_owner::resolve(Network::Tcp, source, destination), None);
+    }
 }
 
 /// Windows: каталог для файла блокировки `auto_route` — запись в него
