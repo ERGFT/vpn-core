@@ -2,6 +2,9 @@
 
 # The core as a library
 
+Combined app/site rules use the added `rc_set_connection_owner` API:
+[contract, fail-closed behavior and Android integration](APPLICATION_ROUTING.en.md).
+
 The core can be embedded directly into an app — Android (`VpnService`), iOS
 (Network Extension), a desktop client — instead of running `reality-client`
 as a separate process. The interface is a C ABI: usable from Kotlin/Java

@@ -28,6 +28,7 @@
 #![cfg_attr(not(test), warn(clippy::unwrap_used, clippy::expect_used))]
 
 pub mod app;
+pub mod connection_owner;
 pub mod error;
 pub mod fingerprint;
 pub mod fsutil;

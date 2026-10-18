@@ -1,5 +1,9 @@
 # vpn-core
 
+Experimental: [combined application and site rules](docs/APPLICATION_ROUTING.en.md)
+using TUN flow-owner UIDs and a host callback. Android clients need separate
+integration; this is not built-in package_name lookup.
+
 [Русский](README.md) | **English**
 
 [![CI](https://github.com/ERGFT/vpn-core/actions/workflows/ci.yml/badge.svg)](https://github.com/ERGFT/vpn-core/actions/workflows/ci.yml)

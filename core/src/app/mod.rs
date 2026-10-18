@@ -84,6 +84,8 @@ pub struct Metadata {
     pub inbound: Arc<str>,
     /// Кто подключился (приложение).
     pub source: SocketAddr,
+    /// UID из доверенного callback приложения; SOCKS/HTTP-входы его не задают.
+    pub user_id: Option<u32>,
     pub network: Network,
     pub target: Address,
     pub port: u16,

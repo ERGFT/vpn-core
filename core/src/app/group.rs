@@ -543,6 +543,7 @@ mod tests {
             port,
             sniffed: None,
             inbound_type: "internal",
+            user_id: None,
             rule: None,
         };
         // block — это отказ правилом, а не сбой: дальше не пробуем.

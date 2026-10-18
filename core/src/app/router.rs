@@ -14,7 +14,7 @@ use std::sync::{Arc, RwLock};
 use super::config::{DomainStrategy, RouteConfig};
 use super::dns::fakeip::Reverse;
 use super::dns::Dns;
-use super::outbound::Outbound;
+use super::outbound::{BlockOutbound, Outbound};
 use super::rules::{self, GeoFiles, Rule};
 use super::stats::{ConnInfo, Counted, Mode, Tracker};
 use super::Metadata;
@@ -37,6 +37,7 @@ pub struct Router {
     global: Option<Arc<dyn Outbound>>,
     /// Выход в режиме direct.
     direct: Option<Arc<dyn Outbound>>,
+    unknown_owner: Arc<dyn Outbound>,
 }
 
 /// Текущий маршрутизатор. Перечитывание настроек подменяет его целиком;
@@ -122,6 +123,7 @@ impl Router {
             tracker: Tracker::new(),
             global: None,
             direct: None,
+            unknown_owner: Arc::new(BlockOutbound::new("connection-owner-unavailable")),
         })
     }
 
@@ -295,6 +297,12 @@ impl Router {
 
     fn match_rules(&self, meta: &mut Metadata) -> Option<Arc<dyn Outbound>> {
         for r in &self.rules {
+            // Не переходить к direct/final, если нужную идентичность не дала ОС.
+            // Предыдущие правила сайтов/входов сохраняют свой приоритет.
+            if r.missing_owner(meta) {
+                meta.rule = Some("connection-owner-unavailable".into());
+                return Some(self.unknown_owner.clone());
+            }
             if r.matches(meta) {
                 meta.rule = Some(r.label.clone());
                 tracing::debug!(
@@ -317,6 +325,10 @@ impl Router {
     /// Нужны ли правилам домены (тогда имеет смысл sniffing).
     pub fn has_rules(&self) -> bool {
         !self.rules.is_empty()
+    }
+
+    pub fn needs_owner(&self) -> bool {
+        self.rules.iter().any(Rule::needs_owner)
     }
 }
 
@@ -347,6 +359,7 @@ mod tests {
             port: 443,
             sniffed: sniffed.map(str::to_string),
             inbound_type: "socks",
+            user_id: None,
             rule: None,
         }
     }
@@ -381,6 +394,108 @@ mod tests {
         )
         .unwrap();
         Router::new(outs(), &cfg.route, &["in".into()], &geo).unwrap()
+    }
+
+    #[test]
+    fn uid_and_site_rules_keep_order_and_fail_closed() {
+        let r = router(
+            Path::new("."),
+            r#"
+            {"domain_suffix":["bypass.test"],"outbound":"direct"},
+            {"user_id":[10001],"outbound":"proxy"},
+            {"user_id":[10001],"invert":true,"outbound":"direct"}
+        "#,
+        );
+        for network in [Network::Tcp, Network::Udp] {
+            for (uid, host, expected) in [
+                (Some(10001), "remote.test", "proxy"),
+                (Some(10002), "remote.test", "direct"),
+                (Some(10001), "a.bypass.test", "direct"),
+                (None, "a.bypass.test", "direct"),
+                (None, "remote.test", "connection-owner-unavailable"),
+            ] {
+                let mut m = meta(dom(host), None);
+                m.network = network;
+                m.user_id = uid;
+                assert_eq!(r.select(&m).tag(), expected);
+            }
+        }
+    }
+
+    #[test]
+    fn inverted_uid_unknown_never_uses_direct_or_final() {
+        let r = router(
+            Path::new("."),
+            r#"{"user_id":[10001],"invert":true,"outbound":"direct"}"#,
+        );
+        let mut m = meta(dom("remote.test"), None);
+        assert_eq!(r.select(&m).tag(), "connection-owner-unavailable");
+        m.user_id = Some(10001);
+        assert_eq!(r.select(&m).tag(), "proxy");
+        m.user_id = Some(10002);
+        assert_eq!(r.select(&m).tag(), "direct");
+    }
+
+    #[test]
+    fn uid_and_domain_conditions_are_anded_and_inverted_together() {
+        let r = router(
+            Path::new("."),
+            r#"{"domain_suffix":["site.test"],"user_id":[10001],"outbound":"direct"}"#,
+        );
+        let mut m = meta(dom("site.test"), None);
+        m.user_id = Some(10001);
+        assert_eq!(r.select(&m).tag(), "direct");
+        m.user_id = Some(10002);
+        assert_eq!(r.select(&m).tag(), "proxy");
+        m.target = dom("elsewhere.test");
+        m.user_id = None;
+        assert_eq!(r.select(&m).tag(), "proxy");
+        let inverted = router(
+            Path::new("."),
+            r#"{"domain_suffix":["site.test"],"user_id":[10001],"invert":true,"outbound":"direct"}"#,
+        );
+        assert_eq!(inverted.select(&m).tag(), "direct");
+        m.target = dom("site.test");
+        assert_eq!(inverted.select(&m).tag(), "connection-owner-unavailable");
+    }
+
+    #[test]
+    fn uid_rules_do_not_override_an_earlier_site_or_probe_rule() {
+        let r = router(
+            Path::new("."),
+            r#"
+            {"inbound":["in"],"outbound":"proxy"},
+            {"user_id":[10001],"outbound":"direct"}
+        "#,
+        );
+        assert_eq!(r.select(&meta(dom("remote.test"), None)).tag(), "proxy");
+        let r = router(
+            Path::new("."),
+            r#"
+            {"domain_suffix":["site.test"],"outbound":"direct"},
+            {"user_id":[10001],"outbound":"proxy"}
+        "#,
+        );
+        let mut m = meta(
+            Address::Ipv4("198.18.0.1".parse().unwrap()),
+            Some("site.test"),
+        );
+        m.source = "[fd00::1]:32100".parse().unwrap();
+        assert_eq!(r.select(&m).tag(), "direct");
+        m.sniffed = None;
+        assert_eq!(r.select(&m).tag(), "connection-owner-unavailable");
+    }
+
+    #[test]
+    fn invalid_uids_are_config_errors_not_ignored() {
+        for uid in ["-1", "4294967296", "true", "1.5", "\"not-a-uid\""] {
+            let json = format!(
+                r#"{{"outbounds":[{{"type":"direct","tag":"direct"}}],"route":{{"rules":[{{"user_id":[{uid}],"outbound":"direct"}}]}}}}"#
+            );
+            assert!(Config::parse(&json).is_err(), "некорректный UID принят");
+        }
+        let empty = Config::parse(r#"{"outbounds":[{"type":"direct","tag":"direct"}],"route":{"rules":[{"user_id":[],"invert":true,"outbound":"direct"}]}}"#).unwrap();
+        assert!(crate::app::App::build(&empty).is_err());
     }
 
     #[test]

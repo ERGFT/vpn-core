@@ -99,6 +99,7 @@ pub async fn open(
         port: url.port,
         sniffed: None,
         inbound_type: "internal",
+        user_id: None,
         rule: None,
     };
     let s = out.connect(&meta).await?;

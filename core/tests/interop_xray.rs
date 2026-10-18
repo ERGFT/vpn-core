@@ -1315,6 +1315,7 @@ fn meta(port: u16) -> reality_core::app::Metadata {
         port,
         sniffed: None,
         inbound_type: "socks",
+        user_id: None,
         rule: None,
     }
 }
