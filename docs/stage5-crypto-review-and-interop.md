@@ -62,7 +62,7 @@ TLS-подмены, в порядке возрастания риска:
 исправлены или осознанно приняты. В отчёте:
 
 - **что проверено:** коммит (`git rev-parse HEAD`), версия rustls под
-  патчем (сейчас 0.23.45, `vendor/rustls-reality-patch/Cargo.toml`) и
+  патчем (сейчас 0.23.46, `vendor/rustls-reality-patch/Cargo.toml`) и
   SHA-256 файла `vendor/rustls-reality-patch.diff`; список файлов из
   перечня выше и что из него не смотрели;
 - **кто проверял** и когда;

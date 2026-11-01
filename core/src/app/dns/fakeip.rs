@@ -72,6 +72,13 @@ impl FakeIp {
     pub fn new(v4: IpNet, v6: Option<IpNet>, file: Option<PathBuf>) -> Result<Self> {
         let v4_base = net_bounds4(&v4)
             .ok_or_else(|| Error::Config("dns.fakeip.inet4_range: нужна IPv4-подсеть".into()))?;
+        if v4.prefix() < 8 {
+            return Err(Error::Config(
+                "dns.fakeip.inet4_range: подсеть шире /8 — в fake-IP попадёт почти весь IPv4, \
+                 правила по адресам и direct перестанут работать"
+                    .into(),
+            ));
+        }
         if v4.prefix() > 24 {
             return Err(Error::Config(
                 "dns.fakeip.inet4_range: подсеть меньше /24 — адресов не хватит".into(),
@@ -82,6 +89,13 @@ impl FakeIp {
                 let b = net_bounds6(n).ok_or_else(|| {
                     Error::Config("dns.fakeip.inet6_range: нужна IPv6-подсеть".into())
                 })?;
+                if n.prefix() < 8 {
+                    return Err(Error::Config(
+                        "dns.fakeip.inet6_range: подсеть шире /8 — в fake-IP попадёт почти весь \
+                         IPv6"
+                            .into(),
+                    ));
+                }
                 if n.prefix() > 120 {
                     return Err(Error::Config(
                         "dns.fakeip.inet6_range: подсеть меньше /120".into(),
@@ -290,6 +304,18 @@ mod tests {
 
     fn fake(v4: &str, v6: Option<&str>, file: Option<PathBuf>) -> FakeIp {
         FakeIp::new(v4.parse().unwrap(), v6.map(|s| s.parse().unwrap()), file).unwrap()
+    }
+
+    #[test]
+    fn rejects_whole_internet_ranges() {
+        assert!(FakeIp::new("0.0.0.0/0".parse().unwrap(), None, None).is_err());
+        assert!(FakeIp::new("10.0.0.0/7".parse().unwrap(), None, None).is_err());
+        assert!(FakeIp::new(
+            "198.18.0.0/15".parse().unwrap(),
+            Some("::/0".parse().unwrap()),
+            None
+        )
+        .is_err());
     }
 
     #[test]

@@ -313,6 +313,24 @@ impl VlessConfig {
     /// проверяет ссылку этим методом при старте.
     pub fn validate(&self) -> Result<()> {
         self.ensure_flow_supported()?;
+        // `path=`, `host=` и `serviceName=` декодируются из percent-encoding
+        // и попадают в сырую строку HTTP/1.1-запроса (httpupgrade, xhttp).
+        // `%0d%0a` иначе добавил бы произвольные заголовки или разбил бы
+        // запрос на два — отказ здесь, до соединения.
+        for (name, value) in [
+            ("path", self.raw_params.get("path")),
+            ("host", self.raw_params.get("host")),
+            ("serviceName", self.raw_params.get("serviceName")),
+        ] {
+            if let Some(v) = value {
+                if !crate::http1::request_part_ok(v) {
+                    return Err(Error::InvalidUri(format!(
+                        "{name}= содержит управляющие символы или пробелы — так можно \
+                         подменить HTTP-запрос"
+                    )));
+                }
+            }
+        }
         if self.security == Security::Reality
             && matches!(self.network, NetworkType::Ws | NetworkType::HttpUpgrade)
         {
@@ -571,6 +589,24 @@ mod tests {
             let c = VlessConfig::parse(&format!("{base}&type={t}")).unwrap();
             assert!(c.validate().is_ok(), "{t}");
         }
+    }
+
+    /// Сырые HTTP/1.1-запросы собираются `format!`, поэтому перевод
+    /// строки в `path=`/`host=` (после percent-decoding) — инъекция.
+    #[test]
+    fn validate_rejects_crlf_in_http_request_parts() {
+        let base =
+            "vless://11111111-1111-1111-1111-111111111111@1.2.3.4:443?security=tls&type=httpupgrade";
+        for q in [
+            "&path=%2F%0d%0aX-Evil%3A%201",
+            "&host=example.com%0d%0aX-Evil%3A%201",
+            "&path=%2Fws%0aX-Evil%3A%201",
+        ] {
+            let c = VlessConfig::parse(&format!("{base}{q}")).unwrap();
+            assert!(c.validate().is_err(), "{q}");
+        }
+        let ok = VlessConfig::parse(&format!("{base}&path=%2Fws&host=example.com")).unwrap();
+        assert!(ok.validate().is_ok());
     }
 
     #[test]

@@ -119,7 +119,7 @@ brotli-decompressor = "6"
 # генерация ключей и encapsulate() берут случайность напрямую из ОС.
 ml-kem = { version = "0.3", features = ["zeroize", "getrandom"] }
 
-# Патченный rustls 0.23.45 (vendor/rustls-reality-patch): хук REALITY
+# Патченный rustls 0.23.46 (vendor/rustls-reality-patch): хук REALITY
 # (своя доля X25519MLKEM768, печать session_id), сборка ClientHello по
 # профилю браузера, GREASE, дополнительная доля P-256. Это существенная
 # правка логики рукопожатия (~800 строк в 13 файлах), а не только

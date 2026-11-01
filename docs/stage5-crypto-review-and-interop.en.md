@@ -63,7 +63,7 @@ repository has a report (for example, `docs/reviews/<date>-reality.md`) and
 all its findings are fixed or knowingly accepted. The report contains:
 
 - **what was reviewed:** the commit (`git rev-parse HEAD`), the rustls
-  version under the patch (currently 0.23.45,
+  version under the patch (currently 0.23.46,
   `vendor/rustls-reality-patch/Cargo.toml`) and the SHA-256 of
   `vendor/rustls-reality-patch.diff`; the list of files from the list
   above and which of them were not looked at;

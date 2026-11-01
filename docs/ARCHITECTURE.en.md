@@ -84,7 +84,7 @@ The Cargo workspace:
 | `bin/fpcheck/` | `fpcheck` | captures the JA3/JA4 of the ClientHello the client actually sends |
 | `ffi/` | `reality-ffi` (`libreality`) | the core as a library: a C ABI for apps ([LIBRARY.en.md](LIBRARY.en.md)) |
 | `bench/` | `bench` | criterion benchmarks and `memwatch` (process memory under load, Linux) |
-| `vendor/rustls-reality-patch/` | patched `rustls` 0.23.45 | REALITY hook in the ClientHello, GREASE, Chrome extension order; wired in via `[patch.crates-io]`; scope and porting updates — [`RUSTLS_PATCH.en.md`](RUSTLS_PATCH.en.md) |
+| `vendor/rustls-reality-patch/` | patched `rustls` 0.23.46 | REALITY hook in the ClientHello, GREASE, Chrome extension order; wired in via `[patch.crates-io]`; scope and porting updates — [`RUSTLS_PATCH.en.md`](RUSTLS_PATCH.en.md) |
 | `interop/go-reality-server/` | Go | a REALITY test server on the XTLS/REALITY library |
 
 Inside `core/src/`:
@@ -523,7 +523,9 @@ through the client.
   - the stack accepts the connection from the app immediately;
   - broadcast, multicast and TUN-subnet addresses are dropped;
   - port 53 with `dns_hijack` (a `hijack-dns` rule) is answered by the DNS
-    module;
+    module; in the sing-box format the rule enables it (the `dns_hijack`
+    extension overrides it), while in the Xray format it is off by default
+    and enabled by `settings.dns_hijack: true`;
   - otherwise the path is the same as for SOCKS5: sniffing (SNI/Host),
     `router.route`, `router.dial`, `relay`.
 - **UDP** (`tun/udp.rs`):

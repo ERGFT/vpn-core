@@ -32,7 +32,7 @@ core/src/
   relay.rs             двусторонний релей, один буфер на направление
 core/tests/            интеграционные тесты (loopback) + interop_xray.rs, interop_go_reality.rs
 vendor/rustls-reality-patch/
-                       rustls 0.23.45 с патчем: REALITY, GREASE, профиль ClientHello
+                       rustls 0.23.46 с патчем: REALITY, GREASE, профиль ClientHello
                        Chrome (подключён через [patch.crates-io])
 interop/go-reality-server/
                        тестовый REALITY-сервер на библиотеке XTLS/REALITY

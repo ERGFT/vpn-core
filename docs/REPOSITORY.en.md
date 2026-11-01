@@ -32,7 +32,7 @@ core/src/
   relay.rs             bidirectional relay, one buffer per direction
 core/tests/            integration tests (loopback) + interop_xray.rs, interop_go_reality.rs
 vendor/rustls-reality-patch/
-                       rustls 0.23.45 with a patch: REALITY, GREASE, Chrome ClientHello
+                       rustls 0.23.46 with a patch: REALITY, GREASE, Chrome ClientHello
                        profile (wired in via [patch.crates-io])
 interop/go-reality-server/
                        REALITY test server on the XTLS/REALITY library

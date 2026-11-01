@@ -148,7 +148,18 @@ pub async fn connect_httpupgrade(cfg: &VlessConfig) -> Result<HttpUpgradeVlessSt
     // Как Xray: ALPN для httpupgrade — http/1.1 (`WithNextProto("http/1.1")`).
     let alpn = cfg.alpn().unwrap_or_else(|| vec![b"http/1.1".to_vec()]);
     let mut stream = connect_tls_by_security(cfg, alpn).await?;
-    let req = build_request(cfg.ws_host(), &cfg.http_path(), cfg.browser);
+    // Запрос собирается `format!`; перевод строки в `host=`/`path=`
+    // (после percent-decoding) добавил бы в него произвольные заголовки.
+    // `VlessConfig::validate` проверяет это при сборке выхода, но
+    // библиотечный `transport::dial` может прийти и напрямую.
+    let host = cfg.ws_host();
+    let path = cfg.http_path();
+    if !crate::http1::request_part_ok(host) || !crate::http1::request_part_ok(&path) {
+        return Err(Error::Protocol(
+            "httpupgrade: host/path содержит управляющие символы или пробелы".into(),
+        ));
+    }
+    let req = build_request(host, &path, cfg.browser);
     stream.write_all(req.as_bytes()).await?;
     stream.flush().await?;
 

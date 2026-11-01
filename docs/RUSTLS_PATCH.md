@@ -2,7 +2,7 @@
 
 # Патч rustls
 
-`vendor/rustls-reality-patch/` — полная копия rustls 0.23.45 с правками
+`vendor/rustls-reality-patch/` — полная копия rustls 0.23.46 с правками
 для REALITY и отпечатка браузера. Через `[patch.crates-io]` в корневом
 `Cargo.toml` она подменяет rustls во всём графе зависимостей, включая
 tokio-rustls. Это **код, критичный для безопасности**: здесь собирается

@@ -33,6 +33,9 @@ use crate::error::{Error, Result};
 
 /// Потолок на ответ панели.
 const MAX_BODY: usize = 4 * 1024 * 1024;
+/// Потолок на число серверов в одной подписке: иначе панель на 4 МиБ
+/// создаёт десятки тысяч выходов с TLS-конфигами и съедает память.
+const MAX_SERVERS: usize = 4096;
 const FETCH_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[derive(Clone, Deserialize)]
@@ -490,6 +493,12 @@ impl Subscription {
     /// Разобрать и применить ответ панели. Возвращает число серверов.
     pub fn apply(&self, body: &[u8]) -> Result<usize> {
         let parsed = parse(body)?;
+        if parsed.servers.len() > MAX_SERVERS {
+            return Err(Error::Config(format!(
+                "подписка {}: серверов больше {MAX_SERVERS} — такой список не применяется",
+                self.cfg.tag
+            )));
+        }
         let mut built = Vec::new();
         let mut insecure = 0;
         let mut broken = parsed.invalid;

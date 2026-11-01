@@ -11,6 +11,20 @@ use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncReadExt, AsyncWrite, AsyncWr
 pub const MAX_HEAD: usize = 16 * 1024;
 const READ_CHUNK: usize = 16 * 1024;
 
+/// Строка, которую можно вставить в строку запроса HTTP/1.1 (метод, путь,
+/// `Host`) без риска подменить запрос: без управляющих символов и пробелов.
+/// Параметры ссылки (`path=`, `host=`) декодируются из percent-encoding,
+/// поэтому `%0d%0a` иначе добавил бы в запрос свои строки.
+pub fn request_part_ok(s: &str) -> bool {
+    !s.bytes().any(|b| b < 0x20 || b == 0x7f || b == b' ')
+}
+
+/// Значение заголовка: пробелы допустимы, перевод строки и прочие
+/// управляющие символы — нет.
+pub fn header_value_ok(s: &str) -> bool {
+    !s.bytes().any(|b| b < 0x20 || b == 0x7f)
+}
+
 pub struct Head {
     pub status: u16,
     pub headers: Vec<(String, String)>,

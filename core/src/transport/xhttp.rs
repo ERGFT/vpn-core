@@ -471,6 +471,25 @@ impl XhttpSettings {
             user_headers
         };
 
+        // HTTP/1.1-запрос собирается `format!`: перевод строки в
+        // host/path/query (после percent-decoding) или в значении
+        // пользовательского заголовка добавил бы в запрос свои строки.
+        if !crate::http1::request_part_ok(&host)
+            || !crate::http1::request_part_ok(&path)
+            || !crate::http1::request_part_ok(q)
+        {
+            return Err(Error::InvalidUri(
+                "xhttp: host/path содержит управляющие символы или пробелы".into(),
+            ));
+        }
+        for (k, v) in &headers {
+            if !crate::http1::header_value_ok(k) || !crate::http1::header_value_ok(v) {
+                return Err(Error::InvalidUri(format!(
+                    "xhttp: заголовок «{k}» содержит управляющие символы"
+                )));
+            }
+        }
+
         Ok(XhttpSettings {
             mode,
             http11,

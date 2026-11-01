@@ -88,6 +88,13 @@ pub fn parse(root: &Obj<'_>) -> Result<Config> {
     // Действие sniff: включить у входов (всех или перечисленных).
     for s in &sniff {
         for i in &mut inbounds {
+            // У DNS-входа sniffing не бывает (build_dns_inbound его
+            // отвергает), а глобальное правило sniff без inbound иначе
+            // ставило бы его и DNS-серверу — типичный sing-box-конфиг не
+            // собирался бы.
+            if i.kind == InboundKind::Dns {
+                continue;
+            }
             let hit = match s {
                 None => true,
                 Some(tags) => i.tag.as_ref().is_some_and(|t| tags.contains(t)),
@@ -106,7 +113,11 @@ pub fn parse(root: &Obj<'_>) -> Result<Config> {
             (Some(_), None) => false,
         };
         match i.kind {
-            InboundKind::Tun => i.dns_hijack = Some(hijack.iter().any(covered)),
+            // Явное расширение `dns_hijack` главнее правила hijack-dns.
+            InboundKind::Tun if i.dns_hijack.is_none() => {
+                i.dns_hijack = Some(hijack.iter().any(covered))
+            }
+            InboundKind::Tun => {}
             InboundKind::Dns if !hijack.iter().any(|h| h.inbound.is_some() && covered(h)) => {
                 return Err(Error::Config(format!(
                     "вход {} (type = \"direct\"): как DNS-сервер нужен правилом \
@@ -210,6 +221,9 @@ fn inbound(o: Obj<'_>) -> Result<InboundConfig> {
             ex.extend(ipnets(&o, "inet4_route_exclude_address")?);
             ex.extend(ipnets(&o, "inet6_route_exclude_address")?);
             i.route_exclude = ex;
+            // Расширение: выключить перехват DNS (по умолчанию — по
+            // правилу hijack-dns).
+            i.dns_hijack = o.bool("dns_hijack")?;
             o.ignore(&["stack", "endpoint_independent_nat", "platform", "gso"]);
             for k in [
                 "route_address",

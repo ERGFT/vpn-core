@@ -82,7 +82,7 @@ httpupgrade, xhttp), напрямую или никуда. Сам графиче
 | `bin/fpcheck/` | `fpcheck` | снимает JA3/JA4 того ClientHello, что клиент реально отправляет |
 | `ffi/` | `reality-ffi` (`libreality`) | ядро как библиотека: C ABI для приложений ([LIBRARY.md](LIBRARY.md)) |
 | `bench/` | `bench` | criterion-замеры и `memwatch` (память процесса под нагрузкой, Linux) |
-| `vendor/rustls-reality-patch/` | `rustls` 0.23.45 с патчем | хук REALITY в ClientHello, GREASE, порядок расширений Chrome; подключается через `[patch.crates-io]`; объём и перенос обновлений — [`RUSTLS_PATCH.md`](RUSTLS_PATCH.md) |
+| `vendor/rustls-reality-patch/` | `rustls` 0.23.46 с патчем | хук REALITY в ClientHello, GREASE, порядок расширений Chrome; подключается через `[patch.crates-io]`; объём и перенос обновлений — [`RUSTLS_PATCH.md`](RUSTLS_PATCH.md) |
 | `interop/go-reality-server/` | Go | тестовый REALITY-сервер на библиотеке XTLS/REALITY |
 
 Внутри `core/src/`:
@@ -496,6 +496,9 @@ Config
   - широковещательные, групповые адреса и адреса самой подсети TUN
     отбрасываются;
   - порт 53 при `dns_hijack` (правило `hijack-dns`) отвечает DNS-модуль;
+    в sing-box-формате перехват задаёт правило (расширение `dns_hijack`
+    его переопределяет), в Xray-формате он по умолчанию выключен —
+    включается `settings.dns_hijack: true`;
   - дальше как у SOCKS5: sniffing (SNI/Host), `router.route`,
     `router.dial`, `relay`.
 - **UDP** (`tun/udp.rs`):

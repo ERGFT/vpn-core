@@ -932,8 +932,8 @@ diff -ruN a/src/client/hs.rs b/src/client/hs.rs
                  return Err({
                      cx.common.send_fatal_alert(
                          AlertDescription::IllegalParameter,
-@@ -1004,10 +1350,7 @@
-         };
+@@ -1002,10 +1348,7 @@
+         }
  
          // This is the draft19 change where the transcript became a tree
 -        let transcript = self
@@ -944,7 +944,7 @@ diff -ruN a/src/client/hs.rs b/src/client/hs.rs
          let mut transcript_buffer = transcript.into_hrr_buffer();
          transcript_buffer.add_message(&m);
  
-@@ -1063,9 +1406,7 @@
+@@ -1061,9 +1404,7 @@
              MessagePayload::Handshake {
                  parsed: HandshakeMessagePayload(HandshakePayload::ServerHello(..)),
                  ..
@@ -955,7 +955,7 @@ diff -ruN a/src/client/hs.rs b/src/client/hs.rs
              MessagePayload::Handshake {
                  parsed: HandshakeMessagePayload(HandshakePayload::HelloRetryRequest(..)),
                  ..
-@@ -1156,9 +1497,7 @@
+@@ -1154,9 +1495,7 @@
  
          if let Some(resuming) = &found {
              if cx.common.is_quic() {
@@ -969,7 +969,7 @@ diff -ruN a/src/client/hs.rs b/src/client/hs.rs
 diff -ruN a/src/client/tls13.rs b/src/client/tls13.rs
 --- a/src/client/tls13.rs
 +++ b/src/client/tls13.rs
-@@ -252,6 +252,8 @@
+@@ -248,6 +248,8 @@
  enum KeyExchangeChoice {
      Whole(Box<dyn ActiveKeyExchange>),
      Component(Box<dyn ActiveKeyExchange>),
@@ -978,7 +978,7 @@ diff -ruN a/src/client/tls13.rs b/src/client/tls13.rs
  }
  
  impl KeyExchangeChoice {
-@@ -267,6 +269,16 @@
+@@ -263,6 +265,16 @@
              return Ok(Self::Whole(our_key_share));
          }
  
@@ -995,7 +995,7 @@ diff -ruN a/src/client/tls13.rs b/src/client/tls13.rs
          let (component_group, _) = our_key_share
              .hybrid_component()
              .ok_or(())?;
-@@ -289,6 +301,7 @@
+@@ -285,6 +297,7 @@
          match self {
              Self::Whole(akx) => akx.complete(peer_pub_key),
              Self::Component(akx) => akx.complete_hybrid_component(peer_pub_key),
@@ -1276,7 +1276,7 @@ diff -ruN a/src/msgs/handshake.rs b/src/msgs/handshake.rs
 diff -ruN a/src/msgs/persist.rs b/src/msgs/persist.rs
 --- a/src/msgs/persist.rs
 +++ b/src/msgs/persist.rs
-@@ -163,7 +163,11 @@
+@@ -182,7 +182,11 @@
  
  #[cfg(feature = "tls12")]
  impl Tls12ClientSessionValue {
@@ -1416,7 +1416,7 @@ diff -ruN a/src/server/server_conn.rs b/src/server/server_conn.rs
 diff -ruN a/src/server/test.rs b/src/server/test.rs
 --- a/src/server/test.rs
 +++ b/src/server/test.rs
-@@ -484,6 +484,7 @@
+@@ -606,6 +606,7 @@
              supported_versions: Some(SupportedProtocolVersions {
                  tls12: true,
                  tls13: true,
