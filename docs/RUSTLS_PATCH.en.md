@@ -2,7 +2,7 @@ English | [Русский](RUSTLS_PATCH.md)
 
 # The rustls patch
 
-`vendor/rustls-reality-patch/` is a full copy of rustls 0.23.45 with
+`vendor/rustls-reality-patch/` is a full copy of rustls 0.23.46 with
 changes for REALITY and the browser fingerprint. Via `[patch.crates-io]`
 in the root `Cargo.toml` it replaces rustls across the whole dependency
 graph, tokio-rustls included. This is **security-critical code**: it

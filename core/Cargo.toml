@@ -31,7 +31,9 @@ hex.workspace = true
 # Распаковка сертификатов, сжатых zlib и zstd (Firefox, Safari заявляют
 # эти алгоритмы) — чистый Rust, без C-библиотек.
 miniz_oxide = "0.8"
-ruzstd = "0.8"
+# 0.9.1 закрывает RUSTSEC-2026-0344 (decompression bomb на недоверенном
+# сертификате): размер блока вывода теперь ограничен RFC 8878.
+ruzstd = "0.9"
 pin-project-lite.workspace = true
 async-tungstenite.workspace = true
 ws_stream_tungstenite.workspace = true
