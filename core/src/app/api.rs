@@ -350,7 +350,17 @@ impl Api {
         let local = l.local_addr()?;
         let sem = Arc::new(tokio::sync::Semaphore::new(32));
         loop {
-            let (s, peer) = l.accept().await?;
+            // Транзиентная ошибка accept (EMFILE/ECONNABORTED) не должна
+            // останавливать весь клиент: как и у прокси-входа, журналируем
+            // и продолжаем принимать.
+            let (s, peer) = match l.accept().await {
+                Ok(v) => v,
+                Err(e) => {
+                    tracing::warn!(error = %e, "API: accept не удался");
+                    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                    continue;
+                }
+            };
             if !self.allowed(peer.ip()) {
                 continue;
             }
@@ -950,18 +960,42 @@ fn connections_json(t: &Tracker) -> Value {
 }
 
 fn host_ok(req: &Request, local: SocketAddr) -> bool {
-    req.header("host").is_some_and(|h| {
-        let h = h.trim();
-        let port = local.port().to_string();
-        [
-            format!("{}:{port}", local.ip()),
-            format!("[{}]:{port}", local.ip()),
-            format!("localhost:{port}"),
-            format!("127.0.0.1:{port}"),
-        ]
-        .iter()
-        .any(|x| x.eq_ignore_ascii_case(h))
-    })
+    req.header("host").is_some_and(|h| host_allowed(h, local))
+}
+
+fn split_host_port(s: &str) -> Option<(&str, u16)> {
+    if let Some(rest) = s.strip_prefix('[') {
+        let (h, r) = rest.split_once(']')?;
+        let p = r.strip_prefix(':')?.parse().ok()?;
+        Some((h, p))
+    } else {
+        let (h, p) = s.rsplit_once(':')?;
+        Some((h, p.parse().ok()?))
+    }
+}
+
+/// `Host` запроса должен указывать на сам API. Домен отвергается всегда —
+/// это и есть защита от DNS rebinding; при слушании на `0.0.0.0`/`::`
+/// допускается любой литерал адреса с правильным портом, иначе панель в
+/// сети (ради которой и разрешён не-loopback) получала бы 421.
+fn host_allowed(host: &str, local: SocketAddr) -> bool {
+    let Some((name, port)) = split_host_port(host.trim()) else {
+        return false;
+    };
+    if port != local.port() {
+        return false;
+    }
+    if name.eq_ignore_ascii_case("localhost") {
+        return true;
+    }
+    let Ok(ip) = name.parse::<std::net::IpAddr>() else {
+        return false;
+    };
+    if local.ip().is_unspecified() {
+        true
+    } else {
+        ip == local.ip() || (local.ip().is_loopback() && ip.is_loopback())
+    }
 }
 
 /// Токен совпадает: длина — отдельной проверкой (длина токена не
@@ -1416,6 +1450,25 @@ mod tests {
         }
         assert!(!api.blocked(lo), "loopback не блокируется");
         assert!(api.authorized(&with_token(&good), lo).await);
+    }
+
+    #[test]
+    fn host_header_allows_lan_panel_only_by_address() {
+        let lo: SocketAddr = "127.0.0.1:9090".parse().unwrap();
+        assert!(host_allowed("127.0.0.1:9090", lo));
+        assert!(host_allowed("localhost:9090", lo));
+        assert!(!host_allowed("example.com:9090", lo));
+        assert!(!host_allowed("127.0.0.1:9091", lo));
+
+        // Слушаем 0.0.0.0: панель в сети приходит по адресу интерфейса.
+        let any: SocketAddr = "0.0.0.0:9090".parse().unwrap();
+        assert!(host_allowed("192.168.1.5:9090", any));
+        assert!(host_allowed("[2001:db8::1]:9090", any));
+        assert!(!host_allowed("evil.example:9090", any));
+        assert!(!host_allowed("192.168.1.5:9091", any));
+
+        let v6: SocketAddr = "[::1]:9090".parse().unwrap();
+        assert!(host_allowed("[::1]:9090", v6));
     }
 
     #[test]

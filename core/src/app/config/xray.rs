@@ -162,12 +162,17 @@ fn inbound(o: Obj<'_>, route: &RouteConfig, dns_outbounds: &[String]) -> Result<
     let settings = o.obj("settings")?;
     match kind {
         InboundKind::Tun => {
+            // В Xray перехвата DNS в TUN нет: не включаем его по
+            // умолчанию, иначе конфиг требовал бы раздел dns и его нельзя
+            // было бы выключить. Расширение `dns_hijack` — в settings.
+            i.dns_hijack = Some(false);
             if let Some(s) = settings {
                 i.interface_name = s.str("name")?;
                 i.mtu = match s.u16("MTU")? {
                     Some(m) => Some(m),
                     None => s.u16("mtu")?,
                 };
+                i.dns_hijack = Some(s.bool("dns_hijack")?.unwrap_or(false));
                 s.ignore(&["userLevel"]);
                 s.finish()?;
             }

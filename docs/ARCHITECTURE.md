@@ -496,6 +496,9 @@ Config
   - широковещательные, групповые адреса и адреса самой подсети TUN
     отбрасываются;
   - порт 53 при `dns_hijack` (правило `hijack-dns`) отвечает DNS-модуль;
+    в sing-box-формате перехват задаёт правило (расширение `dns_hijack`
+    его переопределяет), в Xray-формате он по умолчанию выключен —
+    включается `settings.dns_hijack: true`;
   - дальше как у SOCKS5: sniffing (SNI/Host), `router.route`,
     `router.dial`, `relay`.
 - **UDP** (`tun/udp.rs`):

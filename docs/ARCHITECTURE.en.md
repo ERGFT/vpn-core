@@ -523,7 +523,9 @@ through the client.
   - the stack accepts the connection from the app immediately;
   - broadcast, multicast and TUN-subnet addresses are dropped;
   - port 53 with `dns_hijack` (a `hijack-dns` rule) is answered by the DNS
-    module;
+    module; in the sing-box format the rule enables it (the `dns_hijack`
+    extension overrides it), while in the Xray format it is off by default
+    and enabled by `settings.dns_hijack: true`;
   - otherwise the path is the same as for SOCKS5: sniffing (SNI/Host),
     `router.route`, `router.dial`, `relay`.
 - **UDP** (`tun/udp.rs`):

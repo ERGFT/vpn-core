@@ -339,7 +339,13 @@ pub fn parse_go_duration(s: &str) -> Option<Duration> {
             "d" => n * 86400.0,
             _ => return None,
         };
-        total += Duration::from_secs_f64(secs);
+        // `from_secs_f64` паникует на переполнении и бесконечности, а
+        // значение приходит из файла настроек: `"999…h"` не должно
+        // ронять процесс при старте или применении `PUT /config`.
+        if !secs.is_finite() || secs < 0.0 {
+            return None;
+        }
+        total = total.checked_add(Duration::try_from_secs_f64(secs).ok()?)?;
         rest = &rest[unit_end..];
     }
     Some(total)
@@ -379,5 +385,11 @@ mod tests {
         assert_eq!(parse_go_duration("500ms"), Some(Duration::from_millis(500)));
         assert_eq!(parse_go_duration("45"), Some(Duration::from_secs(45)));
         assert_eq!(parse_go_duration("3x"), None);
+        // Переполнение не паникует, а отвергается.
+        assert_eq!(parse_go_duration("9999999999999999999h"), None);
+        assert_eq!(
+            parse_go_duration("999999999999999999999999999999999999999999h"),
+            None
+        );
     }
 }

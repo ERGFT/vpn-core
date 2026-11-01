@@ -64,6 +64,30 @@ use stats::Tracker;
 use subscription::Subscription;
 use vless_out::VlessOutbound;
 
+/// Отменяет уже запущенные задачи, если `App::start` вернул ошибку:
+/// `AbortHandle` при `Drop` задачу не останавливает, и без этого
+/// недособранное ядро (FFI, повторный запуск) оставляло бы слушателей и
+/// TUN-стек работать.
+struct AbortOnDrop(Vec<AbortHandle>);
+
+impl AbortOnDrop {
+    fn watch(&mut self, h: &AbortHandle) {
+        self.0.push(h.clone());
+    }
+
+    fn disarm(&mut self) {
+        self.0.clear();
+    }
+}
+
+impl Drop for AbortOnDrop {
+    fn drop(&mut self) {
+        for h in &self.0 {
+            h.abort();
+        }
+    }
+}
+
 /// Служебная группа режима global (как в Clash API).
 pub const GLOBAL: &str = "GLOBAL";
 
@@ -612,8 +636,12 @@ fn build_dns_inbound(
     }))
 }
 
-fn build_proxy_inbound(i: &config::InboundConfig, tag: &str) -> Result<Arc<ProxyInbound>> {
-    let auth = match secret(&i.auth, &i.auth_file, &format!("вход {tag}"))? {
+fn build_proxy_inbound(
+    i: &config::InboundConfig,
+    tag: &str,
+    auth: Option<String>,
+) -> Result<Arc<ProxyInbound>> {
+    let auth = match auth {
         Some(a) => Some(Credentials::parse(&a).ok_or_else(|| {
             Error::Config(format!("вход {tag}: пароль ожидается в виде логин:пароль"))
         })?),
@@ -673,6 +701,17 @@ mod external_tun_route_tests {
         assert!(!super::core_manages_tun_routes(true, true));
         assert!(super::core_manages_tun_routes(true, false));
         assert!(!super::core_manages_tun_routes(false, false));
+    }
+
+    /// Ключ входа должен меняться вместе с паролем: иначе reload не
+    /// перезапустит вход и старый пароль продолжит работать.
+    #[test]
+    fn auth_fingerprint_changes_with_password() {
+        assert_ne!(
+            super::auth_fingerprint(Some("user:old-password")),
+            super::auth_fingerprint(Some("user:new-password"))
+        );
+        assert_eq!(super::auth_fingerprint(None), "none");
     }
 
     #[test]
@@ -1161,20 +1200,49 @@ fn build_inbounds(
 ) -> Result<Vec<BuiltInbound>> {
     let mut inbounds = Vec::new();
     for (i, tag) in cfg.inbounds.iter().zip(tags) {
-        let svc = match i.kind {
-            InboundKind::Dns => InboundSvc::Dns(build_dns_inbound(i, tag, dns.is_some(), routers)?),
-            InboundKind::Tun => InboundSvc::Tun(build_tun_inbound(i, tag, dns)?),
-            _ => InboundSvc::Proxy(build_proxy_inbound(i, tag)?),
+        let (svc, auth_key) = match i.kind {
+            InboundKind::Dns => (
+                InboundSvc::Dns(build_dns_inbound(i, tag, dns.is_some(), routers)?),
+                String::new(),
+            ),
+            InboundKind::Tun => (
+                InboundSvc::Tun(build_tun_inbound(i, tag, dns)?),
+                String::new(),
+            ),
+            _ => {
+                // Пароль разрешаем здесь, чтобы попасть в ключ входа:
+                // `Debug` скрывает `auth`, а содержимое `auth_file` не
+                // видно вовсе, и без отпечатка смена пароля при reload не
+                // перезапускала бы вход — старый пароль продолжал бы
+                // работать.
+                let auth = secret(&i.auth, &i.auth_file, &format!("вход {tag}"))?;
+                let fp = auth_fingerprint(auth.as_deref());
+                (InboundSvc::Proxy(build_proxy_inbound(i, tag, auth)?), fp)
+            }
         };
         inbounds.push(BuiltInbound {
             listen: i.listen,
             tag: tag.as_str().into(),
             kind: i.kind,
             svc,
-            key: format!("{tag}|{i:?}"),
+            key: format!("{tag}|{i:?}|{auth_key}"),
         });
     }
     Ok(inbounds)
+}
+
+/// Отпечаток разрешённых учётных данных входа (не сам пароль): по нему
+/// `reload` понимает, что вход надо перезапустить.
+fn auth_fingerprint(auth: Option<&str>) -> String {
+    use sha2::{Digest, Sha256};
+    match auth {
+        Some(a) => {
+            let mut h = Sha256::new();
+            h.update(a.as_bytes());
+            hex::encode(h.finalize())
+        }
+        None => "none".into(),
+    }
 }
 
 /// Открыть вход, слушающий адрес (всё, кроме TUN).
@@ -1314,6 +1382,7 @@ impl App {
         let mut live = Vec::new();
         let mut routes = Vec::new();
         let mut tun_resolver = false;
+        let mut cleanup = AbortOnDrop(Vec::new());
         for i in built {
             if let InboundSvc::Tun(t) = &i.svc {
                 // Владение auto_route — до создания интерфейса: второй
@@ -1336,6 +1405,7 @@ impl App {
                 // подписки и ставятся маршруты (иначе Windows запоминает
                 // неудачу, а с kill switch обойти её ей нечем).
                 let task = spawn_task(&errors_tx, t.clone().serve(dev, routers.clone()));
+                cleanup.watch(&task);
                 if let Some(lock) = lock {
                     // Пока системный DNS ещё работает напрямую: загрузить
                     // подписки без сохранённого списка и узнать адреса
@@ -1416,6 +1486,9 @@ impl App {
                 continue;
             }
             let l = start_listener(i, &routers, &errors_tx).await?;
+            for t in &l.tasks {
+                cleanup.watch(t);
+            }
             #[allow(
                 clippy::expect_used,
                 reason = "инвариант: у сетевого входа адрес есть всегда"
@@ -1426,6 +1499,9 @@ impl App {
             live.push(l);
         }
         let core_tasks = spawn_core(dns.as_ref(), &groups, subs.clone(), &errors_tx);
+        for t in &core_tasks {
+            cleanup.watch(t);
+        }
         let ctl = Arc::new(Controller {
             routers,
             tracker: tracker.clone(),
@@ -1452,10 +1528,13 @@ impl App {
                 let addr = l.local_addr()?;
                 let a = api::Api::new(&cfg, token, tracker, ctl.clone())?;
                 tracing::info!(addr = %addr, "API слушает");
-                (Some(addr), Some(spawn_task(&errors_tx, a.serve(l))))
+                let task = spawn_task(&errors_tx, a.serve(l));
+                cleanup.watch(&task);
+                (Some(addr), Some(task))
             }
             None => (None, None),
         };
+        cleanup.disarm();
         Ok(Running {
             listen_addrs,
             inbounds,

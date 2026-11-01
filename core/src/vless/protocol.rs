@@ -65,9 +65,24 @@ impl Address {
             Address::Ipv4(a) => buf.put_slice(&a.octets()),
             Address::Domain(d) => {
                 // Длина домена как 1 байт — домены длиннее 255 байт формат
-                // не поддерживает (как и оригинальный протокол).
-                buf.put_u8(d.len() as u8);
-                buf.put_slice(d.as_bytes());
+                // не поддерживает (как и оригинальный протокол). Все
+                // штатные источники адреса ограничены 255 байтами ещё на
+                // входе, но здесь длина не должна «обернуться» по модулю:
+                // иначе сдвинулись бы порт и данные. Режем по границе
+                // UTF-8 и сообщаем об этом — испорченного кадра не будет.
+                let bytes = d.as_bytes();
+                let mut n = bytes.len().min(u8::MAX as usize);
+                while n > 0 && !d.is_char_boundary(n) {
+                    n -= 1;
+                }
+                if n != bytes.len() {
+                    tracing::warn!(
+                        len = bytes.len(),
+                        "VLESS: домен длиннее 255 байт — усечён до границы протокола"
+                    );
+                }
+                buf.put_u8(n as u8);
+                buf.put_slice(&bytes[..n]);
             }
             Address::Ipv6(a) => buf.put_slice(&a.octets()),
         }
@@ -409,6 +424,24 @@ mod tests {
         assert_eq!(buf[addr_start], 0x02); // domain
         assert_eq!(buf[addr_start + 1], 11); // len("example.com")
         assert_eq!(&buf[addr_start + 2..addr_start + 2 + 11], b"example.com");
+    }
+
+    /// Домен длиннее 255 байт не должен «обернуть» длину по модулю 256:
+    /// иначе порт и данные сдвинулись бы. Режем по границе UTF-8.
+    #[test]
+    fn long_domain_is_truncated_without_desync() {
+        let mut buf = BytesMut::new();
+        Address::Domain("a".repeat(300)).encode(&mut buf);
+        assert_eq!(buf[0], 0x02);
+        assert_eq!(buf[1], 255);
+        assert_eq!(buf.len(), 2 + 255);
+
+        let mut buf = BytesMut::new();
+        let mut d = "a".repeat(254);
+        d.push('ж'); // 2 байта: 255-я позиция — середина символа
+        Address::Domain(d).encode(&mut buf);
+        assert_eq!(buf[1], 254);
+        assert_eq!(buf.len(), 2 + 254);
     }
 
     /// Сервер, ведущий себя как Xray-core (`SetFlushNext`): заголовок
