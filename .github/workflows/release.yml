@@ -142,7 +142,7 @@ jobs:
           PLATFORM: ${{ matrix.platform }}
           VERSION: ${{ github.ref_name }}
         run: |
-          mkdir dist
+          mkdir -p dist
           case "$PLATFORM" in
             linux-x86_64)
               python scripts/package_ffi_sdk.py --platform "$PLATFORM" --version "$VERSION" --output dist --library target/release/libreality.so --library target/release/libreality.a
