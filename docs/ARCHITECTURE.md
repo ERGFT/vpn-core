@@ -891,8 +891,12 @@ Config
     - `Referer` с `x_padding` случайной длины (100–1000 по умолчанию);
     - `Content-Type: application/grpc` у потоковых POST;
   - параметры из `extra=` (JSON, как в ссылках Xray);
-  - настройки, меняющие формат запросов (`xPaddingObfsMode`,
-    `downloadSettings` и т.п.), — ошибка, а не молчаливая поломка.
+  - `downloadSettings` создаёт независимый HTTP-сеанс с собственной
+    конфигурацией адреса, защиты и версии HTTP; session ID и path совпадают
+    с каналом отправки. Пулы h2/h3 разделены по endpoint; `stream-one`
+    отвергается, потому что один двусторонний POST нельзя разделить;
+  - неподдерживаемые изменения формата (`xPaddingObfsMode`, размещение
+    session/seq/данных вне path/body) дают ошибку, а не молчаливую поломку.
 - **QUIC** (`quic.rs`, quinn):
   - нужен для xhttp через HTTP/3 и DoQ;
   - сокет — настоящий UDP (с `net_protect`) или UDP-сессия выхода, то

@@ -947,8 +947,13 @@ only, for Trojan). The transport is picked by the link's `type=`:
       default);
     - `Content-Type: application/grpc` on streaming POSTs;
   - parameters come from `extra=` (JSON, as in Xray links);
-  - settings that change the request format (`xPaddingObfsMode`,
-    `downloadSettings`, etc.) are an error, not a silent breakage.
+  - `downloadSettings` opens an independent HTTP session with its own
+    address, security and HTTP version; the session ID and path are shared
+    with the upload channel. h2/h3 pools are keyed separately per endpoint.
+    `stream-one` is rejected because its single bidirectional POST cannot be
+    split;
+  - unsupported request-format changes (`xPaddingObfsMode`, session/seq/data
+    outside path/body) return an error instead of silently breaking.
 - **QUIC** (`quic.rs`, quinn):
   - used for xhttp over HTTP/3 and for DoQ;
   - the socket is a real UDP socket (with `net_protect`) or an outbound's

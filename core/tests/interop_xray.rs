@@ -22,6 +22,7 @@
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -389,8 +390,18 @@ fn vless_inbound(
     flow: &str,
     stream: serde_json_lite::Value,
 ) -> serde_json_lite::Value {
+    vless_inbound_on("127.0.0.1", port, uuid, flow, stream)
+}
+
+fn vless_inbound_on(
+    listen: &str,
+    port: u16,
+    uuid: &uuid::Uuid,
+    flow: &str,
+    stream: serde_json_lite::Value,
+) -> serde_json_lite::Value {
     obj(vec![
-        ("listen", s("127.0.0.1")),
+        ("listen", s(listen)),
         ("port", n(port as i64)),
         ("protocol", s("vless")),
         (
@@ -408,6 +419,68 @@ fn vless_inbound(
         ),
         ("streamSettings", stream),
     ])
+}
+
+/// Прозрачный TCP-переход на Xray. Помогает проверить, что XHTTP GET
+/// действительно использует независимые address/port настройки, сохраняя
+/// ту же серверную сессию и TLS поток.
+async fn start_tcp_forwarder(target: SocketAddr) -> (u16, Arc<AtomicUsize>) {
+    let listener = TcpListener::bind("127.0.0.2:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let accepted = Arc::new(AtomicUsize::new(0));
+    let accepted_task = accepted.clone();
+    tokio::spawn(async move {
+        loop {
+            let Ok((mut incoming, _)) = listener.accept().await else {
+                return;
+            };
+            accepted_task.fetch_add(1, Ordering::Relaxed);
+            tokio::spawn(async move {
+                if let Ok(mut upstream) = TcpStream::connect(target).await {
+                    let _ = tokio::io::copy_bidirectional(&mut incoming, &mut upstream).await;
+                }
+            });
+        }
+    });
+    (port, accepted)
+}
+
+/// Прозрачный UDP-переход для HTTP/3. Порт со стороны клиента отличается,
+/// но Xray видит обе стороны как одну XHTTP listener/session map.
+async fn start_udp_forwarder(target: SocketAddr) -> (u16, Arc<AtomicUsize>) {
+    let incoming = Arc::new(UdpSocket::bind("127.0.0.2:0").await.unwrap());
+    let port = incoming.local_addr().unwrap().port();
+    let upstream = Arc::new(UdpSocket::bind("127.0.0.1:0").await.unwrap());
+    let accepted = Arc::new(AtomicUsize::new(0));
+    let incoming_task = incoming.clone();
+    let upstream_task = upstream.clone();
+    let accepted_task = accepted.clone();
+    tokio::spawn(async move {
+        let mut client = None;
+        let mut client_buf = vec![0u8; 65536];
+        let mut upstream_buf = vec![0u8; 65536];
+        loop {
+            tokio::select! {
+                r = incoming_task.recv_from(&mut client_buf) => {
+                    let Ok((n, peer)) = r else { return };
+                    client = Some(peer);
+                    accepted_task.fetch_add(1, Ordering::Relaxed);
+                    if upstream_task.send_to(&client_buf[..n], target).await.is_err() {
+                        return;
+                    }
+                }
+                r = upstream_task.recv_from(&mut upstream_buf) => {
+                    let Ok((n, _)) = r else { return };
+                    if let Some(peer) = client {
+                        if incoming_task.send_to(&upstream_buf[..n], peer).await.is_err() {
+                            return;
+                        }
+                    }
+                }
+            }
+        }
+    });
+    (port, accepted)
 }
 
 fn reality_stream(
@@ -1140,6 +1213,102 @@ async fn xhttp_plain_and_tls_against_xray() {
     }
 }
 
+/// `downloadSettings` uses a second connection, address and pool while the
+/// upload keeps the original endpoint. Both packet-up and stream-up must
+/// carry data successfully against one real Xray XHTTP session.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "нужен Xray-core: scripts/interop_xray.sh"]
+async fn xhttp_download_settings_against_xray() {
+    ensure_crypto_provider();
+    init_log();
+    let echo = start_echo().await;
+    let uuid = uuid::Uuid::new_v4();
+    let dir = tempdir::Dir::new();
+    let (_, _, cert_pem, key_pem) = self_signed("xh.test");
+    let cert_path = dir.0.join("cert.pem");
+    let key_path = dir.0.join("key.pem");
+    std::fs::write(&cert_path, &cert_pem).unwrap();
+    std::fs::write(&key_path, &key_pem).unwrap();
+    let port = free_port();
+    let _x = Xray::start(
+        vec![vless_inbound_on(
+            "0.0.0.0",
+            port,
+            &uuid,
+            "",
+            obj(vec![
+                ("network", s("xhttp")),
+                ("security", s("tls")),
+                (
+                    "tlsSettings",
+                    obj(vec![(
+                        "certificates",
+                        arr(vec![obj(vec![
+                            ("certificateFile", s(cert_path.to_string_lossy())),
+                            ("keyFile", s(key_path.to_string_lossy())),
+                        ])]),
+                    )]),
+                ),
+                ("xhttpSettings", obj(vec![("path", s("/xht"))])),
+            ]),
+        )],
+        &[port],
+        dir,
+    )
+    .await;
+    let (download_port, accepted) =
+        start_tcp_forwarder(format!("127.0.0.1:{port}").parse().unwrap()).await;
+    let (target_addr, target_port) = target(echo);
+    for alpn in ["h2", "http/1.1"] {
+        let extra = obj(vec![(
+            "downloadSettings",
+            obj(vec![
+                ("address", s("127.0.0.2")),
+                ("port", n(download_port as i64)),
+                ("network", s("xhttp")),
+                ("security", s("tls")),
+                (
+                    "tlsSettings",
+                    obj(vec![
+                        ("serverName", s("xh.test")),
+                        ("alpn", arr(vec![s(alpn)])),
+                    ]),
+                ),
+                (
+                    "xhttpSettings",
+                    obj(vec![("host", s("xh.test")), ("path", s("/xht"))]),
+                ),
+            ]),
+        )]);
+        let extra: String =
+            url::form_urlencoded::byte_serialize(extra.to_string().as_bytes()).collect();
+
+        for mode in ["packet-up", "stream-up"] {
+            let cfg = tls_link(
+                port,
+                &uuid,
+                "xh.test",
+                &format!("&type=xhttp&path=%2Fxht&mode={mode}&extra={extra}"),
+                &cert_pem,
+            );
+            let mut stream = dial(
+                &cfg,
+                &cfg.id,
+                VlessCommand::Tcp,
+                target_addr.clone(),
+                target_port,
+            )
+            .await
+            .unwrap_or_else(|e| panic!("{mode} with downloadSettings ALPN {alpn}: {e}"));
+            echo_roundtrip(&mut stream, 256 * 1024).await;
+        }
+    }
+    assert!(
+        accepted.load(Ordering::Relaxed) >= 1,
+        "downloadSettings.address was not used for any GET connection"
+    );
+}
+
 /// xhttp поверх REALITY: по умолчанию stream-one (как у Xray), а также
 /// stream-up и packet-up на том же входе.
 #[tokio::test(flavor = "multi_thread")]
@@ -1181,6 +1350,72 @@ async fn xhttp_over_reality_against_xray() {
             .unwrap_or_else(|e| panic!("{rest}: {e}"));
         echo_roundtrip(&mut st, 1024 * 1024).await;
     }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "нужен Xray-core: scripts/interop_xray.sh"]
+async fn xhttp_reality_download_settings_against_xray() {
+    ensure_crypto_provider();
+    init_log();
+    let decoy = start_decoy().await;
+    let echo = start_echo().await;
+    let keys = reality_keys();
+    let uuid = uuid::Uuid::new_v4();
+    let port = free_port();
+    let _x = Xray::start(
+        vec![vless_inbound(
+            port,
+            &uuid,
+            "",
+            reality_stream(
+                "xhttp",
+                decoy,
+                &keys,
+                vec![("xhttpSettings", obj(vec![("path", s("/xr"))]))],
+                None,
+            ),
+        )],
+        &[port],
+        tempdir::Dir::new(),
+    )
+    .await;
+    let (download_port, accepted) =
+        start_tcp_forwarder(format!("127.0.0.1:{port}").parse().unwrap()).await;
+    let (target_addr, target_port) = target(echo);
+    let extra = obj(vec![(
+        "downloadSettings",
+        obj(vec![
+            ("address", s("127.0.0.2")),
+            ("port", n(download_port as i64)),
+            ("network", s("xhttp")),
+            ("security", s("reality")),
+            (
+                "realitySettings",
+                obj(vec![
+                    ("serverName", s("decoy.test")),
+                    ("publicKey", s(b64(&keys.public))),
+                    ("shortId", s(SHORT_ID)),
+                ]),
+            ),
+            ("xhttpSettings", obj(vec![("path", s("/xr"))])),
+        ]),
+    )]);
+    let extra: String =
+        url::form_urlencoded::byte_serialize(extra.to_string().as_bytes()).collect();
+    let cfg = reality_link(
+        port,
+        &uuid,
+        &keys,
+        &format!("&type=xhttp&path=%2Fxr&extra={extra}"),
+    );
+    let mut stream = dial(&cfg, &cfg.id, VlessCommand::Tcp, target_addr, target_port)
+        .await
+        .unwrap_or_else(|e| panic!("REALITY auto mode with split download: {e}"));
+    echo_roundtrip(&mut stream, 128 * 1024).await;
+    assert!(
+        accepted.load(Ordering::Relaxed) >= 1,
+        "REALITY downloadSettings.address was not used"
+    );
 }
 
 /// UDP-«отражатель»: отвечает портом, с которого пришёл пакет (2 байта),
@@ -1918,6 +2153,117 @@ async fn xhttp_h3_against_xray() {
     );
     cfg.ca_roots = None;
     expect_xhttp_error(&cfg, a.clone(), p, "QUIC").await;
+}
+
+/// The upload uses the Xray HTTP/3 endpoint directly while GET uses a second
+/// local address/port. A UDP relay keeps both paths on the same real Xray
+/// listener and verifies that split download works in h3 as well.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "нужен Xray-core: scripts/interop_xray.sh"]
+async fn xhttp_h3_download_settings_against_xray() {
+    ensure_crypto_provider();
+    init_log();
+    let echo = start_echo().await;
+    let uuid = uuid::Uuid::new_v4();
+    let dir = tempdir::Dir::new();
+    let (_, _, cert_pem, key_pem) = self_signed("h3.test");
+    let cert_path = dir.0.join("cert.pem");
+    let key_path = dir.0.join("key.pem");
+    std::fs::write(&cert_path, &cert_pem).unwrap();
+    std::fs::write(&key_path, &key_pem).unwrap();
+    let (p_h3, p_ready) = (free_port(), free_port());
+    let tls = |alpn: Vec<&str>| {
+        obj(vec![
+            (
+                "certificates",
+                arr(vec![obj(vec![
+                    ("certificateFile", s(cert_path.to_string_lossy())),
+                    ("keyFile", s(key_path.to_string_lossy())),
+                ])]),
+            ),
+            ("alpn", arr(alpn.into_iter().map(s).collect())),
+        ])
+    };
+    let _x = Xray::start(
+        vec![
+            vless_inbound_on(
+                "0.0.0.0",
+                p_h3,
+                &uuid,
+                "",
+                obj(vec![
+                    ("network", s("xhttp")),
+                    ("security", s("tls")),
+                    ("tlsSettings", tls(vec!["h3"])),
+                    ("xhttpSettings", obj(vec![("path", s("/h3"))])),
+                ]),
+            ),
+            vless_inbound(
+                p_ready,
+                &uuid,
+                "",
+                obj(vec![
+                    ("network", s("xhttp")),
+                    ("security", s("tls")),
+                    ("tlsSettings", tls(vec!["h2"])),
+                    ("xhttpSettings", obj(vec![("path", s("/ready"))])),
+                ]),
+            ),
+        ],
+        &[p_ready],
+        dir,
+    )
+    .await;
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    let (download_port, accepted) =
+        start_udp_forwarder(format!("127.0.0.1:{p_h3}").parse().unwrap()).await;
+    let (target_addr, target_port) = target(echo);
+    let extra = obj(vec![(
+        "downloadSettings",
+        obj(vec![
+            ("address", s("127.0.0.2")),
+            ("port", n(download_port as i64)),
+            ("network", s("xhttp")),
+            ("security", s("tls")),
+            (
+                "tlsSettings",
+                obj(vec![
+                    ("serverName", s("h3.test")),
+                    ("alpn", arr(vec![s("h3")])),
+                ]),
+            ),
+            (
+                "xhttpSettings",
+                obj(vec![("host", s("h3.test")), ("path", s("/h3"))]),
+            ),
+        ]),
+    )]);
+    let extra: String =
+        url::form_urlencoded::byte_serialize(extra.to_string().as_bytes()).collect();
+
+    for mode in ["packet-up", "stream-up"] {
+        let cfg = tls_link(
+            p_h3,
+            &uuid,
+            "h3.test",
+            &format!("&type=xhttp&path=%2Fh3&alpn=h3&mode={mode}&extra={extra}"),
+            &cert_pem,
+        );
+        let mut stream = dial(
+            &cfg,
+            &cfg.id,
+            VlessCommand::Tcp,
+            target_addr.clone(),
+            target_port,
+        )
+        .await
+        .unwrap_or_else(|e| panic!("h3 {mode} with downloadSettings: {e}"));
+        echo_roundtrip(&mut stream, 128 * 1024).await;
+    }
+    assert!(
+        accepted.load(Ordering::Relaxed) >= 1,
+        "downloadSettings.address was not used for any HTTP/3 GET"
+    );
 }
 
 /// DNS over QUIC через VLESS (REALITY + Vision → XUDP к Xray): сервер DoQ

@@ -21,6 +21,10 @@
 - `dns.rules[].strategy`: фильтрация A/AAAA и порядок адресов для конкретного
   правила, включая fake-IP; прежняя общая стратегия остаётся по умолчанию.
 
+### Транспорты
+- XHTTP: `downloadSettings` открывает отдельный канал скачивания с независимым
+  адресом, портом и настройками HTTP/защиты; неподдерживаемые поля отклоняются.
+
 ### Исправления
 - Патченный `rustls` обновлён до 0.23.46 (RUSTSEC-2026-0348, RUSTSEC-2026-0349
   и ещё две); патч REALITY перенесён без изменения объёма — 13 файлов,
@@ -205,6 +209,10 @@ stage-by-stage decision history is in [PLAN.md](PLAN.md) (in Russian).
   direct IP-literal UDP server, no implicit fallback).
 - `dns.rules[].strategy`: per-rule A/AAAA filtering and address ordering,
   including fake-IP; the existing global strategy remains the default.
+
+### Transports
+- XHTTP: `downloadSettings` opens a separate download channel with its own
+  address, port, HTTP version and transport security; unsupported fields fail.
 
 No stable release has been made yet (`git tag v0.1.0 && git push origin v0.1.0`).
 It will include:

@@ -13,8 +13,26 @@ Which parameters of a `vless://…` link the client understands. The link is usu
 | `pqv` | the REALITY server's ML-DSA-65 key (optional) |
 | `flow` | empty or `xtls-rprx-vision` (`-udp443` too); anything else is an error |
 | `path`, `host` | path and Host header for ws, httpupgrade, xhttp (`?ed=` in the path is dropped) |
-| `mode` | for xhttp: `auto` (default: REALITY — `stream-one`, otherwise `packet-up`), `packet-up`, `stream-up`, `stream-one` |
-| `extra` | for xhttp: JSON as in Xray — `headers`, `xPaddingBytes`, `noGRPCHeader`, `scMaxEachPostBytes`, `scMinPostsIntervalMs`, `uplinkHTTPMethod`; settings that change the request format (`xPaddingObfsMode`, session/seq/data placed outside the path, `downloadSettings`) are an error |
+| `mode` | for xhttp: `auto` (default: REALITY — `stream-one`, otherwise `packet-up`; with `downloadSettings` and REALITY — `stream-up`), `packet-up`, `stream-up`, `stream-one` (`stream-one` cannot split directions) |
+| `extra` | for xhttp: JSON as in Xray — `headers`, `xPaddingBytes`, `noGRPCHeader`, `scMaxEachPostBytes`, `scMinPostsIntervalMs`, `uplinkHTTPMethod`; `downloadSettings` supports a separate address/port and XHTTP connection; see the [feature matrix](FEATURES.en.md). Unsupported fields are rejected |
+
+Minimal split-download example (the full JSON is the value of `extra=`):
+
+```json
+{
+  "downloadSettings": {
+    "address": "download.example.com",
+    "port": 443,
+    "network": "xhttp",
+    "security": "tls",
+    "tlsSettings": { "serverName": "download.example.com", "alpn": ["h2"] },
+    "xhttpSettings": { "host": "download.example.com", "path": "/xhttp" }
+  }
+}
+```
+
+The path must match `path=` on the main channel. Only the documented nested
+fields are supported; `stream-one` and unknown fields are rejected.
 | `serviceName` | gRPC service name |
 | `alpn` | comma-separated ALPN list; default `h2,http/1.1` (like Chrome), `http/1.1` for ws and httpupgrade, always `h2` for gRPC; for xhttp `alpn=http/1.1` turns on HTTP/1.1, `alpn=h3` — HTTP/3 over QUIC (`security=tls` only) |
 | `encryption` | `none` only |

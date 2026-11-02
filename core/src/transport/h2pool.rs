@@ -171,6 +171,12 @@ impl<S: Clone> Lease<S> {
         self.send.clone()
     }
 
+    /// Отправитель без учёта запроса. Нужен, когда первый HTTP-запрос
+    /// соединения будет открыт позже отдельной задачей.
+    pub fn sender(&self) -> S {
+        self.send.clone()
+    }
+
     /// Учесть ещё один запрос в этом соединении.
     pub fn note_request(&self) {
         dec_if_positive(&self.entry.left_requests);

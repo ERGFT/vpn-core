@@ -19,6 +19,7 @@ Statuses:
 | Transport `type=tcp` (a.k.a. `raw`) | ready | interop with Xray-core |
 | Transports `type=ws` (`path=`, `host=`), `type=grpc` (`serviceName=`, "gun" mode), `type=httpupgrade` | ready | tested against real Xray-core; request HTTP headers match Chrome (as Xray does) |
 | Transport `type=xhttp` (SplitHTTP): modes `packet-up`, `stream-up`, `stream-one`, HTTP/2, HTTP/1.1 and HTTP/3 (`alpn=h3`, QUIC), `extra=` | ready | all modes tested against Xray-core, including over REALITY (see below for what is not supported) |
+| XHTTP `downloadSettings`: separate download direction | ready | separate address/port and HTTP session are checked against Xray; HTTP/1.1, h2 and h3 are selected independently |
 | `flow=xtls-rprx-vision` (XTLS Vision) | ready | padding, inner TLS detection, direct copy in both directions; tested against Xray-core. As in Xray — only `type=tcp` with `tls`/`reality` |
 | REALITY: X25519MLKEM768 (with fallback to X25519 for sites without ML-KEM), ShortId, `minClientVer`/`maxClientVer`, HMAC certificate | ready | against Xray-core and the XTLS/REALITY Go library; no third-party crypto review |
 | REALITY: ML-DSA-65 (`pqv=`) | ready | against Xray-core, including rejection of a wrong key |
@@ -57,8 +58,14 @@ There has been no third-party crypto review of the REALITY implementation
   Xray). UDP goes over XUDP in a separate stream.
 - `kcp` (mKCP — a custom reliable protocol over UDP, ~2.5k lines in Xray) is
   not implemented: a rare transport that is easy for DPI to spot.
-- xhttp: no `downloadSettings`; over HTTP/1.1 connections are not reused
-  across sessions (h2 and h3 use `xmux`). The ClientHello inside QUIC
+- xhttp `downloadSettings`: a separate XHTTP download channel is supported.
+  Accepted fields are `address`, `port`, `network=xhttp`,
+  `security=none|tls|reality`, `tlsSettings.serverName`/`alpn`,
+  `realitySettings.serverName`/`publicKey`/`shortId`, and
+  `xhttpSettings.host`/`path`. The path must match the upload channel;
+  `stream-one` is rejected when directions are split. Other nested settings
+  currently return an error. HTTP/1.1 connections are not reused across
+  sessions (h2 and h3 use `xmux`). The ClientHello inside QUIC
   (HTTP/3, DoQ) is rustls's, not Chrome's (Xray uses quic-go, also not
   Chrome); `fp=` has no effect on QUIC.
 - Plain TLS (`security=tls`) differs from Chrome in two ways, deliberately:

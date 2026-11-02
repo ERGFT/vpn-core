@@ -30,9 +30,10 @@
 //! (как в ссылках Xray): `headers`, `xPaddingBytes`, `noGRPCHeader`,
 //! `scMaxEachPostBytes`, `scMinPostsIntervalMs`, `uplinkHTTPMethod`.
 //! Настройки, меняющие формат запросов (`xPaddingObfsMode`, размещение
-//! session/seq/данных не в пути/теле, `downloadSettings`), не
-//! поддерживаются — ссылка с ними отвергается с понятной ошибкой, а не
-//! ломается молча.
+//! session/seq/данных не в пути/теле) не поддерживаются — ссылка с ними
+//! отвергается с понятной ошибкой. `downloadSettings` поддерживает
+//! отдельный XHTTP-канал с собственной сетью, адресом, портом и TLS либо
+//! REALITY; ограничения описаны в `docs/FEATURES.md`.
 //!
 //! HTTP/2-соединения переиспользуются по правилам `xmux` из `extra=`
 //! (`maxConcurrency`, `maxConnections`, `cMaxReuseTimes`,
@@ -167,6 +168,328 @@ pub struct XhttpSettings {
     pub method: String,
     /// Переиспользование HTTP/2-соединений (`xmux`).
     pub xmux: h2pool::Limits,
+    /// Отдельная конфигурация потока скачивания (`downloadSettings`).
+    download: Option<Box<DownloadSettings>>,
+}
+
+#[derive(Debug, Clone)]
+struct DownloadSettings {
+    cfg: VlessConfig,
+    http: XhttpSettings,
+}
+
+impl DownloadSettings {
+    fn parse(cfg: &VlessConfig, upload: &XhttpSettings, value: &serde_json::Value) -> Result<Self> {
+        let invalid =
+            |message: String| Error::InvalidUri(format!("xhttp: downloadSettings: {message}"));
+        let fields = value
+            .as_object()
+            .ok_or_else(|| invalid("ожидался JSON-объект".into()))?;
+        for key in fields.keys() {
+            if !matches!(
+                key.as_str(),
+                "address"
+                    | "port"
+                    | "network"
+                    | "security"
+                    | "tlsSettings"
+                    | "realitySettings"
+                    | "xhttpSettings"
+                    | "sockopt"
+            ) {
+                return Err(invalid(format!("поле {key} пока не поддерживается")));
+            }
+        }
+        if fields.get("sockopt").is_some_and(|v| !v.is_null()) {
+            let empty = fields
+                .get("sockopt")
+                .and_then(serde_json::Value::as_object)
+                .is_some_and(serde_json::Map::is_empty);
+            if !empty {
+                return Err(invalid(
+                    "sockopt пока не поддерживается; уберите его или оставьте пустым".into(),
+                ));
+            }
+        }
+
+        let network = fields
+            .get("network")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| invalid("network должен быть равен \"xhttp\"".into()))?;
+        if network != "xhttp" {
+            return Err(invalid(format!(
+                "network={network} не поддерживается (пока только xhttp)"
+            )));
+        }
+        let address = fields
+            .get("address")
+            .and_then(serde_json::Value::as_str)
+            .filter(|s| !s.is_empty())
+            .unwrap_or(&cfg.host)
+            .to_string();
+        if !crate::http1::request_part_ok(&address) {
+            return Err(invalid(
+                "address содержит управляющие символы или пробелы".into(),
+            ));
+        }
+        let port = match fields.get("port") {
+            None | Some(serde_json::Value::Null) => cfg.port,
+            Some(v) => v
+                .as_u64()
+                .filter(|n| (1..=u16::MAX as u64).contains(n))
+                .map(|n| n as u16)
+                .ok_or_else(|| invalid("port должен быть числом от 1 до 65535".into()))?,
+        };
+        let security = match fields.get("security").and_then(serde_json::Value::as_str) {
+            Some("none") => Security::None,
+            Some("tls") => Security::Tls,
+            Some("reality") => Security::Reality,
+            Some(other) => {
+                return Err(invalid(format!(
+                    "security={other} не поддерживается (none, tls или reality)"
+                )))
+            }
+            None => return Err(invalid("укажите security: none, tls или reality".into())),
+        };
+
+        let mut download_cfg = cfg.clone();
+        download_cfg.host = address;
+        download_cfg.port = port;
+        download_cfg.security = security;
+        download_cfg.network = crate::vless::NetworkType::Xhttp;
+        download_cfg
+            .raw_params
+            .insert("type".into(), "xhttp".into());
+        download_cfg.raw_params.insert(
+            "security".into(),
+            match security {
+                Security::None => "none",
+                Security::Tls => "tls",
+                Security::Reality => "reality",
+            }
+            .into(),
+        );
+
+        let tls_settings = fields.get("tlsSettings");
+        let reality_settings = fields.get("realitySettings");
+        match security {
+            Security::None => {
+                if tls_settings.is_some_and(|v| !v.is_null())
+                    || reality_settings.is_some_and(|v| !v.is_null())
+                {
+                    return Err(invalid(
+                        "tlsSettings/realitySettings нельзя задавать с security=none".into(),
+                    ));
+                }
+                download_cfg.sni = None;
+                download_cfg.raw_params.remove("sni");
+                download_cfg.raw_params.remove("alpn");
+            }
+            Security::Tls => {
+                if reality_settings.is_some_and(|v| !v.is_null()) {
+                    return Err(invalid(
+                        "realitySettings нельзя задавать с security=tls".into(),
+                    ));
+                }
+                let mut alpn = None;
+                if let Some(v) = tls_settings.filter(|v| !v.is_null()) {
+                    let m = v
+                        .as_object()
+                        .ok_or_else(|| invalid("tlsSettings должен быть объектом".into()))?;
+                    for key in m.keys() {
+                        if !matches!(key.as_str(), "serverName" | "alpn") {
+                            return Err(invalid(format!(
+                                "tlsSettings.{key} пока не поддерживается"
+                            )));
+                        }
+                    }
+                    if let Some(v) = m.get("serverName") {
+                        let name = v.as_str().filter(|s| !s.is_empty()).ok_or_else(|| {
+                            invalid("tlsSettings.serverName должен быть непустой строкой".into())
+                        })?;
+                        download_cfg.sni = Some(name.to_string());
+                        download_cfg
+                            .raw_params
+                            .insert("sni".into(), name.to_string());
+                    } else {
+                        download_cfg.sni = None;
+                        download_cfg.raw_params.remove("sni");
+                    }
+                    if let Some(v) = m.get("alpn") {
+                        let values = v.as_array().ok_or_else(|| {
+                            invalid("tlsSettings.alpn должен быть массивом строк".into())
+                        })?;
+                        let values: Vec<String> = values
+                            .iter()
+                            .map(|x| {
+                                x.as_str()
+                                    .filter(|s| !s.is_empty())
+                                    .map(str::to_string)
+                                    .ok_or_else(|| {
+                                        invalid(
+                                            "tlsSettings.alpn должен быть массивом непустых строк"
+                                                .into(),
+                                        )
+                                    })
+                            })
+                            .collect::<Result<_>>()?;
+                        if values.is_empty()
+                            || values
+                                .iter()
+                                .any(|x| !matches!(x.as_str(), "h2" | "http/1.1" | "h3"))
+                        {
+                            return Err(invalid(
+                                "tlsSettings.alpn поддерживает только h2, http/1.1 и h3".into(),
+                            ));
+                        }
+                        if values.iter().any(|x| x == "h3") && values.len() != 1 {
+                            return Err(invalid(
+                                "tlsSettings.alpn=h3 должен быть единственным значением".into(),
+                            ));
+                        }
+                        alpn = Some(values);
+                    }
+                } else {
+                    download_cfg.sni = None;
+                    download_cfg.raw_params.remove("sni");
+                }
+                if let Some(values) = alpn {
+                    download_cfg
+                        .raw_params
+                        .insert("alpn".into(), values.join(","));
+                } else {
+                    download_cfg.raw_params.remove("alpn");
+                }
+            }
+            Security::Reality => {
+                if tls_settings.is_some_and(|v| !v.is_null()) {
+                    return Err(invalid(
+                        "tlsSettings нельзя задавать с security=reality".into(),
+                    ));
+                }
+                let m = reality_settings
+                    .and_then(serde_json::Value::as_object)
+                    .ok_or_else(|| invalid("realitySettings должен быть объектом".into()))?;
+                for key in m.keys() {
+                    if !matches!(key.as_str(), "serverName" | "publicKey" | "shortId") {
+                        return Err(invalid(format!(
+                            "realitySettings.{key} пока не поддерживается"
+                        )));
+                    }
+                }
+                let name = m
+                    .get("serverName")
+                    .and_then(serde_json::Value::as_str)
+                    .filter(|s| !s.is_empty())
+                    .ok_or_else(|| invalid("realitySettings.serverName обязателен".into()))?;
+                let public_key = m
+                    .get("publicKey")
+                    .and_then(serde_json::Value::as_str)
+                    .filter(|s| !s.is_empty())
+                    .ok_or_else(|| invalid("realitySettings.publicKey обязателен".into()))?;
+                let short_id = m
+                    .get("shortId")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("");
+                if short_id.len() > 16
+                    || short_id.len() % 2 != 0
+                    || !short_id.bytes().all(|b| b.is_ascii_hexdigit())
+                {
+                    return Err(invalid(
+                        "realitySettings.shortId должен быть hex-строкой до 16 символов".into(),
+                    ));
+                }
+                download_cfg.sni = Some(name.to_string());
+                download_cfg
+                    .raw_params
+                    .insert("sni".into(), name.to_string());
+                download_cfg
+                    .raw_params
+                    .insert("pbk".into(), public_key.to_string());
+                download_cfg
+                    .raw_params
+                    .insert("sid".into(), short_id.to_string());
+                download_cfg.reality_params()?;
+                download_cfg.raw_params.remove("alpn");
+            }
+        }
+
+        let xhttp = fields
+            .get("xhttpSettings")
+            .and_then(serde_json::Value::as_object)
+            .ok_or_else(|| invalid("xhttpSettings должен быть объектом".into()))?;
+        for key in xhttp.keys() {
+            if !matches!(key.as_str(), "host" | "path") {
+                return Err(invalid(format!(
+                    "xhttpSettings.{key} пока не поддерживается"
+                )));
+            }
+        }
+        let path = xhttp
+            .get("path")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or(cfg.path());
+        let normalize_path = |v: &str| {
+            let (p, q) = v.split_once('?').unwrap_or((v, ""));
+            let mut p = if p.starts_with('/') {
+                p.to_string()
+            } else {
+                format!("/{p}")
+            };
+            if !p.ends_with('/') {
+                p.push('/');
+            }
+            (p, q.to_string())
+        };
+        let (path, query) = normalize_path(path);
+        let (upload_path, upload_query) = normalize_path(cfg.path());
+        if path != upload_path || query != upload_query {
+            return Err(invalid(
+                "xhttpSettings.path должен совпадать с path основного канала".into(),
+            ));
+        }
+        let host = xhttp
+            .get("host")
+            .and_then(serde_json::Value::as_str)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+            .unwrap_or_else(|| {
+                if security == Security::None {
+                    download_cfg.host.clone()
+                } else {
+                    download_cfg.effective_sni().to_string()
+                }
+            });
+        if !crate::http1::request_part_ok(&host) {
+            return Err(invalid(
+                "xhttpSettings.host содержит управляющие символы или пробелы".into(),
+            ));
+        }
+        let alpn = download_cfg.alpn();
+        let http11 = match security {
+            Security::None => true,
+            Security::Reality => false,
+            Security::Tls => {
+                matches!(alpn.as_deref(), Some([one]) if one.as_slice() == b"http/1.1")
+            }
+        };
+        let h3 = matches!(alpn.as_deref(), Some([one]) if one.as_slice() == b"h3");
+        if h3 && security != Security::Tls {
+            return Err(invalid("HTTP/3 требует security=tls".into()));
+        }
+        let mut http = upload.clone();
+        http.host = host;
+        http.path = path;
+        http.query = query;
+        http.https = security != Security::None;
+        http.http11 = http11;
+        http.h3 = h3;
+        http.download = None;
+        Ok(Self {
+            cfg: download_cfg,
+            http,
+        })
+    }
 }
 
 /// `xmux` по умолчанию — как у Xray, когда в настройках его нет.
@@ -375,12 +698,6 @@ impl XhttpSettings {
                 }
             }
         }
-        if has_download_settings {
-            return Err(Error::InvalidUri(
-                "xhttp: downloadSettings (скачивание через другой сервер) не поддерживается".into(),
-            ));
-        }
-
         let https = cfg.security != Security::None;
         let alpn = cfg.alpn();
         let wants_h3 = alpn
@@ -403,8 +720,10 @@ impl XhttpSettings {
 
         let mode = match cfg.raw_params.get("mode").map(|s| s.as_str()).unwrap_or("") {
             "" | "auto" => {
-                if cfg.security == Security::Reality {
+                if cfg.security == Security::Reality && !has_download_settings {
                     Mode::StreamOne
+                } else if cfg.security == Security::Reality {
+                    Mode::StreamUp
                 } else {
                     Mode::PacketUp
                 }
@@ -423,6 +742,11 @@ impl XhttpSettings {
                 "xhttp: режим {mode:?} через HTTP/1.1 не поддерживается — используйте \
                  mode=packet-up или h2 (security=tls без alpn=http/1.1, либо reality)"
             )));
+        }
+        if has_download_settings && mode == Mode::StreamOne {
+            return Err(Error::InvalidUri(
+                "xhttp: mode=stream-one не совместим с downloadSettings; используйте stream-up или packet-up".into(),
+            ));
         }
 
         // Host: host= > SNI (для tls/reality) > адрес сервера.
@@ -490,7 +814,7 @@ impl XhttpSettings {
             }
         }
 
-        Ok(XhttpSettings {
+        let mut settings = XhttpSettings {
             mode,
             http11,
             h3,
@@ -505,7 +829,12 @@ impl XhttpSettings {
             min_interval_ms,
             method,
             xmux,
-        })
+            download: None,
+        };
+        if let Some(download) = extra.get("downloadSettings").filter(|v| !v.is_null()) {
+            settings.download = Some(Box::new(DownloadSettings::parse(cfg, &settings, download)?));
+        }
+        Ok(settings)
     }
 
     /// Путь запроса: базовый путь, затем session и seq (если есть), затем
@@ -584,6 +913,10 @@ struct Shared {
     lease: std::sync::OnceLock<h2pool::Lease>,
     /// То же для HTTP/3.
     lease3: std::sync::OnceLock<h2pool::Lease<h3c::Send3>>,
+    /// Дополнительное соединение для XHTTP-канала скачивания.
+    download_lease: std::sync::OnceLock<h2pool::Lease>,
+    /// То же для HTTP/3.
+    download_lease3: std::sync::OnceLock<h2pool::Lease<h3c::Send3>>,
 }
 
 impl Shared {
@@ -702,6 +1035,21 @@ pub async fn connect_xhttp(cfg: &VlessConfig) -> Result<XhttpStream> {
     })
 }
 
+async fn start_download(
+    settings: &DownloadSettings,
+    session: &str,
+    down: DuplexStream,
+    shared: Arc<Shared>,
+) -> Result<()> {
+    if settings.http.http11 {
+        h1::start_download(&settings.cfg, &settings.http, session, down, shared).await
+    } else if settings.http.h3 {
+        h3c::start_download(&settings.cfg, &settings.http, session, down, shared).await
+    } else {
+        h2c::start_download(&settings.cfg, &settings.http, session, down, shared).await
+    }
+}
+
 struct CancelOnDrop(Option<Arc<Shared>>);
 
 impl CancelOnDrop {
@@ -813,6 +1161,67 @@ mod h2c {
             .map_err(|e| Error::Protocol(format!("xhttp: не удалось собрать запрос: {e}")))
     }
 
+    fn connect(
+        c: VlessConfig,
+    ) -> futures_util::future::BoxFuture<'static, Result<h2pool::Connected>> {
+        Box::pin(async move {
+            let alpn = c
+                .alpn()
+                .unwrap_or_else(|| vec![b"h2".to_vec(), b"http/1.1".to_vec()]);
+            let tls = connect_tls_by_security(&c, alpn).await?;
+            if c.security == Security::Tls {
+                if let Some(p) = tls.alpn() {
+                    if p != b"h2" {
+                        return Err(Error::Protocol(format!(
+                            "xhttp: сервер выбрал ALPN {}, а не h2 — для HTTP/1.1 укажите alpn=http/1.1",
+                            String::from_utf8_lossy(&p)
+                        )));
+                    }
+                }
+            }
+            let (send, conn) = builder()
+                .handshake::<SecureStream, Bytes>(tls)
+                .await
+                .map_err(|e| Error::Protocol(format!("xhttp: h2 handshake не удался: {e}")))?;
+            let driver: futures_util::future::BoxFuture<'static, ()> = Box::pin(async move {
+                if let Err(e) = conn.await {
+                    tracing::debug!(error = %e, "xhttp: h2-соединение завершилось");
+                }
+            });
+            Ok((send, driver))
+        })
+    }
+
+    async fn acquire(cfg: &VlessConfig, st: &XhttpSettings) -> Result<h2pool::Lease> {
+        let c = cfg.clone();
+        h2pool::acquire(&format!("xhttp|{}", cfg.pool_key()), &st.xmux, move || {
+            connect(c.clone())
+        })
+        .await
+    }
+
+    pub(super) async fn start_download(
+        cfg: &VlessConfig,
+        st: &XhttpSettings,
+        session: &str,
+        down: DuplexStream,
+        shared: Arc<Shared>,
+    ) -> Result<()> {
+        let lease = acquire(cfg, st).await?;
+        let mut send = lease
+            .request()
+            .ready()
+            .await
+            .map_err(|e| Error::Protocol(format!("xhttp: h2 не готов: {e}")))?;
+        let req = request(st, "GET", &st.url_path(Some(session), None), false, None)?;
+        let (resp, _) = send
+            .send_request(req, true)
+            .map_err(|e| Error::Protocol(format!("xhttp: h2: {e}")))?;
+        let _ = shared.download_lease.set(lease);
+        tokio::spawn(download(resp, down, shared, "GET"));
+        Ok(())
+    }
+
     pub(super) async fn start(
         cfg: &VlessConfig,
         st: Arc<XhttpSettings>,
@@ -822,38 +1231,16 @@ mod h2c {
     ) -> Result<()> {
         // Сессии к одному серверу делят HTTP/2-соединения по правилам
         // xmux (как у Xray): меньше рукопожатий TLS/REALITY.
-        let c = cfg.clone();
-        let lease = h2pool::acquire(&format!("xhttp|{}", cfg.pool_key()), &st.xmux, move || {
-            let c = c.clone();
-            Box::pin(async move {
-                let alpn = c
-                    .alpn()
-                    .unwrap_or_else(|| vec![b"h2".to_vec(), b"http/1.1".to_vec()]);
-                let tls = connect_tls_by_security(&c, alpn).await?;
-                if c.security == Security::Tls {
-                    if let Some(p) = tls.alpn() {
-                        if p != b"h2" {
-                            return Err(Error::Protocol(format!(
-                                "xhttp: сервер выбрал ALPN {}, а не h2 — для HTTP/1.1 укажите alpn=http/1.1",
-                                String::from_utf8_lossy(&p)
-                            )));
-                        }
-                    }
-                }
-                let (send, conn) = builder()
-                    .handshake::<SecureStream, Bytes>(tls)
-                    .await
-                    .map_err(|e| Error::Protocol(format!("xhttp: h2 handshake не удался: {e}")))?;
-                let driver: futures_util::future::BoxFuture<'static, ()> = Box::pin(async move {
-                    if let Err(e) = conn.await {
-                        tracing::debug!(error = %e, "xhttp: h2-соединение завершилось");
-                    }
-                });
-                Ok((send, driver))
-            })
-        })
-        .await?;
-        let send = lease.request();
+        let lease = acquire(cfg, &st).await?;
+        let split_download = st
+            .download
+            .as_deref()
+            .is_some_and(|download| download.cfg.pool_key() != cfg.pool_key());
+        let send = if split_download {
+            lease.sender()
+        } else {
+            lease.request()
+        };
         let _ = shared.lease.set(lease);
         let mut send = send
             .ready()
@@ -870,9 +1257,24 @@ mod h2c {
             }
             Mode::StreamUp | Mode::PacketUp => {
                 let session = Uuid::new_v4().to_string();
-                let get = request(&st, "GET", &st.url_path(Some(&session), None), false, None)?;
-                let (resp, _) = send.send_request(get, true).map_err(h2err)?;
-                tokio::spawn(download(resp, down, shared.clone(), "GET"));
+                if let Some(download) = st
+                    .download
+                    .as_deref()
+                    .filter(|download| download.cfg.pool_key() != cfg.pool_key())
+                {
+                    super::start_download(download, &session, down, shared.clone()).await?;
+                } else {
+                    let get_settings = st.download.as_deref().map_or(st.as_ref(), |d| &d.http);
+                    let get = request(
+                        get_settings,
+                        "GET",
+                        &get_settings.url_path(Some(&session), None),
+                        false,
+                        None,
+                    )?;
+                    let (resp, _) = send.send_request(get, true).map_err(h2err)?;
+                    tokio::spawn(download(resp, down, shared.clone(), "GET"));
+                }
                 if st.mode == Mode::StreamUp {
                     let mut send = send
                         .ready()
@@ -1121,6 +1523,38 @@ mod h3c {
         Err(last.unwrap_or_else(|| Error::Protocol("xhttp: нет адресов сервера".into())))
     }
 
+    async fn acquire(cfg: &VlessConfig, st: &XhttpSettings) -> Result<h2pool::Lease<Send3>> {
+        let c = cfg.clone();
+        h2pool::acquire(&format!("xhttp3|{}", cfg.pool_key()), &st.xmux, move || {
+            Box::pin(connect(c.clone()))
+        })
+        .await
+    }
+
+    pub(super) async fn start_download(
+        cfg: &VlessConfig,
+        st: &XhttpSettings,
+        session: &str,
+        down: DuplexStream,
+        shared: Arc<Shared>,
+    ) -> Result<()> {
+        let lease = acquire(cfg, st).await?;
+        let mut send = lease.request();
+        let req = h2c::request(st, "GET", &st.url_path(Some(session), None), false, None)?;
+        let mut stream: Stream3 = send
+            .send_request(req)
+            .await
+            .map_err(|e| Error::Protocol(format!("xhttp: HTTP/3: {e}")))?;
+        stream
+            .finish()
+            .await
+            .map_err(|e| Error::Protocol(format!("xhttp: HTTP/3: {e}")))?;
+        let (_, rx) = stream.split();
+        let _ = shared.download_lease3.set(lease);
+        tokio::spawn(download(rx, down, shared, "GET"));
+        Ok(())
+    }
+
     pub(super) async fn start(
         cfg: &VlessConfig,
         st: Arc<XhttpSettings>,
@@ -1128,12 +1562,16 @@ mod h3c {
         up: DuplexStream,
         shared: Arc<Shared>,
     ) -> Result<()> {
-        let c = cfg.clone();
-        let lease = h2pool::acquire(&format!("xhttp3|{}", cfg.pool_key()), &st.xmux, move || {
-            Box::pin(connect(c.clone()))
-        })
-        .await?;
-        let mut send = lease.request();
+        let lease = acquire(cfg, &st).await?;
+        let split_download = st
+            .download
+            .as_deref()
+            .is_some_and(|download| download.cfg.pool_key() != cfg.pool_key());
+        let mut send = if split_download {
+            lease.sender()
+        } else {
+            lease.request()
+        };
         let _ = shared.lease3.set(lease);
         let h3err = |e: h3::error::StreamError| Error::Protocol(format!("xhttp: HTTP/3: {e}"));
 
@@ -1147,12 +1585,26 @@ mod h3c {
             }
             Mode::StreamUp | Mode::PacketUp => {
                 let session = Uuid::new_v4().to_string();
-                let get =
-                    h2c::request(&st, "GET", &st.url_path(Some(&session), None), false, None)?;
-                let mut stream: Stream3 = send.send_request(get).await.map_err(h3err)?;
-                stream.finish().await.map_err(h3err)?;
-                let (_, rx) = stream.split();
-                tokio::spawn(download(rx, down, shared.clone(), "GET"));
+                if let Some(download) = st
+                    .download
+                    .as_deref()
+                    .filter(|download| download.cfg.pool_key() != cfg.pool_key())
+                {
+                    super::start_download(download, &session, down, shared.clone()).await?;
+                } else {
+                    let get_settings = st.download.as_deref().map_or(st.as_ref(), |d| &d.http);
+                    let get = h2c::request(
+                        get_settings,
+                        "GET",
+                        &get_settings.url_path(Some(&session), None),
+                        false,
+                        None,
+                    )?;
+                    let mut stream: Stream3 = send.send_request(get).await.map_err(h3err)?;
+                    stream.finish().await.map_err(h3err)?;
+                    let (_, rx) = stream.split();
+                    tokio::spawn(download(rx, down, shared.clone(), "GET"));
+                }
                 if st.mode == Mode::StreamUp {
                     if let Some(l) = shared.lease3.get() {
                         l.note_request();
@@ -1349,6 +1801,21 @@ mod h1 {
         cfg.alpn().unwrap_or_else(|| vec![b"http/1.1".to_vec()])
     }
 
+    pub(super) async fn start_download(
+        cfg: &VlessConfig,
+        st: &XhttpSettings,
+        session: &str,
+        down: DuplexStream,
+        shared: Arc<Shared>,
+    ) -> Result<()> {
+        let mut dl = connect_tls_by_security(cfg, alpn(cfg)).await?;
+        let get = request(st, "GET", &st.url_path(Some(session), None), None, true);
+        dl.write_all(get.as_bytes()).await?;
+        dl.flush().await?;
+        tokio::spawn(download(dl, down, shared));
+        Ok(())
+    }
+
     pub(super) async fn start(
         cfg: &VlessConfig,
         st: Arc<XhttpSettings>,
@@ -1357,11 +1824,11 @@ mod h1 {
         shared: Arc<Shared>,
     ) -> Result<()> {
         let session = Uuid::new_v4().to_string();
-        let mut dl = connect_tls_by_security(cfg, alpn(cfg)).await?;
-        let get = request(&st, "GET", &st.url_path(Some(&session), None), None, true);
-        dl.write_all(get.as_bytes()).await?;
-        dl.flush().await?;
-        tokio::spawn(download(dl, down, shared.clone()));
+        if let Some(download) = st.download.as_deref() {
+            super::start_download(download, &session, down, shared.clone()).await?;
+        } else {
+            start_download(cfg, &st, &session, down, shared.clone()).await?;
+        }
         tokio::spawn(packet_uploader(cfg.clone(), st, session, up, shared));
         Ok(())
     }
@@ -1504,6 +1971,7 @@ mod h1 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use base64::Engine as _;
 
     fn cfg(tail: &str) -> VlessConfig {
         VlessConfig::parse(&format!(
@@ -1582,7 +2050,6 @@ mod tests {
             r#"{"xPaddingObfsMode":true}"#,
             r#"{"sessionIDPlacement":"header"}"#,
             r#"{"uplinkDataPlacement":"cookie"}"#,
-            r#"{"downloadSettings":{"address":"x"}}"#,
             r#"{"headers":{"Host":"x"}}"#,
             r#"{"uplinkHTTPMethod":"GET"}"#,
             r#"[1]"#,
@@ -1601,6 +2068,92 @@ mod tests {
             s.headers,
             vec![("User-Agent".to_string(), "my".to_string())]
         );
+    }
+
+    #[test]
+    fn download_settings_build_an_independent_endpoint() {
+        let encode = |v: serde_json::Value| {
+            url::form_urlencoded::byte_serialize(v.to_string().as_bytes()).collect::<String>()
+        };
+        let extra = encode(serde_json::json!({
+            "downloadSettings": {
+                "address": "download.test",
+                "port": 8443,
+                "network": "xhttp",
+                "security": "tls",
+                "tlsSettings": {"serverName": "tls.download.test", "alpn": ["h2"]},
+                "xhttpSettings": {"host": "cdn.download.test", "path": "/xh"}
+            }
+        }));
+        let s = XhttpSettings::from_config(&cfg(&format!("security=tls&path=%2Fxh&extra={extra}")))
+            .unwrap();
+        let d = s.download.as_deref().unwrap();
+        assert_eq!(
+            (s.mode, d.cfg.host.as_str(), d.cfg.port),
+            (Mode::PacketUp, "download.test", 8443)
+        );
+        assert_eq!(d.cfg.security, Security::Tls);
+        assert_eq!(d.cfg.effective_sni(), "tls.download.test");
+        assert_eq!(
+            (d.http.host.as_str(), d.http.path.as_str()),
+            ("cdn.download.test", "/xh/")
+        );
+        assert!(!d.http.http11 && !d.http.h3);
+    }
+
+    #[test]
+    fn download_settings_validate_transport_and_shared_path() {
+        let encode = |v: serde_json::Value| {
+            url::form_urlencoded::byte_serialize(v.to_string().as_bytes()).collect::<String>()
+        };
+        let make = |download: serde_json::Value, tail: &str| {
+            let extra = encode(serde_json::json!({"downloadSettings": download}));
+            XhttpSettings::from_config(&cfg(&format!("{tail}&extra={extra}")))
+        };
+        let valid = serde_json::json!({
+            "address":"download.test", "network":"xhttp", "security":"tls",
+            "xhttpSettings":{"path":"/xh"}
+        });
+        assert!(make(valid.clone(), "security=tls&path=%2Fxh&mode=stream-one").is_err());
+        assert!(make(valid.clone(), "security=tls&path=%2Fxh").is_ok());
+        let mut bad_path = valid.clone();
+        bad_path["xhttpSettings"]["path"] = serde_json::json!("/other");
+        assert!(make(bad_path, "security=tls&path=%2Fxh").is_err());
+        let mut bad_network = valid.clone();
+        bad_network["network"] = serde_json::json!("tcp");
+        assert!(make(bad_network, "security=tls&path=%2Fxh").is_err());
+        let mut bad_port = valid;
+        bad_port["port"] = serde_json::json!(70000);
+        assert!(make(bad_port, "security=tls&path=%2Fxh").is_err());
+    }
+
+    #[test]
+    fn download_settings_support_reality_and_http3() {
+        let encode = |v: serde_json::Value| {
+            url::form_urlencoded::byte_serialize(v.to_string().as_bytes()).collect::<String>()
+        };
+        let public_key = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode([7u8; 32]);
+        let reality = encode(serde_json::json!({"downloadSettings": {
+            "network":"xhttp", "security":"reality",
+            "realitySettings":{"serverName":"reality.test", "publicKey":public_key, "shortId":"0123abcd"},
+            "xhttpSettings":{"path":"/xh"}
+        }}));
+        let s =
+            XhttpSettings::from_config(&cfg(&format!("security=tls&path=%2Fxh&extra={reality}")))
+                .unwrap();
+        let d = s.download.as_deref().unwrap();
+        assert_eq!(d.cfg.security, Security::Reality);
+        assert_eq!(d.cfg.effective_sni(), "reality.test");
+
+        let h3 = encode(serde_json::json!({"downloadSettings": {
+            "network":"xhttp", "security":"tls", "tlsSettings":{"alpn":["h3"]},
+            "xhttpSettings":{"path":"/xh"}
+        }}));
+        let s = XhttpSettings::from_config(&cfg(&format!("security=none&path=%2Fxh&extra={h3}")))
+            .unwrap();
+        let d = s.download.as_deref().unwrap();
+        assert!(d.http.h3 && !d.http.http11);
+        assert_eq!(s.mode, Mode::PacketUp);
     }
 
     #[test]
