@@ -2,6 +2,14 @@
 
 # The core as a library
 
+Ready-to-link libraries, the C ABI header, and a sample for each supported
+platform are available as SDK archives on the
+[Releases](https://github.com/ERGFT/vpn-core/releases) page. Choose the
+archive for your target platform; binaries are not interchangeable across
+operating systems or architectures. Each archive contains
+`include/reality.h`, libraries in `lib/`, a C example, and local copies of
+this guide and the API documentation.
+
 Combined app/site rules use the added `rc_set_connection_owner` API:
 [contract, fail-closed behavior and Android integration](APPLICATION_ROUTING.en.md).
 
@@ -12,6 +20,7 @@ as a separate process. The interface is a C ABI: usable from Kotlin/Java
 else that can call C functions.
 
 - Header: [`ffi/include/reality.h`](../ffi/include/reality.h).
+- Minimal embedding example: [`ffi/examples/minimal.c`](../ffi/examples/minimal.c).
 - Code: [`ffi/src/lib.rs`](../ffi/src/lib.rs), a C example —
   [`ffi/examples/smoke.c`](../ffi/examples/smoke.c) (built and run by
   `scripts/ffi_smoke.sh`).

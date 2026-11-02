@@ -45,10 +45,11 @@ SHA-256 sums, `LICENSE`, `THIRD-PARTY-LICENSES.html` and an SBOM
 binaries' provenance is signed (GitHub attestation) — to check:
 `gh attestation verify reality-client-linux-x86_64 --repo ERGFT/vpn-core`.
 
-After CI succeeds for a push to `main`, `.github/workflows/dev-release.yml`
-publishes a separate `dev-<commit>` prerelease for developers. It includes
-Windows and Linux builds, SHA-256 checksums, an SBOM, licenses, and provenance
-attestation. Each build points to one exact commit and is not a stable release.
+Each versioned `v*` tag creates a regular published release. Alongside the CLI,
+it contains C ABI SDKs for Linux x86_64, Windows x86_64, macOS arm64, Android
+arm64-v8a, and iOS arm64. Each SDK includes a ready-built library, `reality.h`,
+a minimal C example, and the embedding/API guides. Publication waits for every
+SDK target and CLI artifact to build successfully.
 
 Xray-core for tests: `scripts/fetch_xray.sh` (download a release) or
 `scripts/build_xray_from_source.sh` (build from source via git — for

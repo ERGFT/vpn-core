@@ -46,11 +46,12 @@ CycloneDX) в черновик релиза; происхождение бина
 (GitHub attestation) — проверка:
 `gh attestation verify reality-client-linux-x86_64 --repo ERGFT/vpn-core`.
 
-После успешного CI для push в `main` workflow
-`.github/workflows/dev-release.yml` публикует отдельный prerelease `dev-<commit>`
-для разработчиков. В него входят сборки Windows и Linux, SHA-256, SBOM,
-лицензии и attestation. Такие сборки привязаны к конкретному коммиту и не
-считаются стабильными выпусками.
+Каждый versioned tag `v*` собирается в обычный опубликованный релиз. К CLI
+прикладываются SDK C ABI: Linux x86_64, Windows x86_64, macOS arm64,
+Android arm64-v8a и iOS arm64. В каждом SDK есть готовая библиотека,
+`reality.h`, минимальный пример на C и руководства по встраиванию/API.
+Публикация запускается только после успешной сборки всех SDK-целей и
+CLI-артефактов.
 
 Xray-core для тестов: `scripts/fetch_xray.sh` (скачать релиз) или
 `scripts/build_xray_from_source.sh` (собрать из исходников по git — для

@@ -329,9 +329,9 @@ It will include:
 
 ### Planned
 These are intentions, not promised dates.
-- The first release `v0.1.0` with prebuilt binaries for Linux and Windows in
-  [Releases](https://github.com/ERGFT/vpn-core/releases) — and installation,
-  update and removal instructions in the README.
+- Publish the first regular versioned release `v0.1.0` (not a prerelease),
+  with CLI binaries and C ABI SDK archives for Linux, Windows, macOS, Android,
+  and iOS on [Releases](https://github.com/ERGFT/vpn-core/releases).
 - Test on real Windows what has only been tested under Wine so far: the
   system proxy, autostart at logon, interop with Xray-core.
 - xhttp: `downloadSettings`.

@@ -2,6 +2,13 @@
 
 # Ядро как библиотека
 
+Готовые библиотеки, заголовок C ABI и пример для каждой поддерживаемой
+платформы находятся в SDK-архивах на странице
+[Releases](https://github.com/ERGFT/vpn-core/releases). Выберите архив по
+целевой платформе; не переносите бинарник между разными ОС или архитектурами.
+Внутри архива есть `include/reality.h`, библиотека в `lib/`, пример на C и
+локальные копии этого руководства и документации API.
+
 Для совместных правил приложений/сайтов добавлен `rc_set_connection_owner`:
 [контракт, fail-closed и интеграция Android](APPLICATION_ROUTING.md).
 
@@ -12,6 +19,7 @@ Kotlin/Java (JNI), Swift, C/C++, Go (cgo), C# (P/Invoke), Python (ctypes) и
 всего, что умеет вызывать функции C.
 
 - Заголовок: [`ffi/include/reality.h`](../ffi/include/reality.h).
+- Минимальный пример встраивания: [`ffi/examples/minimal.c`](../ffi/examples/minimal.c).
 - Код: [`ffi/src/lib.rs`](../ffi/src/lib.rs), пример на C —
   [`ffi/examples/smoke.c`](../ffi/examples/smoke.c) (его собирает и
   запускает `scripts/ffi_smoke.sh`).
