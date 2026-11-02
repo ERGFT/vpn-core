@@ -50,7 +50,7 @@ pub trait Outbound: Send + Sync {
     fn is_dns(&self) -> bool {
         false
     }
-    /// Адрес VLESS-сервера (у выхода `vless`).
+    /// Адрес сервера выхода (VLESS, Trojan или SOCKS5), чтобы разрешить его до включения TUN.
     fn server(&self) -> Option<(String, u16)> {
         None
     }

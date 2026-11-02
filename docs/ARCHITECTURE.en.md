@@ -91,13 +91,13 @@ Inside `core/src/`:
 
 | Module | What it does |
 |---|---|
-| `app/` | the application: inbounds → router → outbounds, config, DNS, TUN, groups, subscriptions, API |
+| `app/` | the application: inbounds → router → outbounds (including SOCKS5 TCP CONNECT), config, DNS, TUN, groups, subscriptions, API |
 | `vless/` | `vless://` links (`uri.rs`), VLESS headers (`protocol.rs`), Vision, UDP, XUDP, Mux.Cool |
 | `trojan.rs` | Trojan header and UDP packets |
 | `transport/` | TCP/TLS/REALITY (`tcp_tls.rs`, `raw.rs`), ws, grpc, httpupgrade, xhttp, shared HTTP/2 pool, QUIC, fragment, noises, browser headers |
 | `reality/` | REALITY: keys and SessionId (`auth.rs`), rustls hook (`hook.rs`), certificate verification (`verifier.rs`) |
 | `fingerprint/` | browser ClientHellos (Chrome 133, Firefox 148, Safari 26.3), ClientHello parsing, JA3/JA4 |
-| `socks5/` | SOCKS5: greeting, username/password, UDP headers |
+| `socks5/` | SOCKS5 inbound: greeting, username/password, UDP headers; `app/socks_out.rs` — outbound TCP CONNECT |
 | `relay.rs` | bidirectional copy with idle timeouts |
 | `net_protect.rs` | marking the client's own sockets (bypassing TUN) |
 | `http1.rs` | HTTP/1.1 response parsing (xhttp, group checks, subscriptions) |
@@ -125,6 +125,7 @@ flowchart LR
   T -- port 53 --> DNS
   R -- rules, fake-IP --> DNS
   R --> V[vless / trojan]
+  R --> S[SOCKS5 TCP CONNECT]
   R --> G[groups: selector, urltest, fallback]
   G --> V
   R --> DIR[direct]
@@ -332,7 +333,7 @@ Config
 │                                     max_conns, sniff, sniff_override_destination,
 │                                     tun: name, addresses, mtu, auto_route, route_exclude,
 │                                     strict_route, dns_hijack
-├── outbounds: Vec<OutboundConfig>    tag, kind (vless/trojan/direct/block/dns/selector/
+├── outbounds: Vec<OutboundConfig>    tag, kind (vless/trojan/socks/direct/block/dns/selector/
 │                                     urltest/fallback), link | link_file, ca_file, xudp,
 │                                     allow_insecure, mux, fragment, noises,
 │                                     groups: outbounds, subscriptions, url, interval,
@@ -356,6 +357,15 @@ link then goes through the same parser (`VlessConfig::parse`) as a
 command-line link or a subscription server. So there is one check for all
 three sources: an unsupported `security`/`type`/`flow` gives the same
 clear error everywhere.
+
+SOCKS5 uses a separate sing-box outbound with `type: "socks"` and requires
+`network: "tcp"` (without it, the config enables both TCP and UDP by default).
+This iteration supports TCP CONNECT only; UDP ASSOCIATE, TLS to the proxy and Xray config are
+not supported. The outbound returns an error on proxy failure and never falls
+back to `direct` by itself. The `password_file` vpn-core extension keeps the
+password out of the main config; credentials are redacted in `Debug` output.
+SOCKS5 and RFC 1929 do not encrypt the connection to the proxy; use it only on
+a trusted network or through a separate protected transport.
 
 ### 5.4. Format mappings
 
@@ -701,7 +711,7 @@ Conditions within one rule, as in sing-box:
 
 ## 10. Outbounds
 
-`app/outbound.rs`, `app/vless_out.rs`, `app/trojan_out.rs`, `app/group.rs`.
+`app/outbound.rs`, `app/vless_out.rs`, `app/trojan_out.rs`, `app/socks_out.rs`, `app/group.rs`.
 
 | Outbound | TCP | UDP |
 |---|---|---|
@@ -710,6 +720,7 @@ Conditions within one rule, as in sing-box:
 | `dns` | DNS over TCP → DNS module | datagrams → DNS module (up to 64 at once) |
 | `vless` | a VLESS stream over the transport; with `mux` — Mux.Cool | XUDP or one stream per destination |
 | `trojan` | a Trojan stream over the same transports | one stream with the UDP command |
+| `socks` | RFC 1928 CONNECT through the proxy (`network: "tcp"` required), up to 30 s for connect and handshake | error: UDP is not supported |
 | groups | a member by strategy; on error, the next one (up to three) | the same |
 
 - **`direct` and this computer's addresses.** A network client cannot

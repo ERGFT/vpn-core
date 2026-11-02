@@ -9,8 +9,8 @@
 //! Расширения этого ядра (в sing-box их нет): выход `fallback`,
 //! `subscriptions` (в корне и у групп), `link`/`link_file` у vless и
 //! trojan, `mux` (Mux.Cool), `fragment`/`noises`, `allow_insecure`,
-//! `allow_ip`/`max_conns` у входов, `route.presets`,
-//! `route.geosite_file`/`geoip_file`, `route.domain_strategy`.
+//! `password_file` у SOCKS5 outbound, `allow_ip`/`max_conns` у входов,
+//! `route.presets`, `route.geosite_file`/`geoip_file` и `route.domain_strategy`.
 
 use std::net::{IpAddr, SocketAddr};
 use std::path::PathBuf;
@@ -279,6 +279,7 @@ fn outbound(o: Obj<'_>) -> Result<OutboundConfig> {
     let kind = match ty.as_str() {
         "vless" => OutboundKind::Vless,
         "trojan" => OutboundKind::Trojan,
+        "socks" => OutboundKind::Socks5,
         "direct" => OutboundKind::Direct,
         "block" => OutboundKind::Block,
         "dns" => OutboundKind::Dns,
@@ -290,7 +291,7 @@ fn outbound(o: Obj<'_>) -> Result<OutboundConfig> {
                 "type",
                 format!(
                     "выход «{other}» не поддерживается (есть: vless, trojan, direct, block, \
-                     selector, urltest; расширение — fallback)"
+                     socks, selector, urltest; расширение — fallback)"
                 ),
             ))
         }
@@ -299,6 +300,30 @@ fn outbound(o: Obj<'_>) -> Result<OutboundConfig> {
     o.ignore(&["type", "tag"]);
     match kind {
         OutboundKind::Vless | OutboundKind::Trojan => server(&o, &mut out)?,
+        OutboundKind::Socks5 => {
+            if o.str("network")?.as_deref() != Some("tcp") {
+                return Err(o.err(
+                    "network",
+                    "для SOCKS5 outbound укажите только \"tcp\"; UDP пока не поддерживается",
+                ));
+            }
+            if o.str("version")?.is_some_and(|version| version != "5") {
+                return Err(o.err("version", "поддерживается только SOCKS5 (version = \"5\")"));
+            }
+            out.proxy_server = Some(o.req_str("server")?);
+            out.proxy_port = Some(
+                o.u16("server_port")?
+                    .ok_or_else(|| o.err("server_port", "не задано"))?,
+            );
+            out.proxy_username = o.str("username")?;
+            out.proxy_password = o.str("password")?;
+            out.proxy_password_file = o.str("password_file")?.map(PathBuf::from);
+            o.unsupported("tls", "TLS к SOCKS5 proxy пока не поддерживается")?;
+            o.unsupported(
+                "udp_over_tcp",
+                "UDP и UDP-over-TCP в первой версии SOCKS5 outbound не поддерживаются",
+            )?;
+        }
         OutboundKind::Direct => {
             out.fragment = fragment(&o)?;
             out.noises = match o.get("noises") {

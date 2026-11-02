@@ -127,6 +127,30 @@ Callbacks arrive on the core's
 background threads and the core waits until each one returns, so hand the
 data over to your own (UI) thread and return quickly.
 
+## SOCKS5 outbound
+
+The core can send TCP connections through a SOCKS5 proxy configured in
+sing-box format. Set `network: "tcp"` so the config does not enable unsupported
+UDP. Minimal `rc_start` config:
+
+```json
+{
+  "outbounds": [
+    { "type": "socks", "tag": "upstream", "server": "proxy.example", "server_port": 1080, "network": "tcp" }
+  ],
+  "route": { "final": "upstream" }
+}
+```
+
+For authentication, set `username` and `password`; the vpn-core `password_file`
+extension stores the password separately. Restrict access to that file using
+the OS. Credentials are redacted from config `Debug` output. Only TCP CONNECT
+is supported: UDP ASSOCIATE and TLS to the proxy are not supported yet. If the
+proxy refuses or cannot open the connection, that connection returns an error.
+SOCKS5 does not encrypt the connection to the proxy; RFC 1929 sends the
+password without encryption. Use this proxy only on a trusted network or
+inside a separate protected transport.
+
 ## Android
 
 Before transferring the FD, `rc_validate(config, base_dir)` returns 1 when

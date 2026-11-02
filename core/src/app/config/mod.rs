@@ -223,6 +223,8 @@ pub enum OutboundKind {
     Vless,
     /// Сервер Trojan (ссылка trojan://).
     Trojan,
+    /// SOCKS5 proxy для исходящих TCP CONNECT-соединений.
+    Socks5,
     Direct,
     Block,
     /// Ответить самому DNS-модулем (перехват DNS-запросов).
@@ -261,6 +263,13 @@ pub struct OutboundConfig {
     pub fragment: Option<crate::transport::fragment::FragmentConfig>,
     /// direct: пакеты-пустышки перед первой UDP-датаграммой к адресу.
     pub noises: Vec<crate::transport::noise::NoiseConfig>,
+    /// socks: адрес SOCKS5-сервера и учётные данные RFC 1929.
+    pub proxy_server: Option<String>,
+    pub proxy_port: Option<u16>,
+    pub proxy_username: Option<String>,
+    pub proxy_password: Option<String>,
+    /// Расширение vpn-core: пароль SOCKS5 из файла с ограниченным доступом.
+    pub proxy_password_file: Option<PathBuf>,
 
     // ── только для групп (selector, urltest, fallback) ──
     /// Участники — tag других выходов (в том числе групп).
@@ -291,6 +300,11 @@ impl std::fmt::Debug for OutboundConfig {
             .field("mux", &self.mux)
             .field("fragment", &self.fragment)
             .field("noises", &self.noises)
+            .field("proxy_server", &self.proxy_server)
+            .field("proxy_port", &self.proxy_port)
+            .field("proxy_username", &crate::redact::opt(&self.proxy_username))
+            .field("proxy_password", &crate::redact::opt(&self.proxy_password))
+            .field("proxy_password_file", &self.proxy_password_file)
             .field("outbounds", &self.outbounds)
             .field("subscriptions", &self.subscriptions)
             .field("url", &self.url)
@@ -314,6 +328,11 @@ impl OutboundConfig {
             mux: None,
             fragment: None,
             noises: Vec::new(),
+            proxy_server: None,
+            proxy_port: None,
+            proxy_username: None,
+            proxy_password: None,
+            proxy_password_file: None,
             outbounds: Vec::new(),
             subscriptions: Vec::new(),
             url: None,
@@ -362,6 +381,56 @@ impl OutboundConfig {
             return Err(Error::Config(format!(
                 "выход {tag}: link, link_file, ca_file, allow_insecure — только у vless и trojan"
             )));
+        }
+        let socks_fields = self.proxy_server.is_some()
+            || self.proxy_port.is_some()
+            || self.proxy_username.is_some()
+            || self.proxy_password.is_some()
+            || self.proxy_password_file.is_some();
+        if self.kind != OutboundKind::Socks5 && socks_fields {
+            return Err(Error::Config(format!(
+                "выход {tag}: server, server_port, username и password для SOCKS5 допустимы только у type = \"socks\""
+            )));
+        }
+        if self.kind == OutboundKind::Socks5 {
+            let server = self.proxy_server.as_ref().filter(|s| {
+                !s.trim().is_empty() && s.trim() == s.as_str() && !s.chars().any(char::is_control)
+            });
+            let port = self.proxy_port.filter(|p| *p != 0);
+            if server.is_none() || port.is_none() {
+                return Err(Error::Config(format!(
+                    "выход {tag}: SOCKS5 требует server и server_port от 1 до 65535"
+                )));
+            }
+            if self.proxy_password.is_some() && self.proxy_password_file.is_some() {
+                return Err(Error::Config(format!(
+                    "выход {tag}: SOCKS5 password и password_file взаимоисключающие"
+                )));
+            }
+            let has_password = self.proxy_password.is_some() || self.proxy_password_file.is_some();
+            if self.proxy_username.is_some() != has_password {
+                return Err(Error::Config(format!(
+                    "выход {tag}: SOCKS5 username и password должны быть заданы вместе"
+                )));
+            }
+            if self
+                .proxy_password
+                .as_ref()
+                .is_some_and(|password| password.is_empty() || password.len() > 255)
+            {
+                return Err(Error::Config(format!(
+                    "выход {tag}: SOCKS5 password должен занимать 1–255 байт"
+                )));
+            }
+            if self
+                .proxy_username
+                .as_ref()
+                .is_some_and(|u| u.is_empty() || u.len() > 255)
+            {
+                return Err(Error::Config(format!(
+                    "выход {tag}: SOCKS5 username должен занимать 1–255 байт"
+                )));
+            }
         }
         if self.kind != OutboundKind::Vless && self.mux.is_some() {
             return Err(Error::Config(format!(
@@ -808,6 +877,72 @@ mod tests {
             .unwrap_err()
             .to_string();
         assert!(e.contains("TOML"), "{e}");
+    }
+
+    #[test]
+    fn singbox_socks_outbound_is_tcp_only_and_redacts_credentials() {
+        let c = Config::parse(
+            r#"{"outbounds":[{"type":"socks","tag":"proxy","server":"proxy.example","server_port":1080,"network":"tcp","username":"private-user","password":"private-pass"}]}"#,
+        )
+        .unwrap();
+        let out = &c.outbounds[0];
+        assert_eq!(out.kind, OutboundKind::Socks5);
+        assert_eq!(out.proxy_server.as_deref(), Some("proxy.example"));
+        assert_eq!(out.proxy_port, Some(1080));
+        let debug = format!("{out:?}");
+        assert!(!debug.contains("private-user"));
+        assert!(!debug.contains("private-pass"));
+        assert!(debug.contains("***"));
+    }
+
+    #[test]
+    fn singbox_socks_supports_password_file_extension() {
+        let c = Config::parse(
+            r#"{"outbounds":[{"type":"socks","tag":"proxy","server":"proxy.example","server_port":1080,"network":"tcp","username":"user","password_file":"proxy.pass"}]}"#,
+        )
+        .unwrap();
+        assert_eq!(c.outbounds[0].proxy_password, None);
+        assert_eq!(
+            c.outbounds[0].proxy_password_file.as_deref(),
+            Some(std::path::Path::new("proxy.pass"))
+        );
+    }
+
+    #[test]
+    fn singbox_socks_rejects_unsupported_or_incomplete_settings() {
+        for (config, expected) in [
+            (
+                r#"{"outbounds":[{"type":"socks","tag":"p","server":"proxy.example","network":"tcp"}]}"#,
+                "server_port",
+            ),
+            (
+                r#"{"outbounds":[{"type":"socks","tag":"p","server":"proxy.example","server_port":1080,"network":"tcp","username":"user"}]}"#,
+                "username и password",
+            ),
+            (
+                r#"{"outbounds":[{"type":"socks","tag":"p","server":"proxy.example","server_port":1080,"network":"tcp","version":"4"}]}"#,
+                "version",
+            ),
+            (
+                r#"{"outbounds":[{"type":"socks","tag":"p","server":"proxy.example","server_port":1080,"network":"tcp","tls":{"enabled":true}}]}"#,
+                "TLS",
+            ),
+            (
+                r#"{"outbounds":[{"type":"socks","tag":"p","server":"proxy.example","server_port":1080,"network":"tcp","udp_over_tcp":true}]}"#,
+                "UDP-over-TCP",
+            ),
+            (
+                r#"{"outbounds":[{"type":"socks","tag":"p","server":"proxy.example","server_port":1080}]}"#,
+                "network",
+            ),
+            (
+                r#"{"outbounds":[{"type":"socks","tag":"p","server":"proxy.example","server_port":1080,"network":"udp"}]}"#,
+                "UDP",
+            ),
+        ] {
+            let error = Config::parse(config).unwrap_err().to_string();
+            assert!(error.contains(expected), "{expected}: {error}");
+        }
     }
 
     #[test]

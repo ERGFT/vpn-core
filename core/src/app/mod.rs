@@ -7,7 +7,7 @@
 //!   порту); `sniff` — домен по первым байтам (TLS SNI, HTTP Host);
 //! - `router`, `rules`, `geo` — выбор выхода по правилам (домены, адреса,
 //!   базы geosite/geoip, порт, сеть, вход);
-//! - `outbound` — выходы `direct` и `block` и общий интерфейс;
+//! - `outbound` — общие выходы `direct`, `block` и `socks`;
 //! - `vless_out` — выход `vless` (сервер);
 //! - `access` — кто может пользоваться входом (адреса, подбор пароля);
 //! - `dns`, `dns_in` — свой DNS (DoH/DoT/UDP/TCP, кеш, fake-IP) и вход
@@ -35,6 +35,7 @@ pub mod rules;
 pub mod ruleset;
 pub mod sniff;
 pub mod sniff_quic;
+pub mod socks_out;
 pub mod stats;
 pub mod subscription;
 pub mod trojan_out;
@@ -820,14 +821,14 @@ fn build_tun_inbound(
     }))
 }
 
-/// Адреса VLESS-серверов (по выходам с типом vless).
-fn router_vless_servers(
+/// Адреса серверов выходов, которые нужно разрешить до установки маршрутов TUN.
+fn router_pinned_servers(
     router: &Router,
     outs: &[config::OutboundConfig],
 ) -> Vec<Option<(String, u16)>> {
     outs.iter()
         .map(|o| match o.kind {
-            OutboundKind::Vless | OutboundKind::Trojan => {
+            OutboundKind::Vless | OutboundKind::Trojan | OutboundKind::Socks5 => {
                 router.get(&o.tag).and_then(|b| b.server())
             }
             _ => None,
@@ -962,6 +963,32 @@ fn build_core(
         let built: Arc<dyn Outbound> = match o.kind {
             OutboundKind::Vless => Arc::new(build_vless(o)?),
             OutboundKind::Trojan => Arc::new(build_trojan(o)?),
+            OutboundKind::Socks5 => {
+                let password = match (&o.proxy_password, &o.proxy_password_file) {
+                    (Some(value), None) => Some(value.clone()),
+                    (None, Some(path)) => Some(config::read_secret_file(path)?),
+                    (None, None) => None,
+                    (Some(_), Some(_)) => {
+                        return Err(Error::Config(format!(
+                            "выход {}: SOCKS5 password и password_file взаимоисключающие",
+                            o.tag
+                        )))
+                    }
+                };
+                let server = o.proxy_server.clone().ok_or_else(|| {
+                    Error::Config(format!("выход {}: SOCKS5 требует server", o.tag))
+                })?;
+                let port = o.proxy_port.ok_or_else(|| {
+                    Error::Config(format!("выход {}: SOCKS5 требует server_port", o.tag))
+                })?;
+                Arc::new(socks_out::Socks5Outbound::new(
+                    o.tag.clone(),
+                    server,
+                    port,
+                    o.proxy_username.clone(),
+                    password,
+                )?)
+            }
             OutboundKind::Direct => Arc::new(build_direct(
                 o,
                 cfg.dns.is_some().then(|| dns_slot.clone()),
@@ -1154,7 +1181,7 @@ fn build_core(
         router.set_dns(d.clone());
     }
     router.set_tracker(tracker);
-    let mut pinned_hosts: Vec<(String, u16)> = router_vless_servers(&router, &cfg.outbounds)
+    let mut pinned_hosts: Vec<(String, u16)> = router_pinned_servers(&router, &cfg.outbounds)
         .into_iter()
         .flatten()
         .collect();

@@ -89,13 +89,13 @@ httpupgrade, xhttp), напрямую или никуда. Сам графиче
 
 | Модуль | Что делает |
 |---|---|
-| `app/` | приложение: входы → маршрутизатор → выходы, настройки, DNS, TUN, группы, подписки, API |
+| `app/` | приложение: входы → маршрутизатор → выходы (включая SOCKS5 TCP CONNECT), настройки, DNS, TUN, группы, подписки, API |
 | `vless/` | ссылка `vless://` (`uri.rs`), заголовки VLESS (`protocol.rs`), Vision, UDP, XUDP, Mux.Cool |
 | `trojan.rs` | заголовок и UDP-пакеты Trojan |
 | `transport/` | TCP/TLS/REALITY (`tcp_tls.rs`, `raw.rs`), ws, grpc, httpupgrade, xhttp, общий пул HTTP/2, QUIC, fragment, noises, заголовки браузера |
 | `reality/` | REALITY: ключи и SessionId (`auth.rs`), хук в rustls (`hook.rs`), проверка сертификата (`verifier.rs`) |
 | `fingerprint/` | ClientHello браузеров (Chrome 133, Firefox 148, Safari 26.3), разбор ClientHello, JA3/JA4 |
-| `socks5/` | SOCKS5: приветствие, логин/пароль, UDP-заголовки |
+| `socks5/` | SOCKS5 inbound: приветствие, логин/пароль, UDP-заголовки; `app/socks_out.rs` — исходящий TCP CONNECT |
 | `relay.rs` | двусторонняя перекачка с таймаутами простоя |
 | `net_protect.rs` | метка собственных сокетов клиента (мимо TUN) |
 | `http1.rs` | разбор ответа HTTP/1.1 (xhttp, проверки групп, подписки) |
@@ -120,6 +120,7 @@ flowchart LR
   T -- порт 53 --> DNS
   R -- правила, fake-IP --> DNS
   R --> V[vless / trojan]
+  R --> S[SOCKS5 TCP CONNECT]
   R --> G[группы: selector, urltest, fallback]
   G --> V
   R --> DIR[direct]
@@ -314,7 +315,7 @@ Config
 │                                     max_conns, sniff, sniff_override_destination,
 │                                     tun: имя, адреса, mtu, auto_route, route_exclude,
 │                                     strict_route, dns_hijack
-├── outbounds: Vec<OutboundConfig>    tag, kind (vless/trojan/direct/block/dns/selector/
+├── outbounds: Vec<OutboundConfig>    tag, kind (vless/trojan/socks/direct/block/dns/selector/
 │                                     urltest/fallback), link | link_file, ca_file, xudp,
 │                                     allow_insecure, mux, fragment, noises,
 │                                     группы: outbounds, subscriptions, url, interval,
@@ -338,6 +339,15 @@ Config
 строки и серверы из подписок. Одна проверка на все три источника:
 неподдерживаемый `security`/`type`/`flow` — одна и та же понятная
 ошибка.
+
+SOCKS5 задаётся отдельным sing-box выходом `type: "socks"` с обязательным
+`network: "tcp"` (без него конфиг по умолчанию включает TCP и UDP). На этой
+итерации поддержан только TCP CONNECT; UDP ASSOCIATE, TLS к прокси и Xray-формат
+не поддерживаются. Сам выход при отказе proxy возвращает ошибку и не
+переходит на `direct`. Пароль можно вынести в расширение `password_file`;
+учётные данные не выводятся через `Debug`.
+Сам протокол SOCKS5 и RFC 1929 не шифруют участок до proxy; используйте его
+в доверенной сети или поверх отдельного защищённого транспорта.
 
 ### 5.4. Соответствия форматов
 
@@ -658,7 +668,7 @@ Config
 
 ## 10. Выходы
 
-`app/outbound.rs`, `app/vless_out.rs`, `app/trojan_out.rs`, `app/group.rs`.
+`app/outbound.rs`, `app/vless_out.rs`, `app/trojan_out.rs`, `app/socks_out.rs`, `app/group.rs`.
 
 | Выход | TCP | UDP |
 |---|---|---|
@@ -667,6 +677,7 @@ Config
 | `dns` | DNS поверх TCP → DNS-модуль | датаграммы → DNS-модуль (до 64 одновременно) |
 | `vless` | VLESS-поток через транспорт; с `mux` — Mux.Cool | XUDP или поток на назначение |
 | `trojan` | Trojan-поток через те же транспорты | один поток с командой UDP |
+| `socks` | RFC 1928 CONNECT через прокси (`network: "tcp"` обязателен), до 30 с на подключение и рукопожатие | ошибка: UDP не поддерживается |
 | группы | участник по стратегии, при ошибке — следующий (до трёх) | так же |
 
 - **`direct` и адреса этого компьютера.** Клиент из сети не может
