@@ -1971,6 +1971,7 @@ mod h1 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use base64::Engine as _;
 
     fn cfg(tail: &str) -> VlessConfig {
         VlessConfig::parse(&format!(
@@ -2131,9 +2132,10 @@ mod tests {
         let encode = |v: serde_json::Value| {
             url::form_urlencoded::byte_serialize(v.to_string().as_bytes()).collect::<String>()
         };
+        let public_key = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode([7u8; 32]);
         let reality = encode(serde_json::json!({"downloadSettings": {
             "network":"xhttp", "security":"reality",
-            "realitySettings":{"serverName":"reality.test", "publicKey":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "shortId":"0123abcd"},
+            "realitySettings":{"serverName":"reality.test", "publicKey":public_key, "shortId":"0123abcd"},
             "xhttpSettings":{"path":"/xh"}
         }}));
         let s =
