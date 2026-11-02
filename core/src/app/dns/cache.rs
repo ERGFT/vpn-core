@@ -5,6 +5,7 @@
 //! просроченные, потом самые старые записи.
 
 use std::collections::{HashMap, VecDeque};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
@@ -28,6 +29,7 @@ struct Entry {
 
 pub struct Cache {
     cap: usize,
+    generation: AtomicU64,
     inner: Mutex<(HashMap<Key, Entry>, Order)>,
 }
 
@@ -65,8 +67,27 @@ impl Cache {
     pub fn new(cap: usize) -> Self {
         Cache {
             cap: cap.max(1),
+            generation: AtomicU64::new(0),
             inner: Mutex::new((HashMap::new(), VecDeque::new())),
         }
+    }
+
+    /// Epoch of the cache. Callers can use it to avoid storing a DNS answer
+    /// obtained before a network-change invalidation.
+    pub fn generation(&self) -> u64 {
+        self.generation.load(Ordering::Acquire)
+    }
+
+    /// Drop cached answers and invalidate in-flight lookups from the old
+    /// network. Fake-IP mappings are intentionally stored elsewhere.
+    pub fn clear(&self) {
+        let mut g = self
+            .inner
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        self.generation.fetch_add(1, Ordering::AcqRel);
+        g.0.clear();
+        g.1.clear();
     }
 
     /// Ответ из кеша с уменьшенными на прошедшее время TTL.
@@ -95,6 +116,12 @@ impl Cache {
     }
 
     pub fn put(&self, name: &str, qtype: RecordType, msg: &Message) {
+        self.put_at_generation(self.generation(), name, qtype, msg);
+    }
+
+    /// Store an answer only if no network change happened while it was
+    /// being fetched.
+    pub fn put_at_generation(&self, generation: u64, name: &str, qtype: RecordType, msg: &Message) {
         let Some(ttl) = cache_ttl(msg) else { return };
         if ttl == 0 {
             return;
@@ -105,6 +132,9 @@ impl Cache {
             .inner
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if self.generation.load(Ordering::Acquire) != generation {
+            return;
+        }
         let (map, order) = &mut *g;
         if map.len() >= self.cap && !map.contains_key(&key) {
             // Просроченные — первыми.
@@ -208,5 +238,26 @@ mod tests {
             c.get("zero.test", RecordType::A).is_none(),
             "TTL 0 не кешируется"
         );
+    }
+
+    #[test]
+    fn clear_drops_entries_and_rejects_answers_from_previous_generation() {
+        let c = Cache::new(3);
+        let generation = c.generation();
+        c.put(
+            "old.test",
+            RecordType::A,
+            &answer(300, ResponseCode::NoError),
+        );
+        c.clear();
+
+        assert!(c.is_empty());
+        c.put_at_generation(
+            generation,
+            "stale.test",
+            RecordType::A,
+            &answer(300, ResponseCode::NoError),
+        );
+        assert!(c.is_empty());
     }
 }

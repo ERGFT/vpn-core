@@ -10,6 +10,7 @@
 use std::collections::VecDeque;
 use std::future::Future;
 use std::net::SocketAddr;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Once};
 use std::time::Duration;
 
@@ -137,10 +138,31 @@ fn server_cache() -> &'static ServerCache {
     C.get_or_init(Default::default)
 }
 
-fn refreshing() -> &'static std::sync::Mutex<std::collections::HashSet<String>> {
-    static R: std::sync::OnceLock<std::sync::Mutex<std::collections::HashSet<String>>> =
+fn refreshing() -> &'static std::sync::Mutex<std::collections::HashSet<(u64, String)>> {
+    static R: std::sync::OnceLock<std::sync::Mutex<std::collections::HashSet<(u64, String)>>> =
         std::sync::OnceLock::new();
     R.get_or_init(Default::default)
+}
+
+fn server_cache_generation() -> &'static AtomicU64 {
+    static G: AtomicU64 = AtomicU64::new(0);
+    &G
+}
+
+/// Invalidate cached upstream IPs when the host reports a network change.
+/// The generation also prevents a DNS request started on the old network
+/// from repopulating the cache after invalidation.
+pub fn network_changed() {
+    let mut cache = server_cache()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    server_cache_generation().fetch_add(1, Ordering::AcqRel);
+    cache.clear();
+    drop(cache);
+    refreshing()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clear();
 }
 
 /// Разрешение имён, пока включён TUN: системный резолвер тогда сам идёт
@@ -170,61 +192,84 @@ pub fn set_tun_resolver(r: Option<Arc<HostResolver>>) {
 /// подключённым.
 pub async fn resolve_server(host: &str, port: u16) -> Result<Vec<SocketAddr>> {
     let key = format!("{host}:{port}");
-    let cached = server_cache()
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .get(&key)
-        .cloned();
-    if let Some((addrs, at)) = &cached {
-        if at.elapsed() < SERVER_CACHE_FRESH {
-            return Ok(addrs.clone());
+    loop {
+        let generation = server_cache_generation().load(Ordering::Acquire);
+        let cached = server_cache()
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(&key)
+            .cloned();
+        if server_cache_generation().load(Ordering::Acquire) != generation {
+            continue;
         }
-        // С TUN системный DNS сам идёт через клиент (и, возможно, через
-        // этот же сервер): ждать его здесь — петля. Отдаём прежние адреса,
-        // а обновляем в фоне.
-        if crate::net_protect::tun_active() {
-            // Одно обновление на имя за раз: иначе запрос DNS, идущий к
-            // этому же серверу, порождал бы новое обновление, и так по кругу.
-            if refreshing()
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .insert(key.clone())
-            {
-                let (h, k) = (host.to_string(), key.clone());
-                tokio::spawn(async move {
-                    if let Ok(a) = resolve_host(&h, port).await {
-                        server_cache()
+        if let Some((addrs, at)) = &cached {
+            if at.elapsed() < SERVER_CACHE_FRESH {
+                return Ok(addrs.clone());
+            }
+            // С TUN системный DNS сам идёт через клиент (и, возможно, через
+            // этот же сервер): ждать его здесь — петля. Отдаём прежние адреса,
+            // а обновляем в фоне.
+            if crate::net_protect::tun_active() {
+                let refresh_key = (generation, key.clone());
+                // Одно обновление на имя и поколение сети: запрос DNS,
+                // идущий к этому же серверу, не запустит бесконечный цикл.
+                if refreshing()
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .insert(refresh_key.clone())
+                {
+                    let (h, k) = (host.to_string(), key.clone());
+                    tokio::spawn(async move {
+                        if let Ok(a) = resolve_host(&h, port).await {
+                            let mut cache = server_cache()
+                                .lock()
+                                .unwrap_or_else(std::sync::PoisonError::into_inner);
+                            if server_cache_generation().load(Ordering::Acquire) == generation {
+                                cache.insert(k.clone(), (a, std::time::Instant::now()));
+                            }
+                        }
+                        refreshing()
                             .lock()
                             .unwrap_or_else(std::sync::PoisonError::into_inner)
-                            .insert(k.clone(), (a, std::time::Instant::now()));
+                            .remove(&refresh_key);
+                    });
+                }
+                if server_cache_generation().load(Ordering::Acquire) == generation {
+                    return Ok(addrs.clone());
+                }
+                continue;
+            }
+        }
+        match resolve_host(host, port).await {
+            Ok(addrs) => {
+                if server_cache_generation().load(Ordering::Acquire) != generation {
+                    continue;
+                }
+                let mut c = server_cache()
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                if server_cache_generation().load(Ordering::Acquire) != generation {
+                    continue;
+                }
+                if c.len() > 64 {
+                    c.clear();
+                }
+                c.insert(key.clone(), (addrs.clone(), std::time::Instant::now()));
+                return Ok(addrs);
+            }
+            Err(e) => {
+                if server_cache_generation().load(Ordering::Acquire) != generation {
+                    continue;
+                }
+                match cached {
+                    Some((addrs, at)) if at.elapsed() < SERVER_CACHE_STALE => {
+                        tracing::warn!(host, error = %e, "DNS не ответил — использую прежние адреса сервера");
+                        return Ok(addrs);
                     }
-                    refreshing()
-                        .lock()
-                        .unwrap_or_else(std::sync::PoisonError::into_inner)
-                        .remove(&k);
-                });
+                    _ => return Err(e),
+                }
             }
-            return Ok(addrs.clone());
         }
-    }
-    match resolve_host(host, port).await {
-        Ok(addrs) => {
-            let mut c = server_cache()
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            if c.len() > 64 {
-                c.clear();
-            }
-            c.insert(key, (addrs.clone(), std::time::Instant::now()));
-            Ok(addrs)
-        }
-        Err(e) => match cached {
-            Some((addrs, at)) if at.elapsed() < SERVER_CACHE_STALE => {
-                tracing::warn!(host, error = %e, "DNS не ответил — использую прежние адреса сервера");
-                Ok(addrs)
-            }
-            _ => Err(e),
-        },
     }
 }
 

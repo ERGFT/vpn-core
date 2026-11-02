@@ -28,6 +28,7 @@ pub mod upstream;
 
 use std::net::IpAddr;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
@@ -139,6 +140,7 @@ pub struct Dns {
     /// же таблицу (выданные адреса остаются действительными).
     fakeip_key: String,
     strategy: Strategy,
+    network_generation: AtomicU64,
 }
 
 /// Место под DNS для выходов, которые создаются раньше него (`direct`,
@@ -150,6 +152,16 @@ fn normalize(name: &str) -> String {
 }
 
 impl Dns {
+    /// Invalidate upstream DNS answers after the host reports a network
+    /// change. Fake-IP mappings remain stable so existing TUN destinations
+    /// can still be mapped to their original names.
+    pub fn network_changed(&self) {
+        self.network_generation.fetch_add(1, Ordering::AcqRel);
+        if let Some(cache) = &self.cache {
+            cache.clear();
+        }
+    }
+
     /// Собрать из настроек. `outbound` — выход по tag, `default_detour` —
     /// выход по умолчанию для серверов без `detour`.
     pub fn build(
@@ -292,6 +304,7 @@ impl Dns {
             fakeip,
             fakeip_key,
             strategy: cfg.strategy,
+            network_generation: AtomicU64::new(0),
         })
     }
 
@@ -419,17 +432,29 @@ impl Dns {
         qtype: RecordType,
     ) -> Result<Message> {
         let key = format!("{}|{name}", server.tag);
+        let network_generation = self.network_generation.load(Ordering::Acquire);
+        let cache_generation = self.cache.as_ref().map(Cache::generation);
         if let Some(c) = &self.cache {
             if let Some(mut m) = c.get(&key, qtype) {
+                if self.network_generation.load(Ordering::Acquire) != network_generation {
+                    return Err(Error::Protocol(
+                        "DNS query invalidated by network change".into(),
+                    ));
+                }
                 m.metadata.id = query.metadata.id;
                 m.queries = query.queries.clone();
                 return Ok(m);
             }
         }
         let answer = server.exchange(query).await?;
+        if self.network_generation.load(Ordering::Acquire) != network_generation {
+            return Err(Error::Protocol(
+                "DNS query invalidated by network change".into(),
+            ));
+        }
         tracing::debug!(dns = %server.tag, name, ?qtype, rcode = ?answer.metadata.response_code, "DNS: ответ");
-        if let Some(c) = &self.cache {
-            c.put(&key, qtype, &answer);
+        if let (Some(c), Some(generation)) = (&self.cache, cache_generation) {
+            c.put_at_generation(generation, &key, qtype, &answer);
         }
         Ok(answer)
     }
@@ -668,6 +693,13 @@ mod bootstrap_tests {
         );
         // Обычный запрос по-прежнему выбирает намеренно заблокированный DNS.
         assert!(dns.lookup(name).await.is_err());
+        dns.network_changed();
+        assert!(dns
+            .cache
+            .as_ref()
+            .unwrap()
+            .get(&format!("{BOOTSTRAP_DNS}|{name}"), RecordType::A)
+            .is_none());
     }
 
     #[tokio::test]

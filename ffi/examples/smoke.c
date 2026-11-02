@@ -125,6 +125,8 @@ int main(void) {
     rc_set_connection_owner(on_connection_owner, NULL);
     RcCore *core = rc_start(CONFIG, NULL, -1, &err);
     if (!core) FAIL("rc_start: %s", err);
+    if (rc_network_changed(core) != 0) FAIL("rc_network_changed failed");
+    printf("OK: host network-change signal accepted\n");
     if (rc_is_alive(core) != 1) FAIL("rc_is_alive: ядро не работает");
     if (rc_last_error_code(core) != RC_ERROR_NONE) FAIL("rc_last_error_code: неожиданная ошибка");
     diagnostic = rc_last_error_message(core);

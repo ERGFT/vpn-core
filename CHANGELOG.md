@@ -25,6 +25,9 @@
 - C ABI: `rc_last_error_code` и `rc_last_error_message` дают стабильную
   категорию и безопасное краткое описание терминальной ошибки без значений
   конфигурации, адресов и учётных данных.
+- Добавлен `rc_network_changed`: host сообщает о смене сети; ядро сбрасывает
+  DNS/server-address кеши и отменяет tracked-соединения, сохраняя слушатели и
+  конфигурацию. Автоматического повтора прикладного трафика нет.
 - Внешний TUN сохраняет резолвер ядра и проверку петли системного DNS.
   Имена транспорта разрешаются только явно выбранным `dns.bootstrap`
   (расширение vpn-core: прямой UDP-сервер с IP, без неявного отката).
@@ -226,6 +229,9 @@ stage-by-stage decision history is in [PLAN.md](PLAN.md) (in Russian).
 ### Embedding and DNS
 - `rc_validate`: preflight without starting listeners/TUN or returning error text;
   `rc_is_alive`: nonblocking sticky terminal task-error status.
+- Added `rc_network_changed`: the host reports a network transition; the core
+  clears DNS/server-address caches and cancels tracked sessions while keeping
+  listeners and config alive. Application traffic is not retried automatically.
 - External TUN retains the core resolver and system-DNS-loop validation.
   Transport hostnames use only an explicit `dns.bootstrap` (vpn-core extension:
   direct IP-literal UDP server, no implicit fallback).

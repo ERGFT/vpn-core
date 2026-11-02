@@ -416,6 +416,33 @@ pub unsafe extern "C" fn rc_stop(core: *mut RcCore) {
     }));
 }
 
+/// Notify the core that the host operating system changed networks.
+///
+/// The core does not monitor platform connectivity itself. The host should
+/// call this after a default-route, Wi-Fi/cellular, or VPN-underlay change.
+/// Cached DNS/server addresses are invalidated and tracked TCP/UDP sessions
+/// are cancelled; listeners and configuration stay in place. Returns 0 on
+/// success, -1 for a null handle or an internal panic.
+///
+/// # Safety
+/// `core` must be a live handle from [`rc_start`]. Calls on one handle must
+/// be serialized with other FFI operations, including [`rc_stop`].
+#[no_mangle]
+pub unsafe extern "C" fn rc_network_changed(core: *mut RcCore) -> c_int {
+    catch_unwind(AssertUnwindSafe(|| {
+        // SAFETY: caller guarantees a live handle.
+        let Some(core) = (unsafe { core.as_ref() }) else {
+            return -1;
+        };
+        let Some(running) = core.running.as_ref() else {
+            return -1;
+        };
+        running.network_changed();
+        0
+    }))
+    .unwrap_or(-1)
+}
+
 /// Запрос к API ядра — те же пути и ответы, что по HTTP (Clash API и
 /// свои: `GET /proxies`, `PUT /proxies/{группа}`, `PATCH /configs`,
 /// `GET /connections`…), без сети и токена. `body` — NULL или JSON.

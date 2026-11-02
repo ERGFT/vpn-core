@@ -265,6 +265,12 @@ impl Running {
         self.ctl.clone()
     }
 
+    /// Apply a network-change signal explicitly supplied by the host.
+    /// Returns the number of tracked streams whose cancellation was requested.
+    pub fn network_changed(&self) -> usize {
+        self.ctl.network_changed()
+    }
+
     /// Откуда перечитывать настройки (`reload_from_file`, API, SIGHUP).
     pub fn set_config_path(&self, p: std::path::PathBuf) {
         *self
@@ -769,6 +775,9 @@ fn core_uses_tun_resolver(auto_route: bool, external_fd: bool, dns_present: bool
 
 #[cfg(test)]
 mod external_tun_route_tests {
+    use std::net::{Ipv4Addr, SocketAddr};
+    use std::sync::Arc;
+
     #[test]
     fn system_tun_descriptor_keeps_routes_under_system_control() {
         assert!(!super::core_manages_tun_routes(true, true));
@@ -798,6 +807,36 @@ mod external_tun_route_tests {
                 );
             }
         }
+    }
+
+    #[tokio::test]
+    async fn network_change_cancels_tracked_connections_without_stopping_inbounds() {
+        let cfg = super::Config::parse(
+            r#"{"inbounds":[{"type":"mixed","listen":"127.0.0.1","listen_port":0}],
+                "outbounds":[{"type":"direct","tag":"direct"}]}"#,
+        )
+        .unwrap();
+        let mut running = super::App::build(&cfg).unwrap().start().await.unwrap();
+        let metadata = super::Metadata {
+            inbound: Arc::from("test"),
+            source: SocketAddr::from((Ipv4Addr::LOCALHOST, 12345)),
+            user_id: None,
+            network: super::Network::Tcp,
+            target: crate::vless::Address::Ipv4(Ipv4Addr::new(203, 0, 113, 1)),
+            port: 443,
+            sniffed: None,
+            inbound_type: "mixed",
+            rule: None,
+        };
+        let guard = running.tracker().open(&metadata, "direct", None);
+        let cancelled = guard.info.cancelled();
+
+        assert_eq!(running.network_changed(), 1);
+        tokio::time::timeout(std::time::Duration::from_secs(1), cancelled)
+            .await
+            .expect("tracked stream cancellation was not signalled");
+        assert_eq!(running.inbound_addrs().len(), 1);
+        assert!(running.is_alive());
     }
 
     #[test]
@@ -1771,6 +1810,26 @@ impl App {
 }
 
 impl Controller {
+    /// Invalidate network-dependent caches and close streams bound to the
+    /// previous network. The core does not observe operating-system network
+    /// changes itself; an embedding host must call this after such a change.
+    /// Returns the number of tracked streams whose cancellation was requested.
+    pub fn network_changed(&self) -> usize {
+        crate::transport::tcp_tls::network_changed();
+        let dns = self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .dns
+            .clone();
+        if let Some(dns) = dns {
+            dns.network_changed();
+        }
+        let closed = self.tracker.close_all();
+        tracing::info!(connections = closed, "network change signal applied");
+        closed
+    }
+
     pub fn group(&self, tag: &str) -> Option<Arc<Group>> {
         self.groups
             .read()

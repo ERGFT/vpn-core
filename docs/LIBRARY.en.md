@@ -97,6 +97,13 @@ rc_stop(core);
 - **`rc_reload(core, config, &err)`** — apply a new config without dropping
   connections. On error the previous config keeps working. The response is
   `{"notes": […]}`: what takes effect only after a restart.
+- **`rc_network_changed(core)`** — report a network change detected by the
+  embedding host. The core clears its DNS and server-address caches, cancels
+  tracked TCP/UDP sessions, and keeps its inbounds and current config running.
+  New connections resolve names again; the core does not automatically replay
+  application traffic, so the host must retry requests according to its own
+  policy. Returns `0` when handled, or `-1` for a NULL handle or an internal
+  error.
 - **`rc_set_event_callback(core, cb, user)`** — events (like the
   `GET /events` stream): connections opening and closing, group switches,
   subscription updates, reloads, mode changes.
@@ -118,6 +125,14 @@ an internal C ABI error. The message is a short English string, or empty while
 healthy; NULL returns `Invalid core handle`. Detailed source errors are not
 exposed because they may contain addresses or config values. Free the returned
 string with `rc_free_string`.
+
+Call `rc_network_changed` only after a platform host API reports a transition
+(for example, Wi-Fi/cellular or default-route changes). The core does not poll
+the OS or determine Internet availability. A duplicate notification also
+cancels sessions opened after the previous one, so coalesce duplicate events
+in the host. This function does not recreate the TUN descriptor, VPN
+permission, routes, or system-interface settings; stop and start the core
+again when those resources must be recreated.
 
 Functions may be called from any thread, but the application must serialize
 operations on the same `RcCore`. Do not call `rc_is_alive`, either diagnostic

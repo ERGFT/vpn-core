@@ -5,7 +5,8 @@ use std::ffi::{c_char, c_int, CStr, CString};
 use std::ptr;
 
 use reality::{
-    rc_free_string, rc_reload, rc_request, rc_set_lock_dir, rc_start, rc_stop, rc_version,
+    rc_free_string, rc_network_changed, rc_reload, rc_request, rc_set_lock_dir, rc_start, rc_stop,
+    rc_version,
 };
 
 const CONFIG: &str = r#"{
@@ -57,6 +58,8 @@ fn start_request_reload_stop() {
     let mut err: *mut c_char = ptr::null_mut();
     let core = unsafe { rc_start(cfg.as_ptr(), ptr::null(), -1, &mut err) };
     assert!(!core.is_null(), "{}", take(err));
+    assert_eq!(unsafe { rc_network_changed(core) }, 0);
+    assert_eq!(unsafe { rc_network_changed(ptr::null_mut()) }, -1);
 
     let (c, v) = request(core, "GET", "/proxies", None);
     assert_eq!(c, 200);
