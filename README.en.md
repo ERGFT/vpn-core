@@ -43,10 +43,11 @@ no third-party security audit or crypto review of REALITY. It is not a
 replacement for mature clients (v2rayN, sing-box, Xray).
 
 > [!WARNING]
-> **There are no prebuilt binaries yet.** [Releases](https://github.com/ERGFT/vpn-core/releases)
-> is empty: you need to build the program yourself, which takes 5–10 minutes
-> (below). When prebuilt files appear, installation, update and removal
-> instructions will be here.
+> **There is no stable release yet.** Developer prereleases appear on
+> [Releases](https://github.com/ERGFT/vpn-core/releases) after CI succeeds for
+> a commit on `main`. These snapshots are for testing and may contain
+> regressions. For stable use, build the program yourself using the instructions
+> below.
 
 ## Quick start
 
