@@ -1,236 +1,142 @@
 # vpn-core
 
-Experimental: [combined application and site rules](docs/APPLICATION_ROUTING.en.md)
-using TUN flow-owner UIDs and a host callback. Android clients need separate
-integration; this is not built-in package_name lookup.
+**A compact VLESS core in Rust** for a local proxy, a TUN client, or embedding into apps through a C ABI.
+
+Supports **REALITY** and **XTLS Vision**, and works with compatible Xray-core servers. This is an experimental project: check the status table and the full [feature matrix](docs/FEATURES.en.md) before relying on specific features or mobile integration.
 
 [Русский](README.md) | **English**
 
 [![CI](https://github.com/ERGFT/vpn-core/actions/workflows/ci.yml/badge.svg)](https://github.com/ERGFT/vpn-core/actions/workflows/ci.yml)
 [![License: GPL v3+](https://img.shields.io/badge/license-GPL--3.0--or--later-blue.svg)](LICENSE)
-![Rust 1.89+](https://img.shields.io/badge/rust-1.89%2B-orange.svg?logo=rust)
-![Platforms](https://img.shields.io/badge/platform-Linux%20%7C%20Windows-lightgrey.svg)
+[![Rust 1.89+](https://img.shields.io/badge/rust-1.89%2B-orange.svg?logo=rust)](https://www.rust-lang.org/)
 
-A **VLESS** client (with **REALITY** and **XTLS Vision**) written from
-scratch in Rust. It runs a local proxy (SOCKS5 and HTTP) on your computer or
-captures all traffic (TUN, like a VPN) and sends it to an Xray-core or
-compatible server.
+## Choose your path
 
-## Names
-
-| Name | What it is |
+| Your goal | Start here |
 |---|---|
-| **vpn-core** | this repository |
-| **reality-client** | the program you run (`bin/client/`) |
-| **reality-core** | the library with the core itself: protocols, routing, DNS, TUN (`core/`); `reality-client` is built on it |
-| **reality-ffi** (`libreality`) | the same core for embedding into apps in other languages via a C ABI (`ffi/`) |
+| Run the client on your computer | [Quick start](#quick-start) |
+| Embed the core in your app | [For developers](#for-developers) · [library guide](docs/LIBRARY.en.md) |
+| Check protocol support and limits | [Features and status](#features-and-status) · [full matrix](docs/FEATURES.en.md) |
+| Understand internals and testing | [Documentation](#documentation) |
 
-## Platforms and status
+## Project overview
 
-- **Linux, Windows** — the `reality-client` program: ready.
-- **macOS** — not tested on this platform.
-- **Android, iOS** — only as a library for your own app: experimental
-  ([LIBRARY.en.md](docs/LIBRARY.en.md)).
+| Component | Purpose |
+|---|---|
+| `reality-core` (`core/`) | Library for protocols, routing, DNS, and TUN |
+| `reality-client` (`bin/client/`) | CLI client with SOCKS5/HTTP proxy and TUN |
+| `reality-ffi` (`ffi/`, `libreality`) | C ABI for embedding the core into apps written in other languages |
 
-Embedding includes `rc_validate` preflight validation and `rc_is_alive` terminal
-error polling. External TUN uses an explicit `dns.bootstrap` for transport
-hostnames; DNS rules support their own `strategy` ([DNS.en.md](docs/DNS.en.md)).
-Mobile integration remains experimental.
+### Platforms and maturity
 
-This is an educational and research project. Everything listed as "ready"
-is covered by tests, including against real Xray-core, but there has been
-no third-party security audit or crypto review of REALITY. It is not a
-replacement for mature clients (v2rayN, sing-box, Xray).
+| Platform | CLI client | Integration SDK | Status |
+|---|---:|---:|---|
+| Linux x86_64 | Yes | Yes | Client and library are checked in CI |
+| Windows x86_64 | Yes | Yes | Client and library are checked in CI; some system features have specific limits |
+| macOS arm64 | No | Yes | SDK is built for release packages; running an app on-device is not confirmed |
+| Android arm64-v8a | No | Yes | Experimental integration; the app must connect the TUN itself |
+| iOS arm64 | No | Yes | Experimental integration; no ready-to-use client app |
 
-> [!WARNING]
-> **Choose a build on the [Releases](https://github.com/ERGFT/vpn-core/releases) page.**
-> Prereleases are for testing only. To embed the core in an app, download the
-> SDK archive for your platform and review the GPL-3.0-or-later license.
+The release workflow builds SDK archives for these ABIs when a versioned tag is pushed. Each archive includes the library, `reality.h`, a minimal C example, and API documentation. Check [Releases](https://github.com/ERGFT/vpn-core/releases) for published packages; if none are available, build from source using the [library guide](docs/LIBRARY.en.md).
 
 ## Quick start
 
-### 1. Install Rust
+Rust **1.89 or newer** is required. On Windows, install [Visual Studio Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/) with the *Desktop development with C++* workload and [Git](https://git-scm.com/download/win). See the [Windows guide](docs/WINDOWS.en.md).
 
-Rust 1.89 or newer is required.
-
-**Linux** (Debian, Ubuntu; other distributions — their own package
-manager):
+**Linux**
 
 ```sh
-sudo apt install build-essential git       # C compiler and git
+sudo apt install build-essential git
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-```
-
-**Windows:**
-
-1. Rust — the installer from [rustup.rs](https://rustup.rs) (the default
-   `x86_64-pc-windows-msvc`).
-2. [Visual Studio Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/),
-   the "Desktop development with C++" workload.
-3. [Git](https://git-scm.com/download/win).
-
-Details — [docs/WINDOWS.en.md](docs/WINDOWS.en.md).
-
-### 2. Build
-
-**Linux:**
-
-```sh
 git clone https://github.com/ERGFT/vpn-core.git
 cd vpn-core
 cargo build --release -p reality-client
-# done: target/release/reality-client
 ```
 
-**Windows** (PowerShell):
+**Windows (PowerShell)**
 
 ```powershell
 git clone https://github.com/ERGFT/vpn-core.git
 cd vpn-core
 powershell -ExecutionPolicy Bypass -File scripts\build_windows.ps1
-# done: target\release\reality-client.exe
 ```
 
-### 3. Prepare the settings
-
-You need a `vless://…` link — your server panel (3x-ui, Marzban, Remnawave)
-or administrator gives it to you. Save it to a file: the link contains your
-UUID, and command-line arguments are visible to other programs.
-
-**Linux:**
-
-```sh
-printf '%s\n' 'vless://…your link…' > server.txt
-chmod 600 server.txt
-```
-
-**Windows:** create a file `server.txt` in Notepad with the link on the
-first line.
-
-Several servers, "this goes direct, this goes through the server" rules,
-subscriptions — in the [config file](docs/CONFIG.en.md).
-
-### 4. Run
-
-**Linux:**
+Save the `vless://…` link from your server administrator or panel in `server.txt`. It contains a UUID; restrict access to the file and do not publish it.
 
 ```sh
 ./target/release/reality-client --server-file server.txt
 ```
 
-**Windows:**
-
-```powershell
-.\target\release\reality-client.exe --server-file server.txt --system-proxy
-```
-
-The log shows the lines `сервер загружен …` ("server loaded") and
-`прокси слушает … addr=127.0.0.1:1080` ("proxy listening"); log messages
-are in Russian. The proxy is on `127.0.0.1:1080`, SOCKS5 and HTTP on one
-port. With `--system-proxy` (Windows only) browsers and most programs go
-through the client without any setup. Stop — `Ctrl+C`. All options —
-[docs/CLI.en.md](docs/CLI.en.md).
-
-### 5. Check the connection
-
-In another terminal window (Windows 10 and newer already has `curl`):
+On Windows, run `.\target\release\reality-client.exe --server-file server.txt --system-proxy`. The proxy listens on `127.0.0.1:1080` (SOCKS5 and HTTP on the same port). Check the connection with:
 
 ```sh
 curl --socks5-hostname 127.0.0.1:1080 https://example.com
 ```
 
-If an HTML page comes back, the connection through the server works. In a
-browser, set the SOCKS5 proxy `127.0.0.1:1080`; in Firefox also enable
-"Proxy DNS when using SOCKS v5", otherwise site names go to the regular DNS.
+The executable is in `target/release/` on Linux and `target\release\` on Windows. More options and setup details: [CLI](docs/CLI.en.md) · [configuration](docs/CONFIG.en.md) · [Windows guide](docs/WINDOWS.en.md).
 
-### Updating and removing
+## For developers
 
-- **Update:** in the `vpn-core` folder — `git pull`, then step 2 again.
-- **Remove:** if you set up autostart, remove it first: on Windows
-  `reality-client --service-uninstall` or `--autostart-uninstall`; on
-  Linux `sudo systemctl disable --now reality-client` and delete what you
-  copied following [`examples/reality-client.service`](examples/reality-client.service)
-  (`/etc/systemd/system/reality-client.service`,
-  `/usr/local/bin/reality-client`, `/etc/reality-client`). Then delete the
-  `vpn-core` folder. If the client was killed with `--system-proxy` on and
-  the internet is gone — `reality-client --system-proxy-off`.
+The SDK is for apps that need an embedded VLESS client. Its public interface is a C ABI. The [library guide](docs/LIBRARY.en.md) and [`reality.h`](ffi/include/reality.h) describe memory ownership, threads, callbacks, and platform integration.
 
-## Features
-
-Short version; the full list, how each feature was tested, and the
-limitations — [docs/FEATURES.en.md](docs/FEATURES.en.md).
-
-| Feature | Status |
+| API | Purpose |
 |---|---|
-| VLESS with `security=none`, `tls`, `reality`; XTLS Vision | ready |
-| Transports `tcp`, `ws`, `grpc`, `httpupgrade`, `xhttp` (HTTP/1.1, HTTP/2, HTTP/3) | ready |
-| UDP over XUDP; Mux.Cool; `trojan` outbound | ready |
-| Browser TLS fingerprints (`fp=chrome`, `firefox`, `safari` and others) | ready |
-| SOCKS5, HTTP, `mixed` inbounds; config file in sing-box or Xray-core format | ready |
-| Routing: domains, IPs, geosite/geoip, sing-box rule sets; sniffing | ready |
-| Server groups (`selector`, `urltest`, `fallback`), subscriptions | ready |
-| Own DNS: DoH, DoT, DoQ, cache, fake-IP | ready |
-| TUN — all of the computer's traffic, kill switch (Linux, Windows) | ready |
-| Local API (Clash API), metacubexd and yacd web dashboards | ready |
-| Windows service, systemd | ready |
-| System proxy and autostart at logon on Windows | not tested on this platform (only under Wine) |
-| Anti-DPI: `fragment`, `noises` | experimental |
-| Embedding into Android and iOS (C ABI) | experimental |
-| `kcp` transport; ICMP (ping) through TUN | not supported |
+| `rc_validate` | Validate configuration before startup; return success or failure without exposing its values |
+| `rc_start` / `rc_stop` | Create, start, and cleanly stop a core instance |
+| `rc_request` | Call the core API directly, without a network HTTP server or token |
+| `rc_reload` | Apply a new configuration without recreating the whole app |
+| `rc_is_alive` | Check the instance state and detect a terminal error |
+| Callbacks | Receive events/logs and provide platform functions such as socket protection or UID lookup |
 
-Statuses: **ready** — works and is covered by tests; **experimental** —
-works, but has little testing or the result depends on the network; **not
-supported** — not available; **not tested on this platform** — the code
-exists but has not been properly tested on this OS.
+The [library guide](docs/LIBRARY.en.md) has a minimal example and lists each SDK archive's contents. Public headers and examples are in [`ffi/`](ffi/).
+
+## Features and status
+
+| Area | Support |
+|---|---|
+| Protocol | VLESS, REALITY, TLS, XTLS Vision; TCP, WebSocket, gRPC, HTTPUpgrade, and XHTTP |
+| Network | SOCKS5/HTTP/mixed, UDP/XUDP, DNS (DoH/DoT/DoQ), TUN, kill switch |
+| Configuration | Xray-core format and part of sing-box format; rules, server groups, subscriptions |
+| Management | Local Clash API, metacubexd and yacd dashboards, systemd and Windows service |
+| Experimental | Android/iOS through C ABI; `fragment` and `noises`; application routing integration |
+| Not supported | KCP transport; ICMP/ping through TUN |
+
+Importing a sing-box config **does not mean full compatibility** with all of its options. See the [full matrix](docs/FEATURES.en.md) for each feature's status and test coverage.
+
+## Choosing a core
+
+These projects cover different scopes. This table compares their intended use, not quality or speed.
+
+| Project | Strength | Consider it when |
+|---|---|---|
+| **vpn-core** | Focused Rust VLESS client core; CLI and C ABI for embedding | You need VLESS/REALITY and a custom app integration |
+| [Xray-core](https://github.com/XTLS/Xray-core) | Broad proxy platform and network scenarios | You need the wider Xray ecosystem or more protocols |
+| [sing-box](https://github.com/SagerNet/sing-box) | Multi-protocol proxy with many inbounds, outbounds, and network features | You need a general-purpose proxy platform or an existing sing-box integration |
+
+vpn-core also has a local memory and throughput comparison against Xray-core, with methodology and caveats: [test results](docs/TESTING.en.md). Those numbers apply only to the stated setup and do not establish general superiority.
 
 ## Documentation
 
-| | |
+| Topic | Guides |
 |---|---|
-| [Command line and autostart](docs/CLI.en.md) | all options, Windows service, systemd |
-| [Config file](docs/CONFIG.en.md) | sing-box and Xray formats, rules, server groups, subscriptions, `fragment` |
-| [DNS](docs/DNS.en.md) · [TUN](docs/TUN.en.md) · [API](docs/API.en.md) | own DNS, all traffic through the client, control and web dashboards |
-| [Link parameters](docs/LINK.en.md) | what is understood in `vless://…` |
-| [Windows](docs/WINDOWS.en.md) | building and running on Windows |
-| [Security model](docs/SECURITY-MODEL.en.md) | what is guaranteed, threats on a shared Wi-Fi network |
-| [The core as a library](docs/LIBRARY.en.md) | embedding into apps |
-| [All pages](docs/README.en.md) | core internals, testing, comparison with Xray-core |
+| Running and configuration | [CLI](docs/CLI.en.md) · [config](docs/CONFIG.en.md) · [`vless://` parameters](docs/LINK.en.md) |
+| Networking | [DNS](docs/DNS.en.md) · [TUN](docs/TUN.en.md) · [application routing](docs/APPLICATION_ROUTING.en.md) |
+| Development | [core as a library](docs/LIBRARY.en.md) · [API](docs/API.en.md) · [internals](docs/README.en.md) |
+| Reliability and security | [features and tests](docs/FEATURES.en.md) · [comparison and methodology](docs/TESTING.en.md) · [security model](docs/SECURITY-MODEL.en.md) |
 
-## Security
+## Security and limitations
 
-- With `security=reality` the UUID goes only to a server that passed
-  REALITY verification; a connection to a server that failed it is never
-  handed to the app, even if the server has a genuine certificate. With
-  `security=tls` — only to whoever presents a valid certificate for that
-  name. With `security=none` anyone on the path to the server sees it.
-- For proxied traffic in which the app passes the site name (SOCKS5 with a
-  hostname, HTTP proxy, TUN with fake-IP), the name is resolved by the
-  server and the local DNS does not see it. Exceptions — the app resolved
-  the name itself, the `direct` outbound, DNS servers with
-  `detour: direct` or `type: local`; details are in the security model.
-- The client refuses to run a `security=none` link (everything in plain
-  text) without `--allow-insecure`; by default the proxy listens only on
-  `127.0.0.1`.
+This is an educational and research project. It has not had a third-party security audit or cryptographic review of REALITY. A listed feature is not a security guarantee for every configuration.
 
-Details — [docs/SECURITY-MODEL.en.md](docs/SECURITY-MODEL.en.md). Found a
-vulnerability — [SECURITY.md](SECURITY.md), not in public issues.
+- With `security=none`, traffic is not encrypted; this mode requires the explicit `--allow-insecure` option.
+- With REALITY, the UUID is sent only after REALITY verification. With TLS, the server must present a valid certificate.
+- By default, the local proxy listens only on `127.0.0.1`. DNS behavior depends on traffic type and configuration; see the [security model](docs/SECURITY-MODEL.en.md).
+- The project is licensed under [GPL-3.0-or-later](LICENSE). Check how the license applies to your app and distribution before embedding the core.
 
-## Contributing
+Report vulnerabilities privately using [SECURITY.md](SECURITY.md), not in a public issue.
 
-How to send a fix — [CONTRIBUTING.md](CONTRIBUTING.md#contributing); where to
-get help — [SUPPORT.md](SUPPORT.md); code of conduct —
-[CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md); what changed and what is
-planned — [CHANGELOG.md](CHANGELOG.md#changelog); decision history by stage —
-[PLAN.md](PLAN.md) (Russian).
+## Contributing and license
 
-## License
+Contributions and help: [CONTRIBUTING.md](CONTRIBUTING.md) · [SUPPORT.md](SUPPORT.md) · [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) · [CHANGELOG.md](CHANGELOG.md).
 
-Copyright (C) 2026 ERGFT.
-
-GNU General Public License v3.0 or later (`GPL-3.0-or-later`) — full text
-in [`LICENSE`](LICENSE); every source file carries an
-`SPDX-License-Identifier` tag.
-The sources in `vendor/rustls-reality-patch` are a rustls patch and remain
-under its licenses (Apache-2.0 / ISC / MIT, `LICENSE-*` files there).
-Licenses of all dependencies included in the binary —
-`scripts/third_party_licenses.sh` (to be attached to every release).
+Copyright (C) 2026 ERGFT. The main code is distributed under GNU GPL v3 or later. The patch in `vendor/rustls-reality-patch` keeps the rustls licenses; dependency licenses are generated by [`scripts/third_party_licenses.sh`](scripts/third_party_licenses.sh).

@@ -2,7 +2,7 @@
 
 [Русский](FEATURES.md) | **English**
 
-The full list: what `reality-client` can do and how each feature was tested. Short version — [README](../README.en.md#features).
+The full list: what `reality-client` can do and how each feature was tested. Short version — [README](../README.en.md#features-and-status).
 
 ## Features
 
