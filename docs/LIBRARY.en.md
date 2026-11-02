@@ -13,9 +13,8 @@ this guide and the API documentation.
 The versioned release workflow builds SDKs for Linux x86_64, Windows x86_64,
 macOS arm64, Android arm64-v8a, and iOS arm64. Each ZIP has a separate
 `.sha256` file. CI checks archive contents and checksums; it builds and runs
-the unpacked C example on Linux, Windows, and macOS. Android is checked by
-cross-linking the example, while iOS is checked by compiling the example and
-checking for `rc_start` in the library. These mobile checks do not replace an
+the unpacked C example on Linux, Windows, and macOS. Android and iOS are checked
+by cross-linking the example. These mobile checks do not replace an
 on-device run. Dependency license notices, SBOM, and build provenance are
 published as separate release files.
 

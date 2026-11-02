@@ -194,7 +194,14 @@ jobs:
           $work = Join-Path $env:RUNNER_TEMP 'sdk-consumer'
           Expand-Archive dist/vpn-core-sdk-windows-x86_64.zip -DestinationPath $work
           $sdk = Join-Path $work 'vpn-core-sdk'
-          & C:\msys64\mingw64\bin\gcc.exe -I "$sdk/include" "$sdk/examples/minimal.c" "$sdk/lib/reality.dll" -o "$work/minimal.exe"
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $vs = & $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          if (-not $vs) { throw 'MSVC tools not found' }
+          $devcmd = Join-Path $vs 'Common7\Tools\VsDevCmd.bat'
+          $command = "call `"$devcmd`" -no_logo -arch=x64 && cl /nologo /I`"$sdk\include`" `"$sdk\examples\minimal.c`" `"$sdk\lib\reality.dll.lib`" /Fe:`"$work\minimal.exe`""
+          Push-Location $work
+          cmd /c $command
+          Pop-Location
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $env:PATH = "$sdk/lib;$env:PATH"
           & "$work/minimal.exe"
@@ -213,9 +220,7 @@ jobs:
             clang="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android24-clang"
             "$clang" -I include examples/minimal.c lib/libreality.so -o "$work/minimal"
           else
-            xcrun --sdk iphoneos clang -arch arm64 -miphoneos-version-min=13.0 -I include -c examples/minimal.c -o "$work/minimal.o"
-            xcrun --sdk iphoneos nm -g lib/libreality.a > "$work/symbols"
-            grep -q ' T _rc_start$' "$work/symbols"
+            xcrun --sdk iphoneos clang -arch arm64 -miphoneos-version-min=13.0 -I include examples/minimal.c lib/libreality.a -framework Security -framework SystemConfiguration -framework CoreFoundation -liconv -lresolv -o "$work/minimal"
           fi
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
