@@ -293,7 +293,7 @@ mod tests {
     use super::*;
     use std::net::{Ipv4Addr, SocketAddr};
     use std::sync::Arc;
-    use tokio::net::{TcpListener, TcpStream};
+    use tokio::net::TcpListener;
 
     fn metadata(target: crate::vless::Address, port: u16) -> Metadata {
         Metadata {
