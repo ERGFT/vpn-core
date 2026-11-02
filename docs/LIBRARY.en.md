@@ -2,13 +2,22 @@
 
 # The core as a library
 
-Ready-to-link libraries, the C ABI header, and a sample for each supported
-platform are available as SDK archives on the
-[Releases](https://github.com/ERGFT/vpn-core/releases) page. Choose the
-archive for your target platform; binaries are not interchangeable across
-operating systems or architectures. Each archive contains
+SDK archives with a library, C ABI header, and sample are published on the
+[Releases](https://github.com/ERGFT/vpn-core/releases) page for versioned
+releases. If an archive for your platform is not available, build from source
+using the instructions below. Choose the archive for your target platform;
+binaries are not interchangeable across operating systems or architectures. Each archive contains
 `include/reality.h`, libraries in `lib/`, a C example, and local copies of
 this guide and the API documentation.
+
+The versioned release workflow builds SDKs for Linux x86_64, Windows x86_64,
+macOS arm64, Android arm64-v8a, and iOS arm64. Each ZIP has a separate
+`.sha256` file. CI checks archive contents and checksums; it builds and runs
+the unpacked C example on Linux, Windows, and macOS. Android is checked by
+cross-linking the example, while iOS is checked by compiling the example and
+checking for `rc_start` in the library. These mobile checks do not replace an
+on-device run. Dependency license notices, SBOM, and build provenance are
+published as separate release files.
 
 Combined app/site rules use the added `rc_set_connection_owner` API:
 [contract, fail-closed behavior and Android integration](APPLICATION_ROUTING.en.md).

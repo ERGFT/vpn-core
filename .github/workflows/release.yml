@@ -19,6 +19,7 @@ on:
       - ffi/**
       - scripts/package_ffi_sdk.py
       - scripts/check_ffi_sdk.py
+      - scripts/test_check_ffi_sdk.py
       - Cargo.lock
       - Cargo.toml
 
@@ -163,6 +164,9 @@ jobs:
           esac
       - name: Проверить состав SDK и checksum
         run: python scripts/check_ffi_sdk.py ${{ matrix.platform }} dist/vpn-core-sdk-${{ matrix.platform }}.zip
+      - name: Проверить обнаружение повреждённых архивов
+        if: matrix.platform == 'linux-x86_64'
+        run: python scripts/test_check_ffi_sdk.py
       - name: Проверить использование распакованного SDK на Linux
         if: matrix.platform == 'linux-x86_64'
         shell: bash
@@ -173,6 +177,46 @@ jobs:
           cd "$work/vpn-core-sdk"
           cc -I include examples/minimal.c -L lib -lreality -o "$work/minimal"
           LD_LIBRARY_PATH="$PWD/lib" "$work/minimal"
+      - name: Проверить использование распакованного SDK на macOS
+        if: matrix.platform == 'macos-arm64'
+        shell: bash
+        run: |
+          work="$(mktemp -d)"
+          trap 'rm -rf "$work"' EXIT
+          unzip -q dist/vpn-core-sdk-macos-arm64.zip -d "$work"
+          cd "$work/vpn-core-sdk"
+          cc -I include examples/minimal.c lib/libreality.dylib -Wl,-rpath,"$PWD/lib" -o "$work/minimal"
+          DYLD_LIBRARY_PATH="$PWD/lib" "$work/minimal"
+      - name: Проверить использование распакованного SDK на Windows
+        if: matrix.platform == 'windows-x86_64'
+        shell: pwsh
+        run: |
+          $work = Join-Path $env:RUNNER_TEMP 'sdk-consumer'
+          Expand-Archive dist/vpn-core-sdk-windows-x86_64.zip -DestinationPath $work
+          $sdk = Join-Path $work 'vpn-core-sdk'
+          & C:\msys64\mingw64\bin\gcc.exe -I "$sdk/include" "$sdk/examples/minimal.c" "$sdk/lib/reality.dll" -o "$work/minimal.exe"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $env:PATH = "$sdk/lib;$env:PATH"
+          & "$work/minimal.exe"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Проверить заголовок и символы мобильного SDK
+        if: matrix.platform == 'android-arm64-v8a' || matrix.platform == 'ios-arm64'
+        shell: bash
+        env:
+          PLATFORM: ${{ matrix.platform }}
+        run: |
+          work="$(mktemp -d)"
+          trap 'rm -rf "$work"' EXIT
+          unzip -q "dist/vpn-core-sdk-$PLATFORM.zip" -d "$work"
+          cd "$work/vpn-core-sdk"
+          if [ "$PLATFORM" = android-arm64-v8a ]; then
+            clang="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android24-clang"
+            "$clang" -I include examples/minimal.c lib/libreality.so -o "$work/minimal"
+          else
+            xcrun --sdk iphoneos clang -arch arm64 -miphoneos-version-min=13.0 -I include -c examples/minimal.c -o "$work/minimal.o"
+            xcrun --sdk iphoneos nm -g lib/libreality.a > "$work/symbols"
+            grep -q ' T _rc_start$' "$work/symbols"
+          fi
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: sdk-${{ matrix.platform }}
