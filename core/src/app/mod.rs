@@ -213,8 +213,9 @@ pub struct Running {
 }
 
 impl Running {
-    /// Неблокирующая проверка терминальной ошибки; false остаётся до перезапуска.
-    pub fn is_alive(&mut self) -> bool {
+    /// Неблокирующий опрос терминальной ошибки. Полученная ошибка хранится
+    /// до уничтожения запущенного приложения и доступна повторно.
+    pub fn terminal_error(&mut self) -> Option<&Error> {
         if self.terminal_error.is_none() {
             self.terminal_error = match self.errors.try_recv() {
                 Ok(error) => Some(error),
@@ -224,7 +225,12 @@ impl Running {
                 Err(mpsc::error::TryRecvError::Empty) => None,
             };
         }
-        self.terminal_error.is_none()
+        self.terminal_error.as_ref()
+    }
+
+    /// Неблокирующая проверка терминальной ошибки; false остаётся до перезапуска.
+    pub fn is_alive(&mut self) -> bool {
+        self.terminal_error().is_none()
     }
 
     /// Ждать, пока какой-нибудь вход не завершится с ошибкой.
@@ -755,7 +761,15 @@ mod external_tun_route_tests {
             .send(super::Error::Protocol("test failure".into()))
             .unwrap();
         assert!(!running.is_alive());
+        assert_eq!(
+            running.terminal_error().unwrap().to_string(),
+            "test failure"
+        );
         assert!(!running.is_alive());
+        assert_eq!(
+            running.terminal_error().unwrap().to_string(),
+            "test failure"
+        );
         let result = tokio::time::timeout(std::time::Duration::from_secs(1), running.wait())
             .await
             .unwrap();

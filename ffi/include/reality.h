@@ -23,6 +23,21 @@ extern "C" {
 /* Запущенное ядро. */
 typedef struct RcCore RcCore;
 
+/* Стабильные категории rc_last_error_code; значения входят в C ABI и
+ * не должны перенумеровываться. */
+enum rc_error_code {
+    RC_ERROR_NONE = 0,
+    RC_ERROR_INVALID_HANDLE = -1,
+    RC_ERROR_CONFIGURATION = 1,
+    RC_ERROR_IO = 2,
+    RC_ERROR_BLOCKED = 3,
+    RC_ERROR_PROTOCOL = 4,
+    RC_ERROR_TLS = 5,
+    RC_ERROR_DNS = 6,
+    RC_ERROR_AUTHENTICATION = 7,
+    RC_ERROR_INTERNAL = 255
+};
+
 /* Событие или строка журнала — JSON; строка действительна только во время
  * вызова. */
 typedef void (*rc_callback)(const char *json, void *user);
@@ -69,6 +84,14 @@ RcCore *rc_start(const char *config, const char *base_dir, int tun_fd, char **er
  * операциями на живом handle, включая stop. Это не проверка интернета
  * и не гарантия обнаружения ошибок всех отсоединённых задач. */
 int rc_is_alive(RcCore *core);
+
+/* Неблокирующий опрос терминальной ошибки. 0 — ошибки нет, -1 — NULL,
+ * остальные значения — стабильные RC_ERROR_* категории. Текст общий и не
+ * содержит настроек, адресов, UUID или учётных данных. Строка (пустая при
+ * отсутствии ошибки) выделена библиотекой и освобождается rc_free_string.
+ * Оба вызова с одним RcCore сериализуются приложением. */
+int rc_last_error_code(RcCore *core);
+char *rc_last_error_message(RcCore *core);
 
 /* Остановить ядро: входы закрываются, маршруты возвращаются, обратные
  * вызовы прекращаются. После этого core недействителен. NULL — ничего. */
