@@ -32,6 +32,16 @@ Individually:
 | `scripts/third_party_licenses.sh` | `THIRD-PARTY-LICENSES.html` from `Cargo.lock` (cargo-about); fails on a dependency with a license not in `about.toml` |
 | `cargo run -p fpcheck -- --server 'vless://...'` | JA3/JA4 of this client's real ClientHello |
 
+Unit tests in `core/src/transport/tcp_tls.rs` use a paused clock to verify
+IPv4/IPv6 interleaving, fast fallback to the other family, immediate retry
+after a refusal, the concurrent socket limit, and the overall connection
+deadline without external DNS or network dependencies.
+
+Unit tests in `core/src/transport/tcp_tls.rs` use a paused clock to verify
+IPv4/IPv6 interleaving, fast fallback to the other family, immediate retry
+after a refusal, and the address-attempt limit without external DNS or network
+dependencies.
+
 On GitHub the platform does the same (`.github/workflows/ci.yml`) on every
 push to `main` and every pull request: on Linux — all of `scripts/ci.sh`
 (including interop with the Go REALITY server and Xray-core), TUN in a netns

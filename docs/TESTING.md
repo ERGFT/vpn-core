@@ -32,6 +32,16 @@ scripts/ci.sh --quick  # только fmt, SPDX-метки, ссылки в до
 | `scripts/third_party_licenses.sh` | `THIRD-PARTY-LICENSES.html` из `Cargo.lock` (cargo-about); ошибка, если у зависимости лицензия не из `about.toml` |
 | `cargo run -p fpcheck -- --server 'vless://...'` | JA3/JA4 реального ClientHello этого клиента |
 
+Unit-тесты `core/src/transport/tcp_tls.rs` используют виртуальные часы для
+проверки чередования IPv4/IPv6, быстрого перехода ко второму семейству,
+повторной попытки после отказа, лимита одновременных сокетов и общего срока
+подключения — без зависимости от внешней сети и DNS.
+
+Unit-тесты `core/src/transport/tcp_tls.rs` используют виртуальные часы для
+проверки чередования IPv4/IPv6, быстрого перехода ко второму семейству,
+повторной попытки после отказа и ограничения числа адресов — без зависимости
+от внешней сети и DNS.
+
 На GitHub то же самое делает сама платформа (`.github/workflows/ci.yml`) на
 каждый push в `main` и каждый pull request: на Linux — весь `scripts/ci.sh`
 (включая интероп с Go-сервером REALITY и Xray-core), TUN в netns и список

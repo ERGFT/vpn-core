@@ -20,6 +20,7 @@
 | Транспорты `type=ws` (`path=`, `host=`), `type=grpc` (`serviceName=`, режим «gun»), `type=httpupgrade` | готово | проверены против настоящего Xray-core; HTTP-заголовки запроса — как у Chrome (как у Xray) |
 | Транспорт `type=xhttp` (SplitHTTP): режимы `packet-up`, `stream-up`, `stream-one`, HTTP/2, HTTP/1.1 и HTTP/3 (`alpn=h3`, QUIC), `extra=` | готово | все режимы проверены против Xray-core, в т.ч. поверх REALITY (см. ниже, что не поддерживается) |
 | XHTTP `downloadSettings`: отдельное направление скачивания | готово | отдельные адрес/порт и HTTP-сеанс проверяются интеропом с Xray; HTTP/1.1, h2 и h3 выбираются независимо |
+| Dual-stack TCP dialer (Happy Eyeballs) | готово | IPv4/IPv6 чередуются; виртуальные часы проверяют быстрый fallback, немедленный переход после отказа и лимиты попыток |
 | `flow=xtls-rprx-vision` (XTLS Vision) | готово | padding, распознавание внутреннего TLS, прямая передача в обе стороны; проверено против Xray-core. Как и в Xray — только `type=tcp` с `tls`/`reality` |
 | REALITY: X25519MLKEM768 (и откат на X25519 для сайтов без ML-KEM), ShortId, `minClientVer`/`maxClientVer`, HMAC-сертификат | готово | против Xray-core и Go-библиотеки XTLS/REALITY; стороннего крипто-ревью не было |
 | REALITY: ML-DSA-65 (`pqv=`) | готово | против Xray-core, в т.ч. отказ при чужом ключе |

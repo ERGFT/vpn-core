@@ -1371,7 +1371,7 @@ API совместимо с Clash API — как у sing-box и mihomo: гото
 | Соединений на вход | 512 (`max_conns`); у TUN — 4096 | `proxy_in.rs`, `tun/mod.rs` |
 | UDP-сессий на ассоциацию | 256 | `proxy_in.rs` |
 | Sniffing | 300 мс, 16 КиБ; QUIC — до 8 датаграмм | `sniff.rs`, `sniff_quic.rs` |
-| Подключение к адресу | 10 с | `tcp_tls.rs` |
+| Подключение к набору адресов | 10 с всего; новая попытка через 250 мс; максимум 2 одновременно и 8 адресов | `tcp_tls.rs` |
 | Рукопожатие TLS/REALITY | 15 с | `tcp_tls.rs` |
 | Открытие VLESS-сессии целиком | 30 с | `vless_out.rs` |
 | `direct` целиком | 30 с | `outbound.rs` |

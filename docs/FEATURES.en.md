@@ -20,6 +20,7 @@ Statuses:
 | Transports `type=ws` (`path=`, `host=`), `type=grpc` (`serviceName=`, "gun" mode), `type=httpupgrade` | ready | tested against real Xray-core; request HTTP headers match Chrome (as Xray does) |
 | Transport `type=xhttp` (SplitHTTP): modes `packet-up`, `stream-up`, `stream-one`, HTTP/2, HTTP/1.1 and HTTP/3 (`alpn=h3`, QUIC), `extra=` | ready | all modes tested against Xray-core, including over REALITY (see below for what is not supported) |
 | XHTTP `downloadSettings`: separate download direction | ready | separate address/port and HTTP session are checked against Xray; HTTP/1.1, h2 and h3 are selected independently |
+| Dual-stack TCP dialer (Happy Eyeballs) | ready | IPv4/IPv6 candidates are interleaved; paused-clock tests cover fast fallback, immediate retry after failure, and attempt limits |
 | `flow=xtls-rprx-vision` (XTLS Vision) | ready | padding, inner TLS detection, direct copy in both directions; tested against Xray-core. As in Xray — only `type=tcp` with `tls`/`reality` |
 | REALITY: X25519MLKEM768 (with fallback to X25519 for sites without ML-KEM), ShortId, `minClientVer`/`maxClientVer`, HMAC certificate | ready | against Xray-core and the XTLS/REALITY Go library; no third-party crypto review |
 | REALITY: ML-DSA-65 (`pqv=`) | ready | against Xray-core, including rejection of a wrong key |
