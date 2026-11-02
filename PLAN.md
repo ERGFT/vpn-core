@@ -716,6 +716,10 @@ Chrome (User-Agent с версией, вычисляемой от даты, Sec-
 `downloadSettings`, `xPaddingObfsMode`, размещение session/seq/данных не в
 пути/теле.
 
+Состояние на 2026-11-03: `downloadSettings` реализован в документированном
+подмножестве (см. [матрицу возможностей](docs/FEATURES.md) и [описание ссылок](docs/LINK.md));
+поддерживаемые режимы и HTTP/1.1, h2, h3 проверены против Xray-core в CI PR #47.
+
 ### XUDP
 
 `core/src/vless/xudp.rs` + `socks5::udp::serve_associate_xudp`. Выяснено по
