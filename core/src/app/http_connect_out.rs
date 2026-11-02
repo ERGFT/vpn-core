@@ -386,10 +386,14 @@ mod tests {
         use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
 
         crate::transport::tcp_tls::ensure_crypto_provider();
+        let ca_key = KeyPair::generate_for(&rcgen::PKCS_ECDSA_P256_SHA256).unwrap();
+        let mut ca_params = CertificateParams::default();
+        ca_params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
+        let ca_cert = ca_params.self_signed(&ca_key).unwrap();
+
         let key_pair = KeyPair::generate_for(&rcgen::PKCS_ECDSA_P256_SHA256).unwrap();
-        let mut params = CertificateParams::new(vec!["proxy.local".into()]).unwrap();
-        params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
-        let cert = params.self_signed(&key_pair).unwrap();
+        let params = CertificateParams::new(vec!["proxy.local".into()]).unwrap();
+        let cert = params.signed_by(&key_pair, &ca_cert, &ca_key).unwrap();
         let certificate = CertificateDer::from(cert.der().to_vec());
         let private_key = PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(key_pair.serialize_der()));
         let server_config = rustls::ServerConfig::builder()
@@ -409,7 +413,9 @@ mod tests {
             stream.write_all(b"HTTP/1.1 200 OK\r\n\r\n").await.unwrap();
         });
         let mut roots = rustls::RootCertStore::empty();
-        roots.add(certificate).unwrap();
+        roots
+            .add(CertificateDer::from(ca_cert.der().to_vec()))
+            .unwrap();
         let outbound = HttpConnectOutbound::new(
             "proxy".into(),
             address.ip().to_string(),
