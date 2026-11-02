@@ -8,6 +8,10 @@
 
 ## [Не выпущено]
 
+### Выходы
+- Добавлен SOCKS5 outbound для TCP CONNECT (`network: "tcp"`) в формате sing-box; поддерживаются
+  RFC 1929 и чтение пароля из `password_file`. UDP и TLS к прокси пока не поддерживаются.
+
 - Экспериментально: route.rules.user_id и invert; доверенный resolver владельца
   нового TUN-потока через Rust/C ABI, fail-closed для неизвестного нужного UID.
   Сайты и приложения сохраняют first-match; Android JNI/адаптер требует интеграции.
@@ -199,6 +203,10 @@ and the project follows [SemVer](https://semver.org/). The detailed
 stage-by-stage decision history is in [PLAN.md](PLAN.md) (in Russian).
 
 ## [Unreleased]
+
+### Outbounds
+- Added a sing-box SOCKS5 outbound for TCP CONNECT (`network: "tcp"`), with RFC 1929 and an optional
+  `password_file` extension. UDP and TLS to the proxy are not supported yet.
 
 - Experimental route.rules.user_id/invert and trusted Rust/C ABI TUN flow-owner
   resolver; unknown required UIDs fail closed. Site/app first-match order is
