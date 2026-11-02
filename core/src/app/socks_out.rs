@@ -8,7 +8,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use zeroize::Zeroizing;
 
-use super::outbound::{Outbound, UdpSession};
+use super::outbound::{detour_metadata, Outbound, OutboundSlot, UdpSession};
 use super::Metadata;
 use crate::error::{Error, Result};
 use crate::transport::AsyncStream;
@@ -21,6 +21,7 @@ pub struct Socks5Outbound {
     port: u16,
     username: Option<Zeroizing<String>>,
     password: Option<Zeroizing<String>>,
+    detour: Option<OutboundSlot>,
 }
 
 impl Socks5Outbound {
@@ -60,7 +61,13 @@ impl Socks5Outbound {
             port,
             username,
             password,
+            detour: None,
         })
+    }
+
+    pub(crate) fn with_detour(mut self, detour: Option<OutboundSlot>) -> Self {
+        self.detour = detour;
+        self
     }
 }
 
@@ -80,12 +87,22 @@ impl Outbound for Socks5Outbound {
     fn connect<'a>(&'a self, meta: &'a Metadata) -> BoxFuture<'a, Result<Box<dyn AsyncStream>>> {
         Box::pin(async move {
             let stream = tokio::time::timeout(CONNECT_TIMEOUT, async {
-                let addrs =
-                    crate::transport::tcp_tls::resolve_server(&self.server, self.port).await?;
-                let mut stream =
-                    crate::transport::tcp_tls::connect_addrs(&addrs, "SOCKS5 proxy").await?;
+                let mut stream: Box<dyn AsyncStream> = if let Some(slot) = &self.detour {
+                    let detour = slot.get().cloned().ok_or_else(|| {
+                        Error::Config(format!("выход {}: detour ещё не инициализирован", self.tag))
+                    })?;
+                    detour
+                        .connect(&detour_metadata(&self.server, self.port, meta))
+                        .await?
+                } else {
+                    let addrs =
+                        crate::transport::tcp_tls::resolve_server(&self.server, self.port).await?;
+                    Box::new(
+                        crate::transport::tcp_tls::connect_addrs(&addrs, "SOCKS5 proxy").await?,
+                    )
+                };
                 handshake(
-                    &mut stream,
+                    stream.as_mut(),
                     meta,
                     self.username.as_ref().map(|s| s.as_str()),
                     self.password.as_ref().map(|s| s.as_str()),
@@ -97,7 +114,7 @@ impl Outbound for Socks5Outbound {
             .map_err(|_| {
                 Error::Protocol("SOCKS5: превышено время подключения или ответа прокси".into())
             })??;
-            Ok(Box::new(stream) as Box<dyn AsyncStream>)
+            Ok(stream)
         })
     }
 
@@ -114,7 +131,7 @@ impl Outbound for Socks5Outbound {
 }
 
 async fn handshake(
-    stream: &mut TcpStream,
+    stream: &mut dyn AsyncStream,
     meta: &Metadata,
     username: Option<&str>,
     password: Option<&str>,
@@ -352,6 +369,104 @@ mod tests {
         let meta = metadata(crate::vless::Address::Ipv4(Ipv4Addr::LOCALHOST), 80);
         let _stream = outbound.connect(&meta).await.unwrap();
         server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn outbound_can_connect_to_its_socks_proxy_through_another_socks_proxy() {
+        let exit_listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
+        let exit_addr = exit_listener.local_addr().unwrap();
+        let exit_server = tokio::spawn(async move {
+            let (mut stream, _) = exit_listener.accept().await.unwrap();
+            let mut greeting = [0; 3];
+            stream.read_exact(&mut greeting).await.unwrap();
+            assert_eq!(greeting, [5, 1, 0]);
+            stream.write_all(&[5, 0]).await.unwrap();
+            let mut request = [0; 4];
+            stream.read_exact(&mut request).await.unwrap();
+            assert_eq!(request, [5, 1, 0, 3]);
+            let mut domain_len = [0; 1];
+            stream.read_exact(&mut domain_len).await.unwrap();
+            assert_eq!(domain_len[0], 11);
+            let mut domain_and_port = [0; 13];
+            stream.read_exact(&mut domain_and_port).await.unwrap();
+            assert_eq!(&domain_and_port[..11], b"example.org");
+            assert_eq!(
+                u16::from_be_bytes([domain_and_port[11], domain_and_port[12]]),
+                443
+            );
+            stream
+                .write_all(&[5, 0, 0, 1, 127, 0, 0, 1, 0, 80])
+                .await
+                .unwrap();
+            let mut payload = [0; 5];
+            stream.read_exact(&mut payload).await.unwrap();
+            assert_eq!(&payload, b"hello");
+            stream.write_all(b"world").await.unwrap();
+        });
+
+        let entry_listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
+        let entry_addr = entry_listener.local_addr().unwrap();
+        let entry_server = tokio::spawn(async move {
+            let (mut downstream, _) = entry_listener.accept().await.unwrap();
+            let mut greeting = [0; 3];
+            downstream.read_exact(&mut greeting).await.unwrap();
+            assert_eq!(greeting, [5, 1, 0]);
+            downstream.write_all(&[5, 0]).await.unwrap();
+            let mut request = [0; 4];
+            downstream.read_exact(&mut request).await.unwrap();
+            assert_eq!(request, [5, 1, 0, 1]);
+            let mut address = [0; 6];
+            downstream.read_exact(&mut address).await.unwrap();
+            assert_eq!(&address[..4], &Ipv4Addr::LOCALHOST.octets());
+            assert_eq!(
+                u16::from_be_bytes([address[4], address[5]]),
+                exit_addr.port()
+            );
+            let mut upstream = TcpStream::connect(exit_addr).await.unwrap();
+            downstream
+                .write_all(&[5, 0, 0, 1, 127, 0, 0, 1, 0, 80])
+                .await
+                .unwrap();
+            tokio::io::copy_bidirectional(&mut downstream, &mut upstream)
+                .await
+                .unwrap();
+        });
+
+        let entry: Arc<dyn Outbound> = Arc::new(
+            Socks5Outbound::new(
+                "entry".into(),
+                entry_addr.ip().to_string(),
+                entry_addr.port(),
+                None,
+                None,
+            )
+            .unwrap(),
+        );
+        let slot = Arc::new(std::sync::OnceLock::new());
+        assert!(slot.set(entry).is_ok());
+        let exit = Socks5Outbound::new(
+            "exit".into(),
+            exit_addr.ip().to_string(),
+            exit_addr.port(),
+            None,
+            None,
+        )
+        .unwrap()
+        .with_detour(Some(slot));
+        let mut stream = exit
+            .connect(&metadata(
+                crate::vless::Address::Domain("example.org".into()),
+                443,
+            ))
+            .await
+            .unwrap();
+        stream.write_all(b"hello").await.unwrap();
+        let mut response = [0; 5];
+        stream.read_exact(&mut response).await.unwrap();
+        assert_eq!(&response, b"world");
+        drop(stream);
+        entry_server.await.unwrap();
+        exit_server.await.unwrap();
     }
 
     #[tokio::test]

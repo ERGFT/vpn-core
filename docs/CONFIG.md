@@ -17,7 +17,8 @@ reality-client --config config.json
 
 Подходят и готовые настройки sing-box и Xray (из v2rayN, панелей и т.п.):
 всё, что умеет ядро, работает как там. Чего ядро не умеет (другие
-протоколы, цепочки выходов, мультиплексирование sing-box…), — ошибка при
+протоколы, цепочки вне ограниченного `detour` у SOCKS5/HTTP CONNECT,
+мультиплексирование sing-box…), — ошибка при
 запуске с путём до ключа, например `outbounds[2].multiplex: не
 поддерживается`, а не молча пропущенная настройка. Опечатка в имени
 ключа — тоже ошибка.
@@ -108,6 +109,25 @@ MetaCubeX/meta-rules-dat) и исходный `.json`, только `type: local
 выхода `proxy`. Выход `direct` не пускает клиентов из сети к службам этого
 компьютера (`127.0.0.1`, `localhost`); выход `block` отвечает SOCKS5-кодом
 0x02 или HTTP 403.
+
+## TCP-цепочки SOCKS5 и HTTP CONNECT
+
+У outbound типа `socks` или `http` можно задать sing-box поле `detour`. Оно
+использует указанный TCP outbound для соединения с сервером proxy. Несколько
+SOCKS5/HTTP CONNECT звеньев можно вложить; базовым выходом может быть `direct`,
+VLESS или Trojan:
+
+```json
+"outbounds": [
+  { "type": "socks", "tag": "entry", "server": "entry.example", "server_port": 1080, "network": "tcp" },
+  { "type": "http", "tag": "exit", "server": "exit.example", "server_port": 8080, "detour": "entry" }
+],
+"route": { "final": "exit" }
+```
+
+`detour` нельзя направлять на группу, `block` или `dns`; отсутствующий tag и
+циклические цепочки отклоняются. Если звено недоступно, ошибка возвращается
+вызывающему коду без перехода на `direct`. Поддерживаются только TCP-цепочки.
 
 ## Группы серверов и подписки
 

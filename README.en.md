@@ -95,7 +95,7 @@ The [library guide](docs/LIBRARY.en.md) has a minimal example and lists each SDK
 | Area | Support |
 |---|---|
 | Protocol | VLESS, REALITY, TLS, XTLS Vision; TCP, WebSocket, gRPC, HTTPUpgrade, and XHTTP |
-| Network | SOCKS5/HTTP/mixed inbounds; SOCKS5 and HTTP CONNECT TCP outbounds in sing-box format; UDP/XUDP, DNS (DoH/DoT/DoQ), TUN, kill switch |
+| Network | SOCKS5/HTTP/mixed inbounds; sing-box SOCKS5 and HTTP CONNECT TCP outbounds with `detour` chains; UDP/XUDP, DNS (DoH/DoT/DoQ), TUN, kill switch |
 | Configuration | Xray-core format and part of sing-box format; rules, server groups, subscriptions |
 | Management | Local Clash API, metacubexd and yacd dashboards, systemd and Windows service |
 | Experimental | Android/iOS through C ABI; `fragment` and `noises`; application routing integration |

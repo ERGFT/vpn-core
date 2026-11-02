@@ -240,6 +240,7 @@ fn config_from_args(args: &Args) -> Result<Config> {
             proxy_password_file: None,
             proxy_tls: false,
             proxy_tls_server_name: None,
+            detour: None,
             outbounds: Vec::new(),
             subscriptions: Vec::new(),
             url: None,

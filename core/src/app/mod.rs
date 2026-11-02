@@ -588,6 +588,71 @@ fn check_group_cycles(outs: &[config::OutboundConfig]) -> Result<()> {
     Ok(())
 }
 
+/// Validate proxy detours and reject static cycles before creating live outbound references.
+fn check_outbound_detours(outs: &[config::OutboundConfig]) -> Result<()> {
+    use std::collections::HashMap;
+
+    let by_tag: HashMap<&str, &config::OutboundConfig> =
+        outs.iter().map(|o| (o.tag.as_str(), o)).collect();
+    for o in outs {
+        let Some(detour) = o.detour.as_deref() else {
+            continue;
+        };
+        let target = by_tag.get(detour).ok_or_else(|| {
+            Error::Config(format!(
+                "выход {}: detour указывает на отсутствующий outbound «{detour}»",
+                o.tag
+            ))
+        })?;
+        if target.kind.is_group() || matches!(target.kind, OutboundKind::Block | OutboundKind::Dns)
+        {
+            return Err(Error::Config(format!(
+                "выход {}: detour должен указывать на TCP outbound, а не «{detour}»",
+                o.tag
+            )));
+        }
+    }
+
+    fn visit<'a>(
+        tag: &'a str,
+        by_tag: &HashMap<&'a str, &'a config::OutboundConfig>,
+        state: &mut HashMap<&'a str, u8>,
+        path: &mut Vec<&'a str>,
+    ) -> Result<()> {
+        match state.get(tag) {
+            Some(2) => return Ok(()),
+            Some(1) => {
+                path.push(tag);
+                return Err(Error::Config(format!(
+                    "циклическая цепочка outbound detour: {}",
+                    path.join(" → ")
+                )));
+            }
+            _ => {}
+        }
+        state.insert(tag, 1);
+        path.push(tag);
+        if let Some(next) = by_tag[tag].detour.as_deref() {
+            visit(next, by_tag, state, path)?;
+        }
+        path.pop();
+        state.insert(tag, 2);
+        Ok(())
+    }
+
+    let mut state = HashMap::new();
+    let mut tags: Vec<&str> = outs
+        .iter()
+        .filter(|o| o.detour.is_some())
+        .map(|o| o.tag.as_str())
+        .collect();
+    tags.sort_unstable();
+    for tag in tags {
+        visit(tag, &by_tag, &mut state, &mut Vec::new())?;
+    }
+    Ok(())
+}
+
 fn valid_sub_tag(t: &str) -> bool {
     !t.is_empty()
         && !t.starts_with('.')
@@ -798,6 +863,61 @@ mod external_tun_route_tests {
     }
 }
 
+#[cfg(test)]
+mod outbound_detour_tests {
+    use super::*;
+
+    #[test]
+    fn detour_chains_may_mix_http_and_socks_with_a_vless_first_hop() {
+        let config = Config::parse(
+            r#"{"outbounds":[
+                {"type":"vless","tag":"entry","link":"vless://00000000-0000-0000-0000-000000000001@entry.example:443?security=none&encryption=none","allow_insecure":true},
+                {"type":"socks","tag":"middle","server":"middle.example","server_port":1080,"network":"tcp","detour":"entry"},
+                {"type":"http","tag":"exit","server":"exit.example","server_port":8080,"detour":"middle"}
+            ]}"#,
+        )
+        .unwrap();
+        check_outbound_detours(&config.outbounds).unwrap();
+    }
+
+    #[test]
+    fn detour_cycles_missing_tags_and_groups_are_rejected() {
+        let cycle = Config::parse(
+            r#"{"outbounds":[
+                {"type":"socks","tag":"a","server":"a.example","server_port":1080,"network":"tcp","detour":"b"},
+                {"type":"http","tag":"b","server":"b.example","server_port":8080,"detour":"a"}
+            ]}"#,
+        )
+        .unwrap();
+        assert!(check_outbound_detours(&cycle.outbounds)
+            .unwrap_err()
+            .to_string()
+            .contains("циклическая цепочка"));
+
+        let missing = Config::parse(
+            r#"{"outbounds":[{"type":"http","tag":"proxy","server":"proxy.example","server_port":8080,"detour":"missing"}]}"#,
+        )
+        .unwrap();
+        assert!(check_outbound_detours(&missing.outbounds)
+            .unwrap_err()
+            .to_string()
+            .contains("отсутствующий outbound"));
+
+        let group = Config::parse(
+            r#"{"outbounds":[
+                {"type":"selector","tag":"group","outbounds":["base"]},
+                {"type":"direct","tag":"base"},
+                {"type":"socks","tag":"proxy","server":"proxy.example","server_port":1080,"network":"tcp","detour":"group"}
+            ]}"#,
+        )
+        .unwrap();
+        assert!(check_outbound_detours(&group.outbounds)
+            .unwrap_err()
+            .to_string()
+            .contains("должен указывать на TCP outbound"));
+    }
+}
+
 fn build_tun_inbound(
     i: &config::InboundConfig,
     tag: &str,
@@ -944,6 +1064,7 @@ fn build_core(
         o.check_fields()?;
     }
     check_group_cycles(&cfg.outbounds)?;
+    check_outbound_detours(&cfg.outbounds)?;
     let mut route = cfg.route.clone();
     route.rules.extend(preset_rules(cfg)?);
     for r in &mut route.rules {
@@ -961,6 +1082,12 @@ fn build_core(
     let global_cfg = config::OutboundConfig::new(GLOBAL, OutboundKind::Selector);
     let mut outbounds: Vec<Arc<dyn Outbound>> = Vec::new();
     let mut groups: Vec<(&config::OutboundConfig, Arc<Group>)> = Vec::new();
+    let detour_slots: std::collections::HashMap<String, outbound::OutboundSlot> = cfg
+        .outbounds
+        .iter()
+        .filter(|o| o.detour.is_some())
+        .map(|o| (o.tag.clone(), Arc::new(std::sync::OnceLock::new())))
+        .collect();
     for o in &cfg.outbounds {
         let built: Arc<dyn Outbound> = match o.kind {
             OutboundKind::Vless => Arc::new(build_vless(o)?),
@@ -983,13 +1110,16 @@ fn build_core(
                 let port = o.proxy_port.ok_or_else(|| {
                     Error::Config(format!("выход {}: SOCKS5 требует server_port", o.tag))
                 })?;
-                Arc::new(socks_out::Socks5Outbound::new(
-                    o.tag.clone(),
-                    server,
-                    port,
-                    o.proxy_username.clone(),
-                    password,
-                )?)
+                Arc::new(
+                    socks_out::Socks5Outbound::new(
+                        o.tag.clone(),
+                        server,
+                        port,
+                        o.proxy_username.clone(),
+                        password,
+                    )?
+                    .with_detour(detour_slots.get(&o.tag).cloned()),
+                )
             }
             OutboundKind::HttpConnect => {
                 let password = match (&o.proxy_password, &o.proxy_password_file) {
@@ -1019,7 +1149,8 @@ fn build_core(
                     o.proxy_tls,
                     o.proxy_tls_server_name.clone(),
                 )?
-                .with_roots(roots);
+                .with_roots(roots)
+                .with_detour(detour_slots.get(&o.tag).cloned());
                 Arc::new(outbound)
             }
             OutboundKind::Direct => Arc::new(build_direct(
@@ -1080,6 +1211,22 @@ fn build_core(
             }
         }
         g.set_fixed(members);
+    }
+    for o in &cfg.outbounds {
+        let Some(detour_tag) = &o.detour else {
+            continue;
+        };
+        let target = find_out(detour_tag).ok_or_else(|| {
+            Error::Config(format!(
+                "выход {}: detour указывает на отсутствующий outbound «{detour_tag}»",
+                o.tag
+            ))
+        })?;
+        let slot = detour_slots.get(&o.tag).ok_or_else(|| {
+            Error::Config(format!("выход {}: внутренний слот detour не найден", o.tag))
+        })?;
+        slot.set(target)
+            .map_err(|_| Error::Config(format!("выход {}: detour уже инициализирован", o.tag)))?;
     }
     // Подписки.
     let mut subs = Vec::new();

@@ -9,7 +9,7 @@
 //! Каждый выход умеет TCP (`connect`) и UDP (`udp` → [`UdpSession`]).
 
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use futures_util::future::BoxFuture;
@@ -17,12 +17,35 @@ use tokio::net::UdpSocket;
 use tokio::sync::Mutex;
 
 use super::dns::{self, Dns, DnsSlot, DNS_INTERNAL};
-use super::Metadata;
+use super::{Metadata, Network};
 use crate::error::{Error, Result};
 use crate::transport::fragment::{Fragment, FragmentStream};
 use crate::transport::noise::Noise;
 use crate::transport::AsyncStream;
 use crate::vless::Address;
+
+/// Lazy reference used to connect an outbound through another outbound.
+pub(crate) type OutboundSlot = Arc<OnceLock<Arc<dyn Outbound>>>;
+
+/// Metadata for the TCP connection an outbound opens to its own proxy server.
+pub(crate) fn detour_metadata(server: &str, port: u16, parent: &Metadata) -> Metadata {
+    let target = match server.parse::<IpAddr>() {
+        Ok(IpAddr::V4(ip)) => Address::Ipv4(ip),
+        Ok(IpAddr::V6(ip)) => Address::Ipv6(ip),
+        Err(_) => Address::Domain(server.to_string()),
+    };
+    Metadata {
+        inbound: parent.inbound.clone(),
+        source: parent.source,
+        user_id: parent.user_id,
+        network: Network::Tcp,
+        target,
+        port,
+        sniffed: None,
+        inbound_type: parent.inbound_type,
+        rule: None,
+    }
+}
 
 /// Датаграмма: адрес, порт, данные.
 pub type Packet = (Address, u16, Vec<u8>);

@@ -176,6 +176,29 @@ HTTP/2, HTTP/3 и UDP не поддерживаются. Ошибка proxy во
 коду; автоматического перехода на `direct` нет. Пароль можно задать строкой
 `password` либо расширением vpn-core `password_file`, но не обоими сразу.
 
+## TCP-цепочки через `detour`
+
+Для SOCKS5- и HTTP CONNECT-outbound можно задать `detour`: тогда ядро откроет
+соединение к серверу proxy через указанный TCP outbound. Например, HTTP CONNECT
+можно направить через SOCKS5:
+
+```json
+{
+  "outbounds": [
+    { "type": "socks", "tag": "entry", "server": "entry.example", "server_port": 1080, "network": "tcp" },
+    { "type": "http", "tag": "exit", "server": "exit.example", "server_port": 8080, "detour": "entry" }
+  ],
+  "route": { "final": "exit" }
+}
+```
+
+`detour` задаётся у SOCKS5 или HTTP CONNECT. Цепочку можно продолжить ещё одним
+таким выходом; базовым outbound может быть `direct`, VLESS или Trojan.
+Группы, `block` и `dns` нельзя использовать как `detour`. Конфигурация с
+отсутствующим tag или циклом отклоняется. Отказ любого звена возвращается
+вызывающему коду; автоматического перехода на `direct` нет. Поддерживается TCP,
+UDP-цепочки не поддерживаются.
+
 ## Android
 
 До передачи FD можно вызвать `rc_validate(config, base_dir)` — 1 означает,

@@ -183,6 +183,28 @@ errors are returned to the caller; traffic never falls back automatically to
 `direct`. Set the password inline or with the vpn-core `password_file` extension,
 but not both.
 
+## TCP chains with `detour`
+
+SOCKS5 and HTTP CONNECT outbounds can use `detour` to open their proxy-server
+connection through another TCP outbound. For example, HTTP CONNECT can run
+through SOCKS5:
+
+```json
+{
+  "outbounds": [
+    { "type": "socks", "tag": "entry", "server": "entry.example", "server_port": 1080, "network": "tcp" },
+    { "type": "http", "tag": "exit", "server": "exit.example", "server_port": 8080, "detour": "entry" }
+  ],
+  "route": { "final": "exit" }
+}
+```
+
+Set `detour` on SOCKS5 or HTTP CONNECT outbounds. Chains can contain more of
+these proxy outbounds; a base outbound can also be `direct`, VLESS, or Trojan.
+Groups, `block`, and `dns` are not valid detours. Missing tags and cycles are
+rejected. A failure at any hop is returned to the caller without falling back
+to `direct`. Only TCP is supported; UDP chains are not.
+
 ## Android
 
 Before transferring the FD, `rc_validate(config, base_dir)` returns 1 when
