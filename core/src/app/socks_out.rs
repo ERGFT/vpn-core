@@ -113,6 +113,103 @@ impl Outbound for Socks5Outbound {
     }
 }
 
+async fn handshake(
+    stream: &mut TcpStream,
+    meta: &Metadata,
+    username: Option<&str>,
+    password: Option<&str>,
+) -> Result<()> {
+    let authenticated = username.is_some();
+    if authenticated {
+        stream.write_all(&[5, 1, 2]).await?;
+    } else {
+        stream.write_all(&[5, 1, 0]).await?;
+    }
+    let mut method = [0; 2];
+    stream.read_exact(&mut method).await?;
+    let expected_method = if authenticated { 2 } else { 0 };
+    if method[0] != 5 || method[1] != expected_method {
+        return Err(Error::Socks5(
+            "прокси не принял предложенный способ аутентификации".into(),
+        ));
+    }
+
+    if let (Some(username), Some(password)) = (username, password) {
+        let user = username.as_bytes();
+        let pass = password.as_bytes();
+        if user.is_empty() || user.len() > 255 || pass.is_empty() || pass.len() > 255 {
+            return Err(Error::Socks5("некорректная длина учётных данных".into()));
+        }
+        let mut auth = Zeroizing::new(Vec::with_capacity(user.len() + pass.len() + 3));
+        auth.extend_from_slice(&[1, user.len() as u8]);
+        auth.extend_from_slice(user);
+        auth.push(pass.len() as u8);
+        auth.extend_from_slice(pass);
+        stream.write_all(&auth).await?;
+        let mut result = [0; 2];
+        stream.read_exact(&mut result).await?;
+        if result != [1, 0] {
+            return Err(Error::Socks5("прокси отклонил учётные данные".into()));
+        }
+    }
+
+    let mut request = vec![5, 1, 0];
+    match &meta.target {
+        crate::vless::Address::Ipv4(ip) => {
+            request.push(1);
+            request.extend_from_slice(&ip.octets());
+        }
+        crate::vless::Address::Domain(domain) => {
+            let name = domain.as_bytes();
+            if name.is_empty() || name.len() > 255 || domain.chars().any(char::is_control) {
+                return Err(Error::Socks5("некорректное имя назначения".into()));
+            }
+            request.extend_from_slice(&[3, name.len() as u8]);
+            request.extend_from_slice(name);
+        }
+        crate::vless::Address::Ipv6(ip) => {
+            request.push(4);
+            request.extend_from_slice(&ip.octets());
+        }
+    }
+    request.extend_from_slice(&meta.port.to_be_bytes());
+    stream.write_all(&request).await?;
+
+    let mut head = [0; 4];
+    stream.read_exact(&mut head).await?;
+    if head[0] != 5 || head[2] != 0 {
+        return Err(Error::Socks5("некорректный ответ CONNECT от прокси".into()));
+    }
+    match head[3] {
+        1 => {
+            let mut address_and_port = [0; 6];
+            stream.read_exact(&mut address_and_port).await?;
+        }
+        3 => {
+            let mut len = [0; 1];
+            stream.read_exact(&mut len).await?;
+            let mut address_and_port = vec![0; len[0] as usize + 2];
+            stream.read_exact(&mut address_and_port).await?;
+        }
+        4 => {
+            let mut address_and_port = [0; 18];
+            stream.read_exact(&mut address_and_port).await?;
+        }
+        _ => {
+            return Err(Error::Socks5(
+                "неподдерживаемый тип адреса в ответе прокси".into(),
+            ))
+        }
+    }
+    if head[1] != 0 {
+        return Err(Error::Socks5(format!(
+            "прокси отказал в CONNECT (код {})",
+            head[1]
+        )));
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -302,101 +399,4 @@ mod tests {
         assert!(!error.contains("private-pass"));
         server.await.unwrap();
     }
-}
-
-async fn handshake(
-    stream: &mut TcpStream,
-    meta: &Metadata,
-    username: Option<&str>,
-    password: Option<&str>,
-) -> Result<()> {
-    let authenticated = username.is_some();
-    if authenticated {
-        stream.write_all(&[5, 1, 2]).await?;
-    } else {
-        stream.write_all(&[5, 1, 0]).await?;
-    }
-    let mut method = [0; 2];
-    stream.read_exact(&mut method).await?;
-    let expected_method = if authenticated { 2 } else { 0 };
-    if method[0] != 5 || method[1] != expected_method {
-        return Err(Error::Socks5(
-            "прокси не принял предложенный способ аутентификации".into(),
-        ));
-    }
-
-    if let (Some(username), Some(password)) = (username, password) {
-        let user = username.as_bytes();
-        let pass = password.as_bytes();
-        if user.is_empty() || user.len() > 255 || pass.is_empty() || pass.len() > 255 {
-            return Err(Error::Socks5("некорректная длина учётных данных".into()));
-        }
-        let mut auth = Zeroizing::new(Vec::with_capacity(user.len() + pass.len() + 3));
-        auth.extend_from_slice(&[1, user.len() as u8]);
-        auth.extend_from_slice(user);
-        auth.push(pass.len() as u8);
-        auth.extend_from_slice(pass);
-        stream.write_all(&auth).await?;
-        let mut result = [0; 2];
-        stream.read_exact(&mut result).await?;
-        if result != [1, 0] {
-            return Err(Error::Socks5("прокси отклонил учётные данные".into()));
-        }
-    }
-
-    let mut request = vec![5, 1, 0];
-    match &meta.target {
-        crate::vless::Address::Ipv4(ip) => {
-            request.push(1);
-            request.extend_from_slice(&ip.octets());
-        }
-        crate::vless::Address::Domain(domain) => {
-            let name = domain.as_bytes();
-            if name.is_empty() || name.len() > 255 || domain.chars().any(char::is_control) {
-                return Err(Error::Socks5("некорректное имя назначения".into()));
-            }
-            request.extend_from_slice(&[3, name.len() as u8]);
-            request.extend_from_slice(name);
-        }
-        crate::vless::Address::Ipv6(ip) => {
-            request.push(4);
-            request.extend_from_slice(&ip.octets());
-        }
-    }
-    request.extend_from_slice(&meta.port.to_be_bytes());
-    stream.write_all(&request).await?;
-
-    let mut head = [0; 4];
-    stream.read_exact(&mut head).await?;
-    if head[0] != 5 || head[2] != 0 {
-        return Err(Error::Socks5("некорректный ответ CONNECT от прокси".into()));
-    }
-    match head[3] {
-        1 => {
-            let mut address_and_port = [0; 6];
-            stream.read_exact(&mut address_and_port).await?;
-        }
-        3 => {
-            let mut len = [0; 1];
-            stream.read_exact(&mut len).await?;
-            let mut address_and_port = vec![0; len[0] as usize + 2];
-            stream.read_exact(&mut address_and_port).await?;
-        }
-        4 => {
-            let mut address_and_port = [0; 18];
-            stream.read_exact(&mut address_and_port).await?;
-        }
-        _ => {
-            return Err(Error::Socks5(
-                "неподдерживаемый тип адреса в ответе прокси".into(),
-            ))
-        }
-    }
-    if head[1] != 0 {
-        return Err(Error::Socks5(format!(
-            "прокси отказал в CONNECT (код {})",
-            head[1]
-        )));
-    }
-    Ok(())
 }

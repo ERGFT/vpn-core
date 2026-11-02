@@ -969,13 +969,22 @@ fn build_core(
                     (None, Some(path)) => Some(config::read_secret_file(path)?),
                     (None, None) => None,
                     (Some(_), Some(_)) => {
-                        unreachable!("validated mutually exclusive SOCKS5 password")
+                        return Err(Error::Config(format!(
+                            "выход {}: SOCKS5 password и password_file взаимоисключающие",
+                            o.tag
+                        )))
                     }
                 };
+                let server = o.proxy_server.clone().ok_or_else(|| {
+                    Error::Config(format!("выход {}: SOCKS5 требует server", o.tag))
+                })?;
+                let port = o.proxy_port.ok_or_else(|| {
+                    Error::Config(format!("выход {}: SOCKS5 требует server_port", o.tag))
+                })?;
                 Arc::new(socks_out::Socks5Outbound::new(
                     o.tag.clone(),
-                    o.proxy_server.clone().expect("validated SOCKS5 server"),
-                    o.proxy_port.expect("validated SOCKS5 port"),
+                    server,
+                    port,
                     o.proxy_username.clone(),
                     password,
                 )?)
