@@ -35,6 +35,11 @@
 - XHTTP: `downloadSettings` открывает отдельный канал скачивания с независимым
   адресом, портом и настройками HTTP/защиты; неподдерживаемые поля отклоняются.
 
+### Соединения
+- TCP dialer чередует IPv4/IPv6 адреса: альтернативное семейство начинает
+  подключение через 250 мс, одновременно работает не более двух попыток,
+  общий предел — 10 с и 8 адресов.
+
 ### Исправления
 - Патченный `rustls` обновлён до 0.23.46 (RUSTSEC-2026-0348, RUSTSEC-2026-0349
   и ещё две); патч REALITY перенесён без изменения объёма — 13 файлов,
@@ -230,6 +235,11 @@ stage-by-stage decision history is in [PLAN.md](PLAN.md) (in Russian).
 ### Transports
 - XHTTP: `downloadSettings` opens a separate download channel with its own
   address, port, HTTP version and transport security; unsupported fields fail.
+
+### Connections
+- The TCP dialer interleaves IPv4/IPv6 candidates: the alternative family
+  starts after 250 ms, at most two attempts run concurrently, with a 10 s
+  total deadline and an eight-address limit.
 
 No stable release has been made yet (`git tag v0.1.0 && git push origin v0.1.0`).
 It will include:

@@ -1461,7 +1461,7 @@ for protocol changes (see [CONTRIBUTING](../CONTRIBUTING.md)).
 | Connections per inbound | 512 (`max_conns`); TUN — 4096 | `proxy_in.rs`, `tun/mod.rs` |
 | UDP sessions per association | 256 | `proxy_in.rs` |
 | Sniffing | 300 ms, 16 KiB; QUIC — up to 8 datagrams | `sniff.rs`, `sniff_quic.rs` |
-| Connecting to an address | 10 s | `tcp_tls.rs` |
+| Connecting across address candidates | 10 s total; start another after 250 ms; at most 2 concurrent and 8 addresses | `tcp_tls.rs` |
 | TLS/REALITY handshake | 15 s | `tcp_tls.rs` |
 | Opening a VLESS session in total | 30 s | `vless_out.rs` |
 | `direct` in total | 30 s | `outbound.rs` |

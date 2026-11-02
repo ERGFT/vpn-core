@@ -7,10 +7,13 @@
 //! (`fingerprint::chrome_profile`): порядок cipher suites, GREASE, набор
 //! расширений и их значения; для REALITY совпадает и JA4.
 
+use std::collections::VecDeque;
+use std::future::Future;
 use std::net::SocketAddr;
 use std::sync::{Arc, Once};
 use std::time::Duration;
 
+use futures_util::stream::{FuturesUnordered, StreamExt};
 use rustls::pki_types::ServerName;
 use rustls::{ClientConfig, RootCertStore};
 use tokio::net::TcpStream;
@@ -45,6 +48,11 @@ const CLIENT_HELLO_CAPTURE_CAP: usize = 4096;
 /// освобождались бы никогда.
 const DNS_TIMEOUT: Duration = Duration::from_secs(5);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+/// Интервал Happy Eyeballs между попытками подключения к разным адресам.
+const HAPPY_EYEBALLS_DELAY: Duration = Duration::from_millis(250);
+/// Ограничиваем одновременно открытые сокеты и число адресов из одного DNS-ответа.
+const MAX_PARALLEL_CONNECTS: usize = 2;
+const MAX_CONNECT_ATTEMPTS: usize = 8;
 /// Отдельно на TLS-рукопожатие: сервер может принять TCP и молчать —
 /// таймаут TCP тут уже не поможет, соединение-то установлено.
 /// Поймано тестом `core/tests/connect_robustness.rs`: до этого клиент
@@ -286,41 +294,146 @@ pub async fn resolve_host(host: &str, port: u16) -> Result<Vec<SocketAddr>> {
 }
 
 /// TCP-соединение с `host:port`: разрешение имени системным резолвером и
-/// перебор всех адресов (с таймаутом на каждый).
+/// параллельный перебор адресов по принципу Happy Eyeballs.
 pub async fn connect_host(host: &str, port: u16) -> Result<TcpStream> {
     let addrs = resolve_host(host, port).await?;
     connect_addrs(&addrs, host).await
 }
 
-/// Подключиться к первому ответившему из адресов. Перебираем ВСЕ, а не
-/// только первый: домен часто отдаёт и IPv6, и IPv4; если IPv6 в сети не
-/// работает (обычное дело), раньше клиент не подключался, хотя IPv4 был
-/// рядом в том же ответе.
+/// Подключиться к первому ответившему адресу. Семейства чередуются в
+/// порядке первого адреса DNS-ответа; следующая попытка стартует через
+/// 250 мс, а отказ предыдущей запускает следующую сразу. Одновременно
+/// выполняется не больше двух попыток, общий предел — 10 секунд.
 pub async fn connect_addrs(addrs: &[SocketAddr], what: &str) -> Result<TcpStream> {
-    let mut last_err = None;
+    connect_addrs_with(addrs, what, |sa| async move {
+        crate::net_protect::tcp_socket(&sa)?.connect(sa).await
+    })
+    .await
+}
+
+fn interleave_addrs(addrs: &[SocketAddr]) -> Vec<SocketAddr> {
+    let mut v4 = VecDeque::new();
+    let mut v6 = VecDeque::new();
     for sa in addrs {
-        let connect = async { crate::net_protect::tcp_socket(sa)?.connect(*sa).await };
-        match tokio::time::timeout(CONNECT_TIMEOUT, connect).await {
-            Ok(Ok(tcp)) => {
-                tcp.set_nodelay(true).ok();
-                return Ok(tcp);
+        match sa {
+            SocketAddr::V4(_) if v4.len() < MAX_CONNECT_ATTEMPTS && !v4.contains(sa) => {
+                v4.push_back(*sa)
             }
-            Ok(Err(e)) => {
-                tracing::debug!(%sa, error = %e, "адрес не подошёл, пробую следующий");
-                last_err = Some(Error::Io(e));
+            SocketAddr::V6(_) if v6.len() < MAX_CONNECT_ATTEMPTS && !v6.contains(sa) => {
+                v6.push_back(*sa)
             }
-            Err(_) => {
-                tracing::debug!(%sa, "таймаут подключения, пробую следующий");
-                last_err = Some(Error::Protocol(format!(
+            _ => {}
+        }
+    }
+
+    let first_is_v6 = matches!(addrs.first(), Some(SocketAddr::V6(_)));
+    let (mut first, mut second) = if first_is_v6 { (v6, v4) } else { (v4, v6) };
+    let mut ordered = Vec::with_capacity(first.len() + second.len());
+    let mut take_first = true;
+    while !first.is_empty() || !second.is_empty() {
+        let source = if (take_first && !first.is_empty()) || second.is_empty() {
+            &mut first
+        } else {
+            &mut second
+        };
+        if let Some(sa) = source.pop_front() {
+            ordered.push(sa);
+        }
+        take_first = !take_first;
+    }
+    ordered.truncate(MAX_CONNECT_ATTEMPTS);
+    ordered
+}
+
+async fn connect_attempt<T, F, Fut>(
+    connect: &F,
+    sa: SocketAddr,
+) -> (SocketAddr, std::result::Result<T, Error>)
+where
+    F: Fn(SocketAddr) -> Fut + Sync,
+    Fut: Future<Output = std::io::Result<T>> + Send,
+    T: Send,
+{
+    let result = match tokio::time::timeout(CONNECT_TIMEOUT, connect(sa)).await {
+        Ok(Ok(stream)) => Ok(stream),
+        Ok(Err(error)) => Err(Error::Io(error)),
+        Err(_) => Err(Error::Protocol(format!(
+            "таймаут подключения ({} с)",
+            CONNECT_TIMEOUT.as_secs()
+        ))),
+    };
+    (sa, result)
+}
+
+async fn connect_addrs_with<T, F, Fut>(addrs: &[SocketAddr], what: &str, connect: F) -> Result<T>
+where
+    F: Fn(SocketAddr) -> Fut + Sync,
+    Fut: Future<Output = std::io::Result<T>> + Send,
+    T: Send,
+{
+    let candidates = interleave_addrs(addrs);
+    if candidates.is_empty() {
+        return Err(Error::Protocol(
+            "не удалось подключиться ни к одному адресу".into(),
+        ));
+    }
+
+    let started = tokio::time::Instant::now();
+    let deadline = started + CONNECT_TIMEOUT;
+    let mut next_start = started + HAPPY_EYEBALLS_DELAY;
+    let mut next_candidate = 1;
+    let mut last_error = None;
+    let mut attempts = FuturesUnordered::new();
+    attempts.push(connect_attempt(&connect, candidates[0]));
+
+    loop {
+        if attempts.is_empty() && next_candidate == candidates.len() {
+            tracing::debug!(%what, "не удалось подключиться ни к одному адресу");
+            return Err(last_error.unwrap_or_else(|| {
+                Error::Protocol("не удалось подключиться ни к одному адресу".into())
+            }));
+        }
+
+        if attempts.is_empty() && next_candidate < candidates.len() {
+            attempts.push(connect_attempt(&connect, candidates[next_candidate]));
+            next_candidate += 1;
+            next_start = tokio::time::Instant::now() + HAPPY_EYEBALLS_DELAY;
+            continue;
+        }
+
+        if next_candidate < candidates.len()
+            && attempts.len() < MAX_PARALLEL_CONNECTS
+            && tokio::time::Instant::now() >= next_start
+        {
+            attempts.push(connect_attempt(&connect, candidates[next_candidate]));
+            next_candidate += 1;
+            next_start = tokio::time::Instant::now() + HAPPY_EYEBALLS_DELAY;
+            continue;
+        }
+
+        tokio::select! {
+            Some((sa, result)) = attempts.next() => {
+                match result {
+                    Ok(stream) => return Ok(stream),
+                    Err(error) => {
+                        tracing::debug!(%sa, error = %error, "адрес не подошёл");
+                        last_error = Some(error);
+                        // Ошибка освобождает слот; следующую попытку можно начать сразу.
+                        next_start = tokio::time::Instant::now();
+                    }
+                }
+            }
+            _ = tokio::time::sleep_until(next_start),
+                if next_candidate < candidates.len() && attempts.len() < MAX_PARALLEL_CONNECTS => {}
+            _ = tokio::time::sleep_until(deadline) => {
+                tracing::debug!(%what, "превышен общий таймаут подключения");
+                return Err(Error::Protocol(format!(
                     "таймаут подключения ({} с)",
                     CONNECT_TIMEOUT.as_secs()
                 )));
             }
         }
     }
-    tracing::debug!(%what, "не удалось подключиться ни к одному адресу");
-    Err(last_err
-        .unwrap_or_else(|| Error::Protocol("не удалось подключиться ни к одному адресу".into())))
 }
 
 async fn connect_tcp(cfg: &VlessConfig) -> Result<RawConn> {
@@ -825,4 +938,191 @@ pub async fn connect_command(
     }
     let s = vless_connect(stream, id, command, &target, target_port).await?;
     Ok(TcpVlessStream::Plain(s))
+}
+
+#[cfg(test)]
+mod connect_addrs_tests {
+    use super::*;
+    use std::net::{Ipv4Addr, Ipv6Addr};
+    use std::sync::Mutex;
+
+    fn v4(last: u8, port: u16) -> SocketAddr {
+        SocketAddr::from((Ipv4Addr::new(192, 0, 2, last), port))
+    }
+
+    fn v6(last: u16, port: u16) -> SocketAddr {
+        SocketAddr::from((Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, last), port))
+    }
+
+    #[test]
+    fn address_order_interleaves_families_and_keeps_first_family_first() {
+        let addresses = [v6(1, 443), v6(2, 443), v4(1, 443), v4(2, 443)];
+        assert_eq!(
+            interleave_addrs(&addresses),
+            [v6(1, 443), v4(1, 443), v6(2, 443), v4(2, 443)]
+        );
+
+        let addresses = [v4(1, 443), v6(1, 443), v4(2, 443)];
+        assert_eq!(
+            interleave_addrs(&addresses),
+            [v4(1, 443), v6(1, 443), v4(2, 443)]
+        );
+    }
+
+    #[test]
+    fn address_order_deduplicates_and_limits_connection_attempts() {
+        let mut addresses = Vec::new();
+        for n in 1..=12 {
+            addresses.push(v6(n, 443));
+            addresses.push(v4(n as u8, 443));
+        }
+        addresses.push(v6(1, 443));
+        addresses.push(v4(1, 443));
+
+        let ordered = interleave_addrs(&addresses);
+        assert_eq!(ordered.len(), MAX_CONNECT_ATTEMPTS);
+        assert_eq!(
+            ordered
+                .iter()
+                .copied()
+                .collect::<std::collections::HashSet<_>>()
+                .len(),
+            ordered.len()
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn second_family_wins_without_waiting_for_first_family_timeout() {
+        let addresses = [v6(1, 443), v4(1, 443)];
+        let started = tokio::time::Instant::now();
+        let attempts = Arc::new(Mutex::new(Vec::new()));
+        let result = connect_addrs_with(&addresses, "test", {
+            let attempts = attempts.clone();
+            move |sa| {
+                let attempts = attempts.clone();
+                async move {
+                    attempts.lock().unwrap().push(sa);
+                    if sa.is_ipv6() {
+                        std::future::pending::<()>().await;
+                    }
+                    Ok(sa)
+                }
+            }
+        })
+        .await
+        .unwrap();
+
+        assert_eq!(result, v4(1, 443));
+        assert_eq!(*attempts.lock().unwrap(), [v6(1, 443), v4(1, 443)]);
+        assert!(tokio::time::Instant::now().duration_since(started) < Duration::from_secs(1));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn fast_failures_start_the_next_candidate_immediately() {
+        let addresses = [v6(1, 443), v4(1, 443), v6(2, 443)];
+        let attempts = Arc::new(Mutex::new(Vec::new()));
+        let result = connect_addrs_with(&addresses, "test", {
+            let attempts = attempts.clone();
+            move |sa| {
+                let attempts = attempts.clone();
+                async move {
+                    attempts.lock().unwrap().push(sa);
+                    if sa == v6(2, 443) {
+                        Ok(sa)
+                    } else {
+                        Err(std::io::Error::new(
+                            std::io::ErrorKind::ConnectionRefused,
+                            "refused",
+                        ))
+                    }
+                }
+            }
+        })
+        .await
+        .unwrap();
+
+        assert_eq!(result, v6(2, 443));
+        assert_eq!(
+            *attempts.lock().unwrap(),
+            [v6(1, 443), v4(1, 443), v6(2, 443)]
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn connection_race_never_exceeds_two_active_attempts() {
+        struct Active(Arc<std::sync::atomic::AtomicUsize>);
+        impl Drop for Active {
+            fn drop(&mut self) {
+                self.0.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+            }
+        }
+
+        let addresses = [v6(1, 443), v6(2, 443), v4(1, 443), v4(2, 443)];
+        let active = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let peak = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let attempts = Arc::new(Mutex::new(Vec::new()));
+        let result = connect_addrs_with(&addresses, "test", {
+            let active = active.clone();
+            let peak = peak.clone();
+            let attempts = attempts.clone();
+            move |sa| {
+                let active = active.clone();
+                let peak = peak.clone();
+                let attempts = attempts.clone();
+                async move {
+                    attempts.lock().unwrap().push(sa);
+                    let current = active.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
+                    peak.fetch_max(current, std::sync::atomic::Ordering::SeqCst);
+                    let _active = Active(active);
+                    if sa == v6(1, 443) {
+                        tokio::time::sleep(Duration::from_millis(600)).await;
+                        Err(std::io::Error::new(
+                            std::io::ErrorKind::ConnectionRefused,
+                            "refused",
+                        ))
+                    } else if sa == v4(1, 443) {
+                        tokio::time::sleep(Duration::from_secs(2)).await;
+                        Err(std::io::Error::new(
+                            std::io::ErrorKind::ConnectionRefused,
+                            "refused",
+                        ))
+                    } else if sa == v6(2, 443) {
+                        tokio::time::sleep(Duration::from_millis(10)).await;
+                        Ok(sa)
+                    } else {
+                        tokio::time::sleep(Duration::from_secs(2)).await;
+                        Ok(sa)
+                    }
+                }
+            }
+        })
+        .await
+        .unwrap();
+
+        assert_eq!(result, v6(2, 443));
+        assert_eq!(
+            peak.load(std::sync::atomic::Ordering::SeqCst),
+            MAX_PARALLEL_CONNECTS
+        );
+        assert_eq!(
+            *attempts.lock().unwrap(),
+            [v6(1, 443), v4(1, 443), v6(2, 443)]
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn all_pending_addresses_share_one_ten_second_deadline() {
+        let addresses = [v6(1, 443), v4(1, 443), v6(2, 443), v4(2, 443)];
+        let started = tokio::time::Instant::now();
+        let result = connect_addrs_with(&addresses, "test", |_| async {
+            std::future::pending::<std::io::Result<SocketAddr>>().await
+        })
+        .await;
+
+        assert!(result.is_err());
+        assert_eq!(
+            tokio::time::Instant::now().duration_since(started),
+            CONNECT_TIMEOUT
+        );
+    }
 }
