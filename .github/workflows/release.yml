@@ -13,6 +13,13 @@ name: Release
 on:
   push:
     tags: ["v*"]
+  pull_request:
+    paths:
+      - .github/workflows/release.yml
+      - ffi/**
+      - scripts/package_ffi_sdk.py
+      - Cargo.lock
+      - Cargo.toml
 
 permissions:
   contents: read
@@ -161,6 +168,7 @@ jobs:
 
   publish:
     needs: [build, sdk]
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     permissions:
       contents: write
