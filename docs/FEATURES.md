@@ -19,6 +19,7 @@
 | Транспорт `type=tcp` (он же `raw`) | готово | интероп с Xray-core |
 | Транспорты `type=ws` (`path=`, `host=`), `type=grpc` (`serviceName=`, режим «gun»), `type=httpupgrade` | готово | проверены против настоящего Xray-core; HTTP-заголовки запроса — как у Chrome (как у Xray) |
 | Транспорт `type=xhttp` (SplitHTTP): режимы `packet-up`, `stream-up`, `stream-one`, HTTP/2, HTTP/1.1 и HTTP/3 (`alpn=h3`, QUIC), `extra=` | готово | все режимы проверены против Xray-core, в т.ч. поверх REALITY (см. ниже, что не поддерживается) |
+| XHTTP `downloadSettings`: отдельное направление скачивания | готово | отдельные адрес/порт и HTTP-сеанс проверяются интеропом с Xray; HTTP/1.1, h2 и h3 выбираются независимо |
 | `flow=xtls-rprx-vision` (XTLS Vision) | готово | padding, распознавание внутреннего TLS, прямая передача в обе стороны; проверено против Xray-core. Как и в Xray — только `type=tcp` с `tls`/`reality` |
 | REALITY: X25519MLKEM768 (и откат на X25519 для сайтов без ML-KEM), ShortId, `minClientVer`/`maxClientVer`, HMAC-сертификат | готово | против Xray-core и Go-библиотеки XTLS/REALITY; стороннего крипто-ревью не было |
 | REALITY: ML-DSA-65 (`pqv=`) | готово | против Xray-core, в т.ч. отказ при чужом ключе |
@@ -57,8 +58,14 @@
   Xray). UDP идёт через XUDP отдельным потоком.
 - `kcp` (mKCP — свой надёжный протокол поверх UDP, ~2,5 тыс. строк в Xray)
   не сделан: редкий и заметный для DPI транспорт.
-- xhttp: нет `downloadSettings`; через HTTP/1.1 соединения не
-  переиспользуются между сессиями (h2 и h3 — `xmux`). ClientHello внутри
+- xhttp `downloadSettings`: поддерживается отдельный XHTTP-канал скачивания;
+  в `downloadSettings` принимаются `address`, `port`, `network=xhttp`,
+  `security=none|tls|reality`, `tlsSettings.serverName`/`alpn`,
+  `realitySettings.serverName`/`publicKey`/`shortId` и
+  `xhttpSettings.host`/`path`. Путь обязан совпадать с основным каналом;
+  `stream-one` с разделением отклоняется. Другие вложенные параметры пока
+  отклоняются с ошибкой. Через HTTP/1.1 соединения не переиспользуются
+  между сессиями (h2 и h3 — `xmux`). ClientHello внутри
   QUIC (HTTP/3, DoQ) — от rustls, не как у Chrome (у Xray — quic-go, тоже
   не Chrome); `fp=` на QUIC не действует.
 - Обычный TLS (`security=tls`) отличается от Chrome двумя вещами — осознанно:

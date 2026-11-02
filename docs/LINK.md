@@ -13,8 +13,26 @@
 | `pqv` | ключ ML-DSA-65 сервера REALITY (необязательно) |
 | `flow` | пусто или `xtls-rprx-vision` (`-udp443` тоже); прочее — ошибка |
 | `path`, `host` | путь и заголовок Host для ws, httpupgrade, xhttp (`?ed=` в пути отбрасывается) |
-| `mode` | для xhttp: `auto` (по умолчанию: REALITY — `stream-one`, иначе `packet-up`), `packet-up`, `stream-up`, `stream-one` |
-| `extra` | для xhttp: JSON как у Xray — `headers`, `xPaddingBytes`, `noGRPCHeader`, `scMaxEachPostBytes`, `scMinPostsIntervalMs`, `uplinkHTTPMethod`; настройки, меняющие формат запросов (`xPaddingObfsMode`, размещение session/seq/данных не в пути, `downloadSettings`), — ошибка |
+| `mode` | для xhttp: `auto` (по умолчанию: REALITY — `stream-one`, иначе `packet-up`; с `downloadSettings` и REALITY — `stream-up`), `packet-up`, `stream-up`, `stream-one` (`stream-one` несовместим с разделением направлений) |
+| `extra` | для xhttp: JSON как у Xray — `headers`, `xPaddingBytes`, `noGRPCHeader`, `scMaxEachPostBytes`, `scMinPostsIntervalMs`, `uplinkHTTPMethod`; `downloadSettings` поддерживает отдельный адрес/порт и XHTTP-соединение, см. [матрицу возможностей](FEATURES.md); неподдерживаемые параметры отвергаются |
+
+Минимальный пример раздельного канала скачивания (полный JSON задаётся как значение `extra=`):
+
+```json
+{
+  "downloadSettings": {
+    "address": "download.example.com",
+    "port": 443,
+    "network": "xhttp",
+    "security": "tls",
+    "tlsSettings": { "serverName": "download.example.com", "alpn": ["h2"] },
+    "xhttpSettings": { "host": "download.example.com", "path": "/xhttp" }
+  }
+}
+```
+
+Путь должен совпадать с `path=` основного канала. Поддерживаются только явно
+перечисленные вложенные поля; `stream-one` и неизвестные поля отклоняются.
 | `serviceName` | имя gRPC-сервиса |
 | `alpn` | список ALPN через запятую; по умолчанию `h2,http/1.1` (как Chrome), для ws и httpupgrade — `http/1.1`, для gRPC — всегда `h2`; для xhttp `alpn=http/1.1` включает HTTP/1.1, `alpn=h3` — HTTP/3 поверх QUIC (только `security=tls`) |
 | `encryption` | только `none` |
