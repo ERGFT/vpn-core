@@ -27,6 +27,7 @@ pub mod events;
 pub mod geo;
 pub mod group;
 pub mod http_client;
+pub mod http_connect_out;
 pub mod http_in;
 pub mod outbound;
 pub mod proxy_in;
@@ -828,9 +829,10 @@ fn router_pinned_servers(
 ) -> Vec<Option<(String, u16)>> {
     outs.iter()
         .map(|o| match o.kind {
-            OutboundKind::Vless | OutboundKind::Trojan | OutboundKind::Socks5 => {
-                router.get(&o.tag).and_then(|b| b.server())
-            }
+            OutboundKind::Vless
+            | OutboundKind::Trojan
+            | OutboundKind::Socks5
+            | OutboundKind::HttpConnect => router.get(&o.tag).and_then(|b| b.server()),
             _ => None,
         })
         .collect()
@@ -988,6 +990,37 @@ fn build_core(
                     o.proxy_username.clone(),
                     password,
                 )?)
+            }
+            OutboundKind::HttpConnect => {
+                let password = match (&o.proxy_password, &o.proxy_password_file) {
+                    (Some(value), None) => Some(value.clone()),
+                    (None, Some(path)) => Some(config::read_secret_file(path)?),
+                    (None, None) => None,
+                    (Some(_), Some(_)) => {
+                        return Err(Error::Config(format!(
+                            "выход {}: HTTP CONNECT password и password_file взаимоисключающие",
+                            o.tag
+                        )))
+                    }
+                };
+                let server = o.proxy_server.clone().ok_or_else(|| {
+                    Error::Config(format!("выход {}: HTTP CONNECT требует server", o.tag))
+                })?;
+                let port = o.proxy_port.ok_or_else(|| {
+                    Error::Config(format!("выход {}: HTTP CONNECT требует server_port", o.tag))
+                })?;
+                let roots = o.ca_file.as_deref().map(config::load_ca).transpose()?;
+                let outbound = http_connect_out::HttpConnectOutbound::new(
+                    o.tag.clone(),
+                    server,
+                    port,
+                    o.proxy_username.clone(),
+                    password,
+                    o.proxy_tls,
+                    o.proxy_tls_server_name.clone(),
+                )?
+                .with_roots(roots);
+                Arc::new(outbound)
             }
             OutboundKind::Direct => Arc::new(build_direct(
                 o,

@@ -280,6 +280,7 @@ fn outbound(o: Obj<'_>) -> Result<OutboundConfig> {
         "vless" => OutboundKind::Vless,
         "trojan" => OutboundKind::Trojan,
         "socks" => OutboundKind::Socks5,
+        "http" => OutboundKind::HttpConnect,
         "direct" => OutboundKind::Direct,
         "block" => OutboundKind::Block,
         "dns" => OutboundKind::Dns,
@@ -323,6 +324,38 @@ fn outbound(o: Obj<'_>) -> Result<OutboundConfig> {
                 "udp_over_tcp",
                 "UDP и UDP-over-TCP в первой версии SOCKS5 outbound не поддерживаются",
             )?;
+        }
+        OutboundKind::HttpConnect => {
+            out.proxy_server = Some(o.req_str("server")?);
+            out.proxy_port = Some(
+                o.u16("server_port")?
+                    .ok_or_else(|| o.err("server_port", "не задано"))?,
+            );
+            out.proxy_username = o.str("username")?;
+            out.proxy_password = o.str("password")?;
+            out.proxy_password_file = o.str("password_file")?.map(PathBuf::from);
+            out.ca_file = o.str("ca_file")?.map(PathBuf::from);
+            if let Some(tls) = o.obj("tls")? {
+                out.proxy_tls = tls.bool("enabled")?.unwrap_or(false);
+                out.proxy_tls_server_name = tls.str("server_name")?;
+                tls.unsupported("insecure", "отключение проверки сертификата")?;
+                tls.unsupported("alpn", "ALPN для HTTP/2 и HTTP/3")?;
+                tls.unsupported("certificate", "собственные сертификаты TLS")?;
+                tls.unsupported("certificate_path", "собственные сертификаты TLS")?;
+                tls.finish()?;
+            }
+            if o.u64("version")?.is_some_and(|version| version != 1) {
+                return Err(o.err(
+                    "version",
+                    "HTTP CONNECT поддерживает только HTTP/1.1 (version = 1)",
+                ));
+            }
+            o.unsupported(
+                "disable_version_fallback",
+                "fallback отсутствует: используется HTTP/1.1 CONNECT",
+            )?;
+            o.unsupported("path", "HTTP CONNECT не использует HTTP request path")?;
+            o.unsupported("headers", "произвольные HTTP-заголовки")?;
         }
         OutboundKind::Direct => {
             out.fragment = fragment(&o)?;

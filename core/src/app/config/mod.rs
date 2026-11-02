@@ -225,6 +225,8 @@ pub enum OutboundKind {
     Trojan,
     /// SOCKS5 proxy для исходящих TCP CONNECT-соединений.
     Socks5,
+    /// HTTP CONNECT proxy для исходящих TCP-соединений.
+    HttpConnect,
     Direct,
     Block,
     /// Ответить самому DNS-модулем (перехват DNS-запросов).
@@ -263,13 +265,17 @@ pub struct OutboundConfig {
     pub fragment: Option<crate::transport::fragment::FragmentConfig>,
     /// direct: пакеты-пустышки перед первой UDP-датаграммой к адресу.
     pub noises: Vec<crate::transport::noise::NoiseConfig>,
-    /// socks: адрес SOCKS5-сервера и учётные данные RFC 1929.
+    /// socks/http: адрес proxy и учётные данные.
     pub proxy_server: Option<String>,
     pub proxy_port: Option<u16>,
     pub proxy_username: Option<String>,
     pub proxy_password: Option<String>,
-    /// Расширение vpn-core: пароль SOCKS5 из файла с ограниченным доступом.
+    /// Расширение vpn-core: пароль proxy из файла с ограниченным доступом.
     pub proxy_password_file: Option<PathBuf>,
+    /// HTTP CONNECT: TLS к proxy с проверкой публичного корневого набора.
+    pub proxy_tls: bool,
+    /// HTTP CONNECT: имя для SNI и проверки сертификата; по умолчанию server.
+    pub proxy_tls_server_name: Option<String>,
 
     // ── только для групп (selector, urltest, fallback) ──
     /// Участники — tag других выходов (в том числе групп).
@@ -305,6 +311,8 @@ impl std::fmt::Debug for OutboundConfig {
             .field("proxy_username", &crate::redact::opt(&self.proxy_username))
             .field("proxy_password", &crate::redact::opt(&self.proxy_password))
             .field("proxy_password_file", &self.proxy_password_file)
+            .field("proxy_tls", &self.proxy_tls)
+            .field("proxy_tls_server_name", &self.proxy_tls_server_name)
             .field("outbounds", &self.outbounds)
             .field("subscriptions", &self.subscriptions)
             .field("url", &self.url)
@@ -333,6 +341,8 @@ impl OutboundConfig {
             proxy_username: None,
             proxy_password: None,
             proxy_password_file: None,
+            proxy_tls: false,
+            proxy_tls_server_name: None,
             outbounds: Vec::new(),
             subscriptions: Vec::new(),
             url: None,
@@ -372,14 +382,12 @@ impl OutboundConfig {
                 "выход {tag}: outbounds, subscriptions, url, interval, tolerance, default — только у групп (selector, urltest, fallback)"
             )));
         }
-        let server_fields = self.link.is_some()
-            || self.link_file.is_some()
-            || self.ca_file.is_some()
-            || self.allow_insecure;
+        let server_fields = self.link.is_some() || self.link_file.is_some() || self.allow_insecure;
         let server = matches!(self.kind, OutboundKind::Vless | OutboundKind::Trojan);
-        if !server && server_fields {
+        let ca_file_allowed = server || (self.kind == OutboundKind::HttpConnect && self.proxy_tls);
+        if (!server && server_fields) || (self.ca_file.is_some() && !ca_file_allowed) {
             return Err(Error::Config(format!(
-                "выход {tag}: link, link_file, ca_file, allow_insecure — только у vless и trojan"
+                "выход {tag}: link, link_file и allow_insecure — только у vless и trojan; ca_file допустим также у HTTP CONNECT с TLS"
             )));
         }
         let socks_fields = self.proxy_server.is_some()
@@ -387,9 +395,11 @@ impl OutboundConfig {
             || self.proxy_username.is_some()
             || self.proxy_password.is_some()
             || self.proxy_password_file.is_some();
-        if self.kind != OutboundKind::Socks5 && socks_fields {
+        if !matches!(self.kind, OutboundKind::Socks5 | OutboundKind::HttpConnect)
+            && (socks_fields || self.proxy_tls || self.proxy_tls_server_name.is_some())
+        {
             return Err(Error::Config(format!(
-                "выход {tag}: server, server_port, username и password для SOCKS5 допустимы только у type = \"socks\""
+                "выход {tag}: параметры proxy допустимы только у type = \"socks\" или type = \"http\""
             )));
         }
         if self.kind == OutboundKind::Socks5 {
@@ -429,6 +439,51 @@ impl OutboundConfig {
             {
                 return Err(Error::Config(format!(
                     "выход {tag}: SOCKS5 username должен занимать 1–255 байт"
+                )));
+            }
+        }
+        if self.kind == OutboundKind::HttpConnect {
+            let server = self.proxy_server.as_ref().filter(|s| {
+                !s.trim().is_empty() && s.trim() == s.as_str() && !s.chars().any(char::is_control)
+            });
+            let port = self.proxy_port.filter(|p| *p != 0);
+            if server.is_none() || port.is_none() {
+                return Err(Error::Config(format!(
+                    "выход {tag}: HTTP CONNECT требует server и server_port от 1 до 65535"
+                )));
+            }
+            if self.proxy_password.is_some() && self.proxy_password_file.is_some() {
+                return Err(Error::Config(format!(
+                    "выход {tag}: HTTP CONNECT password и password_file взаимоисключающие"
+                )));
+            }
+            let has_password = self.proxy_password.is_some() || self.proxy_password_file.is_some();
+            if self.proxy_username.is_some() != has_password {
+                return Err(Error::Config(format!(
+                    "выход {tag}: HTTP CONNECT username и password должны быть заданы вместе"
+                )));
+            }
+            if self.proxy_username.as_ref().is_some_and(|u| {
+                u.is_empty() || u.len() > 4096 || u.contains(':') || u.chars().any(char::is_control)
+            }) || self
+                .proxy_password
+                .as_ref()
+                .is_some_and(|p| p.is_empty() || p.len() > 4096 || p.chars().any(char::is_control))
+            {
+                return Err(Error::Config(format!(
+                    "выход {tag}: HTTP CONNECT учётные данные пусты, слишком длинные или некорректны для Basic auth"
+                )));
+            }
+            if self.proxy_tls_server_name.is_some() && !self.proxy_tls {
+                return Err(Error::Config(format!(
+                    "выход {tag}: tls.server_name можно задавать только при tls.enabled = true"
+                )));
+            }
+            if self.proxy_tls_server_name.as_ref().is_some_and(|s| {
+                s.trim().is_empty() || s.trim() != s.as_str() || s.chars().any(char::is_control)
+            }) {
+                return Err(Error::Config(format!(
+                    "выход {tag}: некорректное имя tls.server_name"
                 )));
             }
         }
@@ -938,6 +993,57 @@ mod tests {
             (
                 r#"{"outbounds":[{"type":"socks","tag":"p","server":"proxy.example","server_port":1080,"network":"udp"}]}"#,
                 "UDP",
+            ),
+        ] {
+            let error = Config::parse(config).unwrap_err().to_string();
+            assert!(error.contains(expected), "{expected}: {error}");
+        }
+    }
+
+    #[test]
+    fn singbox_http_connect_outbound_supports_basic_auth_and_verified_tls() {
+        let c = Config::parse(
+            r#"{"outbounds":[{"type":"http","tag":"proxy","server":"proxy.example","server_port":8443,"username":"private-user","password":"private-pass","tls":{"enabled":true,"server_name":"tls.example"},"ca_file":"proxy-ca.pem"}]}"#,
+        )
+        .unwrap();
+        let out = &c.outbounds[0];
+        assert_eq!(out.kind, OutboundKind::HttpConnect);
+        assert_eq!(out.proxy_server.as_deref(), Some("proxy.example"));
+        assert_eq!(out.proxy_port, Some(8443));
+        assert!(out.proxy_tls);
+        assert_eq!(out.proxy_tls_server_name.as_deref(), Some("tls.example"));
+        assert_eq!(
+            out.ca_file.as_deref(),
+            Some(std::path::Path::new("proxy-ca.pem"))
+        );
+        let debug = format!("{out:?}");
+        assert!(!debug.contains("private-user"));
+        assert!(!debug.contains("private-pass"));
+        assert!(debug.contains("***"));
+    }
+
+    #[test]
+    fn singbox_http_connect_rejects_incomplete_or_unsafe_options() {
+        for (config, expected) in [
+            (
+                r#"{"outbounds":[{"type":"http","tag":"p","server":"proxy.example"}]}"#,
+                "server_port",
+            ),
+            (
+                r#"{"outbounds":[{"type":"http","tag":"p","server":"proxy.example","server_port":8080,"username":"user"}]}"#,
+                "username и password",
+            ),
+            (
+                r#"{"outbounds":[{"type":"http","tag":"p","server":"proxy.example","server_port":8080,"username":"user:bad","password":"pass"}]}"#,
+                "Basic auth",
+            ),
+            (
+                r#"{"outbounds":[{"type":"http","tag":"p","server":"proxy.example","server_port":8080,"version":2}]}"#,
+                "HTTP/1.1",
+            ),
+            (
+                r#"{"outbounds":[{"type":"http","tag":"p","server":"proxy.example","server_port":8080,"tls":{"enabled":true,"insecure":true}}]}"#,
+                "отключение проверки сертификата",
             ),
         ] {
             let error = Config::parse(config).unwrap_err().to_string();
