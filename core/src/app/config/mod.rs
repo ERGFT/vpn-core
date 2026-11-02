@@ -998,7 +998,7 @@ mod tests {
                 .unwrap_err()
                 .to_string();
         assert!(
-            error.contains("detour пока поддерживается только"),
+            error.contains("цепочки доступны только у SOCKS5 и HTTP CONNECT"),
             "{error}"
         );
     }
