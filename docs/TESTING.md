@@ -46,6 +46,12 @@ CycloneDX) в черновик релиза; происхождение бина
 (GitHub attestation) — проверка:
 `gh attestation verify reality-client-linux-x86_64 --repo ERGFT/vpn-core`.
 
+После успешного CI для push в `main` workflow
+`.github/workflows/dev-release.yml` публикует отдельный prerelease `dev-<commit>`
+для разработчиков. В него входят сборки Windows и Linux, SHA-256, SBOM,
+лицензии и attestation. Такие сборки привязаны к конкретному коммиту и не
+считаются стабильными выпусками.
+
 Xray-core для тестов: `scripts/fetch_xray.sh` (скачать релиз) или
 `scripts/build_xray_from_source.sh` (собрать из исходников по git — для
 сред без доступа к релизам и `proxy.golang.org`). В такой же среде

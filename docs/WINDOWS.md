@@ -28,10 +28,11 @@ DLL Windows):
 | Сборка на Windows (раздел 2) | `target\release\reality-client.exe` |
 | Кросс-сборка на Linux (`scripts/cross_windows.sh`) | `target/x86_64-pc-windows-gnu/release/reality-client.exe` |
 | CI на GitHub: страница запуска → Artifacts → `reality-client-windows` | архив с `reality-client.exe` (собран на настоящей Windows, MSVC) |
-| [Releases](https://github.com/ERGFT/vpn-core/releases) — когда появится первый выпуск | `reality-client-windows-x86_64.exe` и `.sha256` к нему |
+| [Releases](https://github.com/ERGFT/vpn-core/releases) — предварительные `dev-*` сборки после успешного CI; стабильный выпуск будет отмечен отдельно | `reality-client-windows-x86_64.exe` и `.sha256` к нему |
 
-Готовых выпусков пока нет; для себя проще всего собрать на Windows
-(раздел 2).
+Предварительные сборки предназначены для тестирования. Для стабильного
+использования соберите программу на Windows (раздел 2) или дождитесь
+стабильного выпуска.
 
 > Wine — не настоящая Windows: сетевой стек и консоль там эмулируются.
 > Поэтому на **настоящей Windows** (GitHub Actions, `windows-latest`)

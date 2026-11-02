@@ -206,7 +206,7 @@ stage-by-stage decision history is in [PLAN.md](PLAN.md) (in Russian).
 - `dns.rules[].strategy`: per-rule A/AAAA filtering and address ordering,
   including fake-IP; the existing global strategy remains the default.
 
-No release has been made yet (`git tag v0.1.0 && git push origin v0.1.0`).
+No stable release has been made yet (`git tag v0.1.0 && git push origin v0.1.0`).
 It will include:
 
 ### Protocol and transports
