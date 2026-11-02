@@ -276,6 +276,8 @@ pub struct OutboundConfig {
     pub proxy_tls: bool,
     /// HTTP CONNECT: имя для SNI и проверки сертификата; по умолчанию server.
     pub proxy_tls_server_name: Option<String>,
+    /// SOCKS5/HTTP CONNECT: предыдущий outbound, через который открывается proxy-сокет.
+    pub detour: Option<String>,
 
     // ── только для групп (selector, urltest, fallback) ──
     /// Участники — tag других выходов (в том числе групп).
@@ -313,6 +315,7 @@ impl std::fmt::Debug for OutboundConfig {
             .field("proxy_password_file", &self.proxy_password_file)
             .field("proxy_tls", &self.proxy_tls)
             .field("proxy_tls_server_name", &self.proxy_tls_server_name)
+            .field("detour", &self.detour)
             .field("outbounds", &self.outbounds)
             .field("subscriptions", &self.subscriptions)
             .field("url", &self.url)
@@ -343,6 +346,7 @@ impl OutboundConfig {
             proxy_password_file: None,
             proxy_tls: false,
             proxy_tls_server_name: None,
+            detour: None,
             outbounds: Vec::new(),
             subscriptions: Vec::new(),
             url: None,
@@ -375,6 +379,20 @@ impl OutboundConfig {
         if !self.noises.is_empty() && self.kind != OutboundKind::Direct {
             return Err(Error::Config(format!(
                 "выход {tag}: noises — только у direct"
+            )));
+        }
+        if self.detour.as_ref().is_some_and(|t| {
+            t.trim().is_empty() || t.trim() != t || t.chars().any(char::is_control) || t == tag
+        }) {
+            return Err(Error::Config(format!(
+                "выход {tag}: detour должен содержать корректный tag другого выхода"
+            )));
+        }
+        if self.detour.is_some()
+            && !matches!(self.kind, OutboundKind::Socks5 | OutboundKind::HttpConnect)
+        {
+            return Err(Error::Config(format!(
+                "выход {tag}: detour пока поддерживается только у SOCKS5 и HTTP CONNECT"
             )));
         }
         if !group && group_fields {
@@ -960,6 +978,28 @@ mod tests {
         assert_eq!(
             c.outbounds[0].proxy_password_file.as_deref(),
             Some(std::path::Path::new("proxy.pass"))
+        );
+    }
+
+    #[test]
+    fn singbox_http_and_socks_outbounds_parse_detour_tags() {
+        let c = Config::parse(
+            r#"{"outbounds":[{"type":"socks","tag":"first","server":"socks.example","server_port":1080,"network":"tcp"},{"type":"http","tag":"second","server":"http.example","server_port":8080,"detour":"first"}]}"#,
+        )
+        .unwrap();
+        assert_eq!(c.outbounds[0].detour, None);
+        assert_eq!(c.outbounds[1].detour.as_deref(), Some("first"));
+    }
+
+    #[test]
+    fn singbox_rejects_detour_on_unsupported_outbound_types() {
+        let error =
+            Config::parse(r#"{"outbounds":[{"type":"direct","tag":"direct","detour":"other"}]}"#)
+                .unwrap_err()
+                .to_string();
+        assert!(
+            error.contains("цепочки доступны только у SOCKS5 и HTTP CONNECT"),
+            "{error}"
         );
     }
 

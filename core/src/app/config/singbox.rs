@@ -299,9 +299,13 @@ fn outbound(o: Obj<'_>) -> Result<OutboundConfig> {
     };
     let mut out = OutboundConfig::new(&tag, kind);
     o.ignore(&["type", "tag"]);
+    if !matches!(kind, OutboundKind::Socks5 | OutboundKind::HttpConnect) {
+        o.unsupported("detour", "цепочки доступны только у SOCKS5 и HTTP CONNECT")?;
+    }
     match kind {
         OutboundKind::Vless | OutboundKind::Trojan => server(&o, &mut out)?,
         OutboundKind::Socks5 => {
+            out.detour = o.str("detour")?;
             if o.str("network")?.as_deref() != Some("tcp") {
                 return Err(o.err(
                     "network",
@@ -326,6 +330,7 @@ fn outbound(o: Obj<'_>) -> Result<OutboundConfig> {
             )?;
         }
         OutboundKind::HttpConnect => {
+            out.detour = o.str("detour")?;
             out.proxy_server = Some(o.req_str("server")?);
             out.proxy_port = Some(
                 o.u16("server_port")?

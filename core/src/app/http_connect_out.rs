@@ -8,7 +8,7 @@ use futures_util::future::BoxFuture;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use zeroize::Zeroizing;
 
-use super::outbound::{Outbound, UdpSession};
+use super::outbound::{detour_metadata, Outbound, OutboundSlot, UdpSession};
 use super::Metadata;
 use crate::error::{Error, Result};
 use crate::transport::AsyncStream;
@@ -26,6 +26,7 @@ pub struct HttpConnectOutbound {
     tls: bool,
     tls_server_name: String,
     tls_roots: Option<rustls::RootCertStore>,
+    detour: Option<OutboundSlot>,
 }
 
 impl std::fmt::Debug for HttpConnectOutbound {
@@ -38,6 +39,7 @@ impl std::fmt::Debug for HttpConnectOutbound {
             .field("password", &crate::redact::opt(&self.password))
             .field("tls", &self.tls)
             .field("tls_server_name", &self.tls_server_name)
+            .field("detour", &self.detour.as_ref().map(|_| "configured"))
             .field(
                 "tls_roots",
                 &self.tls_roots.as_ref().map(|_| "custom roots"),
@@ -102,11 +104,17 @@ impl HttpConnectOutbound {
             tls,
             tls_server_name,
             tls_roots: None,
+            detour: None,
         })
     }
 
     pub(crate) fn with_roots(mut self, roots: Option<rustls::RootCertStore>) -> Self {
         self.tls_roots = roots;
+        self
+    }
+
+    pub(crate) fn with_detour(mut self, detour: Option<OutboundSlot>) -> Self {
+        self.detour = detour;
         self
     }
 }
@@ -127,14 +135,25 @@ impl Outbound for HttpConnectOutbound {
     fn connect<'a>(&'a self, meta: &'a Metadata) -> BoxFuture<'a, Result<Box<dyn AsyncStream>>> {
         Box::pin(async move {
             let stream = tokio::time::timeout(CONNECT_TIMEOUT, async {
-                let addrs =
-                    crate::transport::tcp_tls::resolve_server(&self.server, self.port).await?;
-                let tcp =
-                    crate::transport::tcp_tls::connect_addrs(&addrs, "HTTP CONNECT proxy").await?;
+                let raw: Box<dyn AsyncStream> = if let Some(slot) = &self.detour {
+                    let detour = slot.get().cloned().ok_or_else(|| {
+                        Error::Config(format!("выход {}: detour ещё не инициализирован", self.tag))
+                    })?;
+                    detour
+                        .connect(&detour_metadata(&self.server, self.port, meta))
+                        .await?
+                } else {
+                    let addrs =
+                        crate::transport::tcp_tls::resolve_server(&self.server, self.port).await?;
+                    Box::new(
+                        crate::transport::tcp_tls::connect_addrs(&addrs, "HTTP CONNECT proxy")
+                            .await?,
+                    )
+                };
                 let mut stream: Box<dyn AsyncStream> = if self.tls {
                     Box::new(
                         crate::transport::tcp_tls::tls_over(
-                            tcp,
+                            raw,
                             &self.tls_server_name,
                             self.tls_roots.clone(),
                             Vec::new(),
@@ -142,7 +161,7 @@ impl Outbound for HttpConnectOutbound {
                         .await?,
                     )
                 } else {
-                    Box::new(tcp)
+                    raw
                 };
                 handshake(
                     &mut stream,
@@ -292,8 +311,8 @@ fn parse_status(head: &[u8]) -> Result<u16> {
 mod tests {
     use super::*;
     use std::net::{Ipv4Addr, SocketAddr};
-    use std::sync::Arc;
-    use tokio::net::TcpListener;
+    use std::sync::{Arc, OnceLock};
+    use tokio::net::{TcpListener, TcpStream};
 
     fn metadata(target: crate::vless::Address, port: u16) -> Metadata {
         Metadata {
@@ -378,6 +397,146 @@ mod tests {
         let meta = metadata(crate::vless::Address::Ipv4(Ipv4Addr::LOCALHOST), 80);
         outbound.connect(&meta).await.unwrap();
         server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn http_connect_outbound_chains_through_another_proxy() {
+        let exit_listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
+        let exit_addr = exit_listener.local_addr().unwrap();
+        let exit_server_task = tokio::spawn(async move {
+            let (mut stream, _) = exit_listener.accept().await.unwrap();
+            let request = read_request(&mut stream).await;
+            assert!(request.starts_with(b"CONNECT example.org:443 HTTP/1.1\r\n"));
+            stream.write_all(b"HTTP/1.1 200 OK\r\n\r\n").await.unwrap();
+            let mut payload = [0; 5];
+            stream.read_exact(&mut payload).await.unwrap();
+            assert_eq!(&payload, b"hello");
+            stream.write_all(b"world").await.unwrap();
+        });
+
+        let entry_listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
+        let entry_addr = entry_listener.local_addr().unwrap();
+        let entry_server_task = tokio::spawn(async move {
+            let (mut downstream, _) = entry_listener.accept().await.unwrap();
+            let request = read_request(&mut downstream).await;
+            assert!(request.starts_with(
+                format!(
+                    "CONNECT {}:{} HTTP/1.1\r\n",
+                    exit_addr.ip(),
+                    exit_addr.port()
+                )
+                .as_bytes()
+            ));
+            let mut upstream = TcpStream::connect(exit_addr).await.unwrap();
+            downstream
+                .write_all(b"HTTP/1.1 200 OK\r\n\r\n")
+                .await
+                .unwrap();
+            tokio::io::copy_bidirectional(&mut downstream, &mut upstream)
+                .await
+                .unwrap();
+        });
+
+        let entry: Arc<dyn Outbound> = Arc::new(
+            HttpConnectOutbound::new(
+                "entry".into(),
+                entry_addr.ip().to_string(),
+                entry_addr.port(),
+                None,
+                None,
+                false,
+                None,
+            )
+            .unwrap(),
+        );
+        let detour = Arc::new(OnceLock::new());
+        assert!(detour.set(entry).is_ok());
+        let exit_outbound = HttpConnectOutbound::new(
+            "exit".into(),
+            exit_addr.ip().to_string(),
+            exit_addr.port(),
+            None,
+            None,
+            false,
+            None,
+        )
+        .unwrap()
+        .with_detour(Some(detour));
+
+        let mut stream = exit_outbound
+            .connect(&metadata(
+                crate::vless::Address::Domain("example.org".into()),
+                443,
+            ))
+            .await
+            .unwrap();
+        stream.write_all(b"hello").await.unwrap();
+        let mut response = [0; 5];
+        stream.read_exact(&mut response).await.unwrap();
+        assert_eq!(&response, b"world");
+        drop(stream);
+        entry_server_task.await.unwrap();
+        exit_server_task.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn detour_failure_is_fail_closed_and_cancellation_closes_the_socket() {
+        use crate::app::outbound::BlockOutbound;
+
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let blocked = Arc::new(OnceLock::new());
+        assert!(blocked
+            .set(Arc::new(BlockOutbound::new("block")) as Arc<dyn Outbound>)
+            .is_ok());
+        let outbound = HttpConnectOutbound::new(
+            "proxy".into(),
+            address.ip().to_string(),
+            address.port(),
+            None,
+            None,
+            false,
+            None,
+        )
+        .unwrap()
+        .with_detour(Some(blocked));
+        let meta = metadata(crate::vless::Address::Domain("example.org".into()), 443);
+        assert!(outbound.connect(&meta).await.is_err());
+        assert!(
+            tokio::time::timeout(Duration::from_millis(25), listener.accept())
+                .await
+                .is_err()
+        );
+
+        let (accepted_tx, accepted_rx) = tokio::sync::oneshot::channel();
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let _request = read_request(&mut stream).await;
+            accepted_tx.send(()).unwrap();
+            let mut byte = [0; 1];
+            stream.read(&mut byte).await.unwrap()
+        });
+        let cancel = HttpConnectOutbound::new(
+            "cancel".into(),
+            address.ip().to_string(),
+            address.port(),
+            None,
+            None,
+            false,
+            None,
+        )
+        .unwrap();
+        let result = tokio::time::timeout(Duration::from_millis(50), cancel.connect(&meta)).await;
+        assert!(
+            result.is_err(),
+            "the proxy handshake should still be waiting"
+        );
+        accepted_rx.await.unwrap();
+        assert_eq!(
+            server.await.unwrap(),
+            0,
+            "dropping the connect future closes TCP"
+        );
     }
 
     #[tokio::test]

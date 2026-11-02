@@ -17,7 +17,8 @@ reality-client --config config.json
 
 Existing sing-box and Xray configs (from v2rayN, panels, etc.) work too:
 everything the core supports behaves as it does there. Whatever the core does
-not support (other protocols, outbound chains, sing-box multiplexing…) is an
+not support (other protocols, chains outside the limited SOCKS5/HTTP CONNECT
+`detour`, sing-box multiplexing…) is an
 error at startup with the path to the key, e.g. `outbounds[2].multiplex: не
 поддерживается` (not supported), rather than a silently ignored setting. A
 typo in a key name is an error too.
@@ -107,6 +108,24 @@ Command-line flags are a shortcut for one `mixed` inbound and one `proxy`
 outbound. The `direct` outbound does not let network clients reach services
 of this computer (`127.0.0.1`, `localhost`); the `block` outbound replies with
 SOCKS5 code 0x02 or HTTP 403.
+
+## SOCKS5 and HTTP CONNECT TCP chains
+
+The sing-box `detour` field can be set on `socks` or `http` outbounds. It uses
+the specified TCP outbound to connect to the proxy server. Multiple SOCKS5/HTTP
+CONNECT hops can be nested; `direct`, VLESS, or Trojan can be the base outbound:
+
+```json
+"outbounds": [
+  { "type": "socks", "tag": "entry", "server": "entry.example", "server_port": 1080, "network": "tcp" },
+  { "type": "http", "tag": "exit", "server": "exit.example", "server_port": 8080, "detour": "entry" }
+],
+"route": { "final": "exit" }
+```
+
+Groups, `block`, and `dns` are not valid detours. Missing tags and cycles are
+rejected. A failure at any hop is returned to the caller without falling back
+to `direct`. Only TCP chains are supported.
 
 ## Server groups and subscriptions
 
