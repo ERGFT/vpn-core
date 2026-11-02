@@ -437,7 +437,7 @@ mod tests {
                 .unwrap();
         });
 
-        let entry = Arc::new(
+        let entry: Arc<dyn Outbound> = Arc::new(
             HttpConnectOutbound::new(
                 "entry".into(),
                 entry_addr.ip().to_string(),
@@ -487,7 +487,7 @@ mod tests {
         let address = listener.local_addr().unwrap();
         let blocked = Arc::new(OnceLock::new());
         assert!(blocked
-            .set(Arc::new(BlockOutbound::new("block")) as Arc<dyn Outbound)
+            .set(Arc::new(BlockOutbound::new("block")) as Arc<dyn Outbound>)
             .is_ok());
         let outbound = HttpConnectOutbound::new(
             "proxy".into(),

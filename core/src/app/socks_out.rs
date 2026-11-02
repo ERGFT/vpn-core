@@ -5,7 +5,6 @@ use std::time::Duration;
 
 use futures_util::future::BoxFuture;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::TcpStream;
 use zeroize::Zeroizing;
 
 use super::outbound::{detour_metadata, Outbound, OutboundSlot, UdpSession};
@@ -232,7 +231,7 @@ mod tests {
     use super::*;
     use std::net::{Ipv4Addr, SocketAddr};
     use std::sync::Arc;
-    use tokio::net::TcpListener;
+    use tokio::net::{TcpListener, TcpStream};
 
     fn metadata(target: crate::vless::Address, port: u16) -> Metadata {
         Metadata {
