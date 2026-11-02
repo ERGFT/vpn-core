@@ -43,11 +43,9 @@ no third-party security audit or crypto review of REALITY. It is not a
 replacement for mature clients (v2rayN, sing-box, Xray).
 
 > [!WARNING]
-> **There is no stable release yet.** Developer prereleases appear on
-> [Releases](https://github.com/ERGFT/vpn-core/releases) after CI succeeds for
-> a commit on `main`. These snapshots are for testing and may contain
-> regressions. For stable use, build the program yourself using the instructions
-> below.
+> **Choose a build on the [Releases](https://github.com/ERGFT/vpn-core/releases) page.**
+> Prereleases are for testing only. To embed the core in an app, download the
+> SDK archive for your platform and review the GPL-3.0-or-later license.
 
 ## Quick start
 

@@ -1,7 +1,6 @@
 # Выпуск: git tag v0.1.0 && git push origin v0.1.0 (тег — v + version из
-# Cargo.toml; первый выпуск — v0.1.0, см. CHANGELOG.md) — собирает .exe для
-# Windows и бинарник для Linux и прикладывает их к релизу (черновику)
-# вместе с LICENSE и лицензиями зависимостей (THIRD-PARTY-LICENSES.html).
+# Cargo.toml; первый стабильный выпуск — v0.1.0, см. CHANGELOG.md). К CLI
+# прикладываются SDK-пакеты C ABI для Linux, Windows, macOS, Android и iOS.
 #
 # Права: сборка (чужие actions, зависимости, build.rs) — только чтение;
 # запись в репозиторий и подпись происхождения (attestation, keyless
@@ -14,6 +13,13 @@ name: Release
 on:
   push:
     tags: ["v*"]
+  pull_request:
+    paths:
+      - .github/workflows/release.yml
+      - ffi/**
+      - scripts/package_ffi_sdk.py
+      - Cargo.lock
+      - Cargo.toml
 
 permissions:
   contents: read
@@ -43,7 +49,7 @@ jobs:
       - name: имя файла и SHA-256
         shell: bash
         run: |
-          mkdir dist
+          mkdir -p dist
           cp "${{ matrix.bin }}" "dist/${{ matrix.asset }}"
           cd dist && sha256sum "${{ matrix.asset }}" > "${{ matrix.asset }}.sha256"
       # Лицензии — один раз, в Linux-сборке (у Windows тот же Cargo.lock).
@@ -70,8 +76,99 @@ jobs:
           path: dist/
           if-no-files-found: error
 
+  sdk:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            platform: windows-x86_64
+            target: x86_64-pc-windows-msvc
+          - os: ubuntu-latest
+            platform: linux-x86_64
+            target: x86_64-unknown-linux-gnu
+          - os: ubuntu-latest
+            platform: android-arm64-v8a
+            target: aarch64-linux-android
+          - os: macos-latest
+            platform: macos-arm64
+            target: aarch64-apple-darwin
+          - os: macos-latest
+            platform: ios-arm64
+            target: aarch64-apple-ios
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+        with:
+          toolchain: stable
+          targets: ${{ matrix.target }}
+      - uses: ilammy/setup-nasm@72793074d3c8cdda771dba85f6deafe00623038b # v1
+        if: runner.os == 'Windows'
+      - uses: taiki-e/install-action@86f7a0ffb25f40114606501a311ebcfaf882ea32 # v2
+        if: matrix.platform == 'android-arm64-v8a'
+        with:
+          tool: cargo-ndk
+      - name: Собрать FFI для Android
+        if: matrix.platform == 'android-arm64-v8a'
+        run: cargo ndk -t arm64-v8a build --locked --release -p reality-ffi
+      - name: Собрать FFI для iOS
+        if: matrix.platform == 'ios-arm64'
+        env:
+          IPHONEOS_DEPLOYMENT_TARGET: "13.0"
+        run: cargo build --locked --release -p reality-ffi --target ${{ matrix.target }}
+      - name: Собрать FFI для macOS
+        if: matrix.platform == 'macos-arm64'
+        run: cargo build --locked --release -p reality-ffi --target ${{ matrix.target }}
+      - name: Собрать FFI для Linux и Windows
+        if: matrix.platform == 'linux-x86_64' || matrix.platform == 'windows-x86_64'
+        run: cargo build --locked --release -p reality-ffi
+      - uses: taiki-e/install-action@86f7a0ffb25f40114606501a311ebcfaf882ea32 # v2
+        if: matrix.platform == 'linux-x86_64'
+        with:
+          tool: cargo-cyclonedx@0.5.9
+      - name: SBOM SDK (CycloneDX)
+        if: matrix.platform == 'linux-x86_64'
+        run: |
+          mkdir -p dist
+          cargo cyclonedx -q --manifest-path ffi/Cargo.toml --format json \
+            --target all --spec-version 1.5 --override-filename reality-ffi.sbom
+          mv ffi/reality-ffi.sbom.json dist/reality-ffi.sbom.cdx.json
+      - name: Упаковать SDK
+        shell: bash
+        env:
+          PLATFORM: ${{ matrix.platform }}
+          VERSION: ${{ github.ref_name }}
+        run: |
+          mkdir -p dist
+          case "$PLATFORM" in
+            linux-x86_64)
+              python scripts/package_ffi_sdk.py --platform "$PLATFORM" --version "$VERSION" --output dist --library target/release/libreality.so --library target/release/libreality.a
+              ;;
+            windows-x86_64)
+              python scripts/package_ffi_sdk.py --platform "$PLATFORM" --version "$VERSION" --output dist --library target/release/reality.dll --library target/release/reality.dll.lib --library target/release/reality.lib
+              ;;
+            android-arm64-v8a)
+              python scripts/package_ffi_sdk.py --platform "$PLATFORM" --version "$VERSION" --output dist --library target/aarch64-linux-android/release/libreality.so --library target/aarch64-linux-android/release/libreality.a
+              ;;
+            ios-arm64)
+              python scripts/package_ffi_sdk.py --platform "$PLATFORM" --version "$VERSION" --output dist --library target/aarch64-apple-ios/release/libreality.a
+              ;;
+            macos-arm64)
+              python scripts/package_ffi_sdk.py --platform "$PLATFORM" --version "$VERSION" --output dist --library target/aarch64-apple-darwin/release/libreality.dylib --library target/aarch64-apple-darwin/release/libreality.a
+              ;;
+          esac
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: sdk-${{ matrix.platform }}
+          path: dist/
+          if-no-files-found: error
+
   publish:
-    needs: build
+    needs: [build, sdk]
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -84,11 +181,26 @@ jobs:
           merge-multiple: true
       - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
-          subject-path: |
-            dist/reality-client-*-x86_64*
-            dist/reality-client.sbom.cdx.json
+          subject-path: dist/*
       - uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
         with:
-          draft: true
+          draft: false
+          prerelease: false
+          make_latest: true
+          name: vpn-core ${{ github.ref_name }}
+          body: |
+            Обычный версионированный release vpn-core (не prerelease).
+
+            Помимо CLI, релиз содержит SDK C ABI для встраивания ядра в приложения:
+            Linux x86_64, Windows x86_64, macOS arm64, Android arm64-v8a и iOS arm64.
+            В SDK входят готовая библиотека, заголовок `reality.h`, минимальный
+            пример на C и руководства по API и интеграции. SHA-256 checksums,
+            CycloneDX SBOM и build provenance приложены к файлам релиза.
+
+            Встраивание распространяется по GPL-3.0-or-later. Перед включением
+            ядра в приложение проверьте требования лицензии и приложите лицензии
+            зависимостей из этого релиза.
+
+            Для интеграции прочитайте `docs/LIBRARY.md` в исходниках.
           fail_on_unmatched_files: true
           files: dist/*

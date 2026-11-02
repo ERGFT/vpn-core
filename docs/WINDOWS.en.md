@@ -28,10 +28,10 @@ Windows system DLLs):
 | Building on Windows (section 2) | `target\release\reality-client.exe` |
 | Cross-building on Linux (`scripts/cross_windows.sh`) | `target/x86_64-pc-windows-gnu/release/reality-client.exe` |
 | CI on GitHub: the run page → Artifacts → `reality-client-windows` | an archive with `reality-client.exe` (built on real Windows, MSVC) |
-| [Releases](https://github.com/ERGFT/vpn-core/releases) — `dev-*` prereleases after successful CI; the stable release will be marked separately | `reality-client-windows-x86_64.exe` and its `.sha256` |
+| [Releases](https://github.com/ERGFT/vpn-core/releases) | `reality-client-windows-x86_64.exe`, `.sha256`, and SDK `vpn-core-sdk-windows-x86_64.zip` |
 
-Developer prereleases are for testing. For stable use, build on Windows
-(section 2) or wait for a stable release.
+To embed the core in an app, download the Windows SDK from the same page and
+read the [C ABI guide](LIBRARY.en.md).
 
 > Wine is not real Windows: the network stack and the console are emulated
 > there. So on **real Windows** (GitHub Actions, `windows-latest`) CI builds
