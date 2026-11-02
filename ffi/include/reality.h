@@ -97,6 +97,13 @@ char *rc_last_error_message(RcCore *core);
  * вызовы прекращаются. После этого core недействителен. NULL — ничего. */
 void rc_stop(RcCore *core);
 
+/* Сообщить ядру, что host зафиксировал смену сети (Wi-Fi/cellular, default
+ * route или VPN underlay). Ядро не отслеживает ОС самостоятельно: этот вызов
+ * очищает DNS/server-address cache и отменяет текущие tracked-соединения,
+ * сохраняя настройки и входы. 0 — сигнал обработан, -1 — NULL handle или
+ * внутренняя ошибка. Сериализовать с операциями на RcCore. */
+int rc_network_changed(RcCore *core);
+
 /*
  * Запрос к API ядра — те же пути и ответы, что у HTTP API (Clash API и
  * свои), без сети и токена:

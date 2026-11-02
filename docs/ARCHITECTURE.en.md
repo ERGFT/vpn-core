@@ -1492,6 +1492,8 @@ pair; skipping fake-IP for real lookup also skips that rule's strategy.
 
 `Running` retains terminal errors: `is_alive` polls the channel without losing
 the error for `wait`. `spawn_task` forwards errors and unwinding panics into
-that channel. C ABI exports `rc_validate` (build, not start) and `rc_is_alive`
-(local status, not a connectivity check). See [LIBRARY.en.md](LIBRARY.en.md)
+that channel. C ABI exports `rc_validate` (build, not start), `rc_is_alive`
+(local status, not a connectivity check), and `rc_network_changed`: an explicit
+host API signal clears DNS/server-address caches and cancels tracked sessions;
+the core does not poll the OS or retry application requests. See [LIBRARY.en.md](LIBRARY.en.md)
 and [DNS.en.md](DNS.en.md) for details and limitations.
