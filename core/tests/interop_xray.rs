@@ -19,6 +19,7 @@
 //! `XRAY_BIN=/путь/к/xray cargo test -p reality-core --test interop_xray -- --ignored`
 //! или `scripts/interop_xray.sh` (сам найдёт/соберёт Xray).
 
+use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
@@ -445,42 +446,100 @@ async fn start_tcp_forwarder(target: SocketAddr) -> (u16, Arc<AtomicUsize>) {
     (port, accepted)
 }
 
-/// Прозрачный UDP-переход для HTTP/3. Порт со стороны клиента отличается,
-/// но Xray видит обе стороны как одну XHTTP listener/session map.
+/// Прозрачный UDP-переход для HTTP/3. Отдельный upstream-сокет на каждого
+/// клиента сохраняет правильный маршрут ответов при нескольких QUIC-сессиях.
 async fn start_udp_forwarder(target: SocketAddr) -> (u16, Arc<AtomicUsize>) {
     let incoming = Arc::new(UdpSocket::bind("127.0.0.2:0").await.unwrap());
     let port = incoming.local_addr().unwrap().port();
-    let upstream = Arc::new(UdpSocket::bind("127.0.0.1:0").await.unwrap());
     let accepted = Arc::new(AtomicUsize::new(0));
     let incoming_task = incoming.clone();
-    let upstream_task = upstream.clone();
     let accepted_task = accepted.clone();
     tokio::spawn(async move {
-        let mut client = None;
+        let mut upstreams = HashMap::<SocketAddr, Arc<UdpSocket>>::new();
         let mut client_buf = vec![0u8; 65536];
-        let mut upstream_buf = vec![0u8; 65536];
         loop {
-            tokio::select! {
-                r = incoming_task.recv_from(&mut client_buf) => {
-                    let Ok((n, peer)) = r else { return };
-                    client = Some(peer);
-                    accepted_task.fetch_add(1, Ordering::Relaxed);
-                    if upstream_task.send_to(&client_buf[..n], target).await.is_err() {
+            let Ok((n, peer)) = incoming_task.recv_from(&mut client_buf).await else {
+                return;
+            };
+            accepted_task.fetch_add(1, Ordering::Relaxed);
+            let upstream = match upstreams.entry(peer) {
+                std::collections::hash_map::Entry::Occupied(entry) => entry.get().clone(),
+                std::collections::hash_map::Entry::Vacant(entry) => {
+                    let Ok(socket) = UdpSocket::bind("127.0.0.1:0").await else {
                         return;
-                    }
-                }
-                r = upstream_task.recv_from(&mut upstream_buf) => {
-                    let Ok((n, _)) = r else { return };
-                    if let Some(peer) = client {
-                        if incoming_task.send_to(&upstream_buf[..n], peer).await.is_err() {
-                            return;
+                    };
+                    let socket = Arc::new(socket);
+                    let upstream_task = socket.clone();
+                    let incoming_task = incoming_task.clone();
+                    tokio::spawn(async move {
+                        let mut upstream_buf = vec![0u8; 65536];
+                        loop {
+                            let Ok((n, _)) = upstream_task.recv_from(&mut upstream_buf).await
+                            else {
+                                return;
+                            };
+                            if incoming_task
+                                .send_to(&upstream_buf[..n], peer)
+                                .await
+                                .is_err()
+                            {
+                                return;
+                            }
                         }
-                    }
+                    });
+                    entry.insert(socket.clone());
+                    socket
                 }
+            };
+            if upstream.send_to(&client_buf[..n], target).await.is_err() {
+                return;
             }
         }
     });
     (port, accepted)
+}
+
+#[tokio::test]
+async fn udp_forwarder_keeps_parallel_clients_separate() {
+    let target = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+    let target_addr = target.local_addr().unwrap();
+    let (relay_port, _) = start_udp_forwarder(target_addr).await;
+    let relay_addr: SocketAddr = format!("127.0.0.2:{relay_port}").parse().unwrap();
+    let first = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+    let second = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+
+    first.send_to(b"first", relay_addr).await.unwrap();
+    second.send_to(b"second", relay_addr).await.unwrap();
+
+    let mut requests = Vec::with_capacity(2);
+    for _ in 0..2 {
+        let mut buffer = [0u8; 32];
+        let (n, addr) = tokio::time::timeout(Duration::from_secs(2), target.recv_from(&mut buffer))
+            .await
+            .expect("прокси должен передать оба запроса")
+            .unwrap();
+        let request = String::from_utf8(buffer[..n].to_vec()).unwrap();
+        requests.push((request, addr));
+    }
+    for (request, peer) in requests.into_iter().rev() {
+        target.send_to(request.as_bytes(), peer).await.unwrap();
+    }
+
+    let mut first_response = [0u8; 32];
+    let (n, _) = tokio::time::timeout(Duration::from_secs(2), first.recv_from(&mut first_response))
+        .await
+        .expect("ответ первого клиента должен вернуться ему")
+        .unwrap();
+    assert_eq!(&first_response[..n], b"first");
+    let mut second_response = [0u8; 32];
+    let (n, _) = tokio::time::timeout(
+        Duration::from_secs(2),
+        second.recv_from(&mut second_response),
+    )
+    .await
+    .expect("ответ второго клиента должен вернуться ему")
+    .unwrap();
+    assert_eq!(&second_response[..n], b"second");
 }
 
 fn reality_stream(
