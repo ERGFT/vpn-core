@@ -151,6 +151,38 @@ SOCKS5 does not encrypt the connection to the proxy; RFC 1929 sends the
 password without encryption. Use this proxy only on a trusted network or
 inside a separate protected transport.
 
+## HTTP CONNECT outbound
+
+Use `type: "http"` to send outgoing TCP connections through an HTTP/1.1 proxy:
+
+```json
+{
+  "outbounds": [
+    {
+      "type": "http",
+      "tag": "upstream",
+      "server": "proxy.example",
+      "server_port": 8080,
+      "username": "user",
+      "password_file": "proxy.pass",
+      "tls": { "enabled": true, "server_name": "proxy.example" }
+    }
+  ],
+  "route": { "final": "upstream" }
+}
+```
+
+Authentication uses Basic and is sent only after TLS is established when
+`tls.enabled` is true. Certificate verification is mandatory and uses the
+built-in public roots; `tls.server_name` sets both SNI and the verification name,
+defaulting to `server`. The vpn-core `ca_file` extension adds PEM trust roots.
+Omit `tls` for a plain HTTP proxy.
+Only HTTP/1.1 CONNECT
+is supported: arbitrary headers, HTTP/2, HTTP/3, and UDP are unsupported. Proxy
+errors are returned to the caller; traffic never falls back automatically to
+`direct`. Set the password inline or with the vpn-core `password_file` extension,
+but not both.
+
 ## Android
 
 Before transferring the FD, `rc_validate(config, base_dir)` returns 1 when

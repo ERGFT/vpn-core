@@ -95,7 +95,7 @@ SDK предназначен для приложений, которым нуж�
 | Область | Поддержка |
 |---|---|
 | Протокол | VLESS, REALITY, TLS, XTLS Vision; TCP, WebSocket, gRPC, HTTPUpgrade и XHTTP |
-| Сетевые функции | Входы SOCKS5/HTTP/mixed; SOCKS5 TCP-выход в sing-box формате; UDP/XUDP, DNS (DoH/DoT/DoQ), TUN, kill switch |
+| Сетевые функции | Входы SOCKS5/HTTP/mixed; SOCKS5 и HTTP CONNECT TCP-выходы в sing-box формате; UDP/XUDP, DNS (DoH/DoT/DoQ), TUN, kill switch |
 | Конфигурация | Форматы Xray-core и часть формата sing-box; правила, группы серверов, подписки |
 | Управление | Локальный Clash API, панели metacubexd и yacd, systemd и служба Windows |
 | Экспериментально | Android/iOS через C ABI; `fragment` и `noises`; интеграция с правилами приложений |

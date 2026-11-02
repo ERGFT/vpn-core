@@ -238,6 +238,8 @@ fn config_from_args(args: &Args) -> Result<Config> {
             proxy_username: None,
             proxy_password: None,
             proxy_password_file: None,
+            proxy_tls: false,
+            proxy_tls_server_name: None,
             outbounds: Vec::new(),
             subscriptions: Vec::new(),
             url: None,

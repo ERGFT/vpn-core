@@ -10,7 +10,9 @@
 
 ### Выходы
 - Добавлен SOCKS5 outbound для TCP CONNECT (`network: "tcp"`) в формате sing-box; поддерживаются
-  RFC 1929 и чтение пароля из `password_file`. UDP и TLS к прокси пока не поддерживаются.
+  RFC 1929 и чтение пароля из `password_file`. Также добавлен HTTP CONNECT outbound (`type: "http"`):
+  HTTP/1.1, Basic auth, пароль из `password_file`, опциональный TLS с обязательной проверкой сертификата.
+  Оба выхода поддерживают только TCP; TLS для самого SOCKS5 proxy не поддерживается.
 
 - Экспериментально: route.rules.user_id и invert; доверенный resolver владельца
   нового TUN-потока через Rust/C ABI, fail-closed для неизвестного нужного UID.
@@ -206,7 +208,9 @@ stage-by-stage decision history is in [PLAN.md](PLAN.md) (in Russian).
 
 ### Outbounds
 - Added a sing-box SOCKS5 outbound for TCP CONNECT (`network: "tcp"`), with RFC 1929 and an optional
-  `password_file` extension. UDP and TLS to the proxy are not supported yet.
+  `password_file` extension. Also added an HTTP CONNECT outbound (`type: "http"`): HTTP/1.1,
+  Basic auth, `password_file`, and optional TLS with mandatory certificate verification. Both
+  outbounds support TCP only; TLS to a SOCKS5 proxy is not supported.
 
 - Experimental route.rules.user_id/invert and trusted Rust/C ABI TUN flow-owner
   resolver; unknown required UIDs fail closed. Site/app first-match order is
