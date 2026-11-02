@@ -108,9 +108,21 @@ rc_stop(core);
 - **`rc_stop(core)`** — stop: inbounds close, routes are restored.
 - **`rc_free_string(s)`** — free a string returned by the library.
 
+After `rc_is_alive(core) == 0`, retrieve the cause with
+`rc_last_error_code(core)` and `rc_last_error_message(core)`. Polling is
+non-blocking and the terminal error remains available on repeated reads.
+`RC_ERROR_*` values are stable ABI values: `0` means no error yet, `-1` is a
+NULL handle, `1` configuration/startup, `2` I/O, `3` blocked by routing,
+`4` protocol/connection, `5` TLS, `6` DNS name, `7` authentication, and `255`
+an internal C ABI error. The message is a short English string, or empty while
+healthy; NULL returns `Invalid core handle`. Detailed source errors are not
+exposed because they may contain addresses or config values. Free the returned
+string with `rc_free_string`.
+
 Functions may be called from any thread, but the application must serialize
-operations on the same `RcCore`. Do not call `rc_is_alive` concurrently with
-another operation on that handle; the handle is invalid after `rc_stop`.
+operations on the same `RcCore`. Do not call `rc_is_alive`, either diagnostic
+function or another operation concurrently on that handle; the handle is
+invalid after `rc_stop`.
 Callbacks arrive on the core's
 background threads and the core waits until each one returns, so hand the
 data over to your own (UI) thread and return quickly.
@@ -130,6 +142,12 @@ connectivity check or complete monitor of every background task. Errors from
 cannot be caught. `Running::wait` retains an error observed by polling.
 The application stops the core and informs the user after failure; the
 library does not automatically switch traffic to a direct connection.
+
+After `rc_is_alive(core) == 0`, use `rc_last_error_code` and
+`rc_last_error_message` to choose a safe user-facing message or recovery
+policy. The message is intentionally generic and contains no server address,
+UUID, link or config secret. Repeated polling returns the same terminal error;
+serialize calls on a handle.
 
 With external TUN, VPN/DoH server hostnames must not use a DNS path that
 itself requires a connection to that VPN server. Set the vpn-core extension

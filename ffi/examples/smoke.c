@@ -109,6 +109,10 @@ int main(void) {
     if (rc_validate(CONFIG, NULL) != 1) FAIL("rc_validate: корректные настройки отклонены");
     if (rc_validate("{bad-json}", NULL) != 0) FAIL("rc_validate: битые настройки приняты");
     if (rc_is_alive(NULL) != 0) FAIL("rc_is_alive: NULL принят");
+    if (rc_last_error_code(NULL) != RC_ERROR_INVALID_HANDLE) FAIL("rc_last_error_code: NULL принят");
+    char *diagnostic = rc_last_error_message(NULL);
+    if (!diagnostic || strcmp(diagnostic, "Invalid core handle")) FAIL("rc_last_error_message: NULL");
+    rc_free_string(diagnostic);
 
     char *err = NULL;
     if (rc_start("{ битые настройки", NULL, -1, &err) != NULL) FAIL("битые настройки приняты");
@@ -122,6 +126,10 @@ int main(void) {
     RcCore *core = rc_start(CONFIG, NULL, -1, &err);
     if (!core) FAIL("rc_start: %s", err);
     if (rc_is_alive(core) != 1) FAIL("rc_is_alive: ядро не работает");
+    if (rc_last_error_code(core) != RC_ERROR_NONE) FAIL("rc_last_error_code: неожиданная ошибка");
+    diagnostic = rc_last_error_message(core);
+    if (!diagnostic || *diagnostic) FAIL("rc_last_error_message: ожидалась пустая строка");
+    rc_free_string(diagnostic);
     if (rc_set_event_callback(core, on_event, NULL) != 0) FAIL("rc_set_event_callback");
 
     int status = 0;

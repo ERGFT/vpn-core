@@ -54,6 +54,19 @@ pub struct RcCore {
 /// Обратный вызов с JSON-строкой (событие или строка журнала).
 pub type RcCallback = Option<unsafe extern "C" fn(json: *const c_char, user: *mut c_void)>;
 
+/// Стабильные значения [`rc_last_error_code`]. Не перенумеровывать;
+/// новые категории добавлять только с новыми значениями.
+pub const RC_ERROR_NONE: c_int = 0;
+pub const RC_ERROR_INVALID_HANDLE: c_int = -1;
+pub const RC_ERROR_CONFIGURATION: c_int = 1;
+pub const RC_ERROR_IO: c_int = 2;
+pub const RC_ERROR_BLOCKED: c_int = 3;
+pub const RC_ERROR_PROTOCOL: c_int = 4;
+pub const RC_ERROR_TLS: c_int = 5;
+pub const RC_ERROR_DNS: c_int = 6;
+pub const RC_ERROR_AUTHENTICATION: c_int = 7;
+pub const RC_ERROR_INTERNAL: c_int = 255;
+
 /// Защитить сокет ядра от TUN (Android: `VpnService.protect(fd)`);
 /// вернуть 1 — защищён, 0 — нет.
 pub type RcProtect = Option<unsafe extern "C" fn(fd: i64, user: *mut c_void) -> c_int>;
@@ -280,6 +293,98 @@ pub unsafe extern "C" fn rc_is_alive(core: *mut RcCore) -> c_int {
         c_int::from(core.running.as_mut().is_some_and(Running::is_alive))
     }))
     .unwrap_or(0)
+}
+
+fn error_code(error: &reality_core::Error) -> c_int {
+    use reality_core::Error;
+    match error {
+        Error::InvalidUri(_) | Error::Config(_) | Error::Uuid(_) => RC_ERROR_CONFIGURATION,
+        Error::Io(_) => RC_ERROR_IO,
+        Error::Blocked => RC_ERROR_BLOCKED,
+        Error::Tls(_) => RC_ERROR_TLS,
+        Error::InvalidDnsName(_) => RC_ERROR_DNS,
+        Error::Socks5AuthFailed => RC_ERROR_AUTHENTICATION,
+        Error::UnsupportedAddressType(_)
+        | Error::UnsupportedSocksVersion(_)
+        | Error::UnsupportedSocksCommand(_)
+        | Error::Socks5(_)
+        | Error::Protocol(_) => RC_ERROR_PROTOCOL,
+    }
+}
+
+/// Короткие статические сообщения: Display исходной ошибки может содержать
+/// адреса, теги настроек и другие значения, которые не должны утекать в UI.
+fn safe_error_message(error: &reality_core::Error) -> &'static str {
+    use reality_core::Error;
+    match error {
+        Error::InvalidUri(_) | Error::Config(_) | Error::Uuid(_) => {
+            "Configuration or startup error"
+        }
+        Error::Io(_) => "I/O error",
+        Error::Blocked => "Connection blocked by routing policy",
+        Error::Tls(_) => "TLS error",
+        Error::InvalidDnsName(_) => "DNS name error",
+        Error::Socks5AuthFailed => "Authentication failed",
+        Error::UnsupportedAddressType(_)
+        | Error::UnsupportedSocksVersion(_)
+        | Error::UnsupportedSocksCommand(_)
+        | Error::Socks5(_)
+        | Error::Protocol(_) => "Network protocol or connection error",
+    }
+}
+
+/// Возвращает стабильный код терминальной ошибки ядра: 0 — ошибки пока нет,
+/// отрицательное значение — неверный handle, положительное — категория.
+/// Сам текст подробной ошибки не раскрывается — см. [`rc_last_error_message`].
+/// Ошибка опрашивается без ожидания и сохраняется для повторного чтения.
+///
+/// # Safety
+/// `core` — живой handle из [`rc_start`]; вызовы с одним handle нужно
+/// сериализовать. После [`rc_stop`] использовать handle нельзя.
+#[no_mangle]
+pub unsafe extern "C" fn rc_last_error_code(core: *mut RcCore) -> c_int {
+    if core.is_null() {
+        return RC_ERROR_INVALID_HANDLE;
+    }
+    catch_unwind(AssertUnwindSafe(|| {
+        // SAFETY: caller guarantees a live handle and serializes its operations.
+        let Some(running) = (unsafe { &mut *core }).running.as_mut() else {
+            return RC_ERROR_INVALID_HANDLE;
+        };
+        running
+            .terminal_error()
+            .map(error_code)
+            .unwrap_or(RC_ERROR_NONE)
+    }))
+    .unwrap_or(RC_ERROR_INTERNAL)
+}
+
+/// Возвращает безопасное краткое описание последней терминальной ошибки.
+/// Строка всегда принадлежит вызывающему и освобождается через
+/// [`rc_free_string`]. При отсутствии ошибки возвращается пустая строка;
+/// для NULL/неверного handle — `"Invalid core handle"`. Детали, содержащие
+/// адреса, ссылки или значения конфигурации, намеренно не выдаются.
+///
+/// # Safety
+/// `core` — живой handle из [`rc_start`]; вызовы с одним handle нужно
+/// сериализовать. После [`rc_stop`] использовать handle нельзя.
+#[no_mangle]
+pub unsafe extern "C" fn rc_last_error_message(core: *mut RcCore) -> *mut c_char {
+    if core.is_null() {
+        return to_c("Invalid core handle");
+    }
+    let message = catch_unwind(AssertUnwindSafe(|| {
+        // SAFETY: caller guarantees a live handle and serializes its operations.
+        let Some(running) = (unsafe { &mut *core }).running.as_mut() else {
+            return "Invalid core handle";
+        };
+        running
+            .terminal_error()
+            .map(safe_error_message)
+            .unwrap_or("")
+    }))
+    .unwrap_or("Internal core error");
+    to_c(message)
 }
 
 /// Остановить ядро и освободить его: входы закрываются, маршруты
@@ -633,6 +738,47 @@ mod health_tests {
     #[test]
     fn null_handle_is_not_alive() {
         assert_eq!(unsafe { super::rc_is_alive(std::ptr::null_mut()) }, 0);
+        assert_eq!(
+            unsafe { super::rc_last_error_code(std::ptr::null_mut()) },
+            super::RC_ERROR_INVALID_HANDLE
+        );
+        let message = unsafe { super::rc_last_error_message(std::ptr::null_mut()) };
+        assert_eq!(
+            unsafe { std::ffi::CStr::from_ptr(message) }
+                .to_str()
+                .unwrap(),
+            "Invalid core handle"
+        );
+        unsafe { super::rc_free_string(message) };
+    }
+
+    #[test]
+    fn terminal_error_mapping_is_stable_and_redacted() {
+        use reality_core::Error;
+
+        let protocol = Error::Protocol("uuid=secret server=secret.example".into());
+        assert_eq!(super::error_code(&protocol), super::RC_ERROR_PROTOCOL);
+        assert_eq!(
+            super::safe_error_message(&protocol),
+            "Network protocol or connection error"
+        );
+
+        let config = Error::Config("token=secret-value".into());
+        assert_eq!(super::error_code(&config), super::RC_ERROR_CONFIGURATION);
+        assert_eq!(
+            super::safe_error_message(&config),
+            "Configuration or startup error"
+        );
+
+        let io = Error::Io(std::io::Error::other("127.0.0.1:1234"));
+        assert_eq!(super::error_code(&io), super::RC_ERROR_IO);
+        assert_eq!(super::safe_error_message(&io), "I/O error");
+
+        assert_eq!(super::error_code(&Error::Blocked), super::RC_ERROR_BLOCKED);
+        assert_eq!(
+            super::error_code(&Error::Socks5AuthFailed),
+            super::RC_ERROR_AUTHENTICATION
+        );
     }
 
     #[test]
@@ -673,6 +819,13 @@ mod health_tests {
             unsafe { super::rc_start(config.as_ptr(), std::ptr::null(), -1, std::ptr::null_mut()) };
         assert!(!core.is_null());
         assert_eq!(unsafe { super::rc_is_alive(core) }, 1);
+        assert_eq!(
+            unsafe { super::rc_last_error_code(core) },
+            super::RC_ERROR_NONE
+        );
+        let message = unsafe { super::rc_last_error_message(core) };
+        assert_eq!(unsafe { std::ffi::CStr::from_ptr(message) }.to_bytes(), b"");
+        unsafe { super::rc_free_string(message) };
         unsafe { super::rc_stop(core) };
     }
 }
