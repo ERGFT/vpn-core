@@ -105,16 +105,19 @@ def serve(port, do_echo):
     sock.bind(("127.0.0.1", port)); sock.listen(64)
     while True:
         raw, _ = sock.accept()
-        def handle(conn):
+        def handle(conn, listener_port, echo_enabled):
+            received = 0
             try:
-                tls = ctx.wrap_socket(conn, server_side=True)
-                while True:
-                    data = tls.recv(65536)
-                    if not data: break
-                    if do_echo: tls.sendall(data)
-            except (OSError, ssl.SSLError):
-                pass
-        threading.Thread(target=handle, args=(raw,), daemon=True).start()
+                with ctx.wrap_socket(conn, server_side=True) as tls:
+                    while True:
+                        data = tls.recv(65536)
+                        if not data: break
+                        received += len(data)
+                        if echo_enabled: tls.sendall(data)
+                print(f"TLS peer closed listener={listener_port} echo={echo_enabled} received={received}", flush=True)
+            except (OSError, ssl.SSLError) as exc:
+                print(f"TLS peer failed listener={listener_port} echo={echo_enabled} received={received} error={type(exc).__name__}: {exc}", file=sys.stderr, flush=True)
+        threading.Thread(target=handle, args=(raw, port, do_echo), daemon=True).start()
 threading.Thread(target=serve, args=(decoy, False), daemon=True).start()
 serve(echo, True)
 PY
