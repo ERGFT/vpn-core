@@ -26,6 +26,11 @@ static int events_seen = 0;
 static int mode_changes = 0;
 static int closes = 0;
 static pthread_mutex_t mu = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t callback_cv = PTHREAD_COND_INITIALIZER;
+static int blocking_callback_entered = 0;
+static int release_blocking_callback = 0;
+static int unsubscribe_started = 0;
+static int unsubscribe_done = 0;
 
 static void on_event(const char *json, void *user) {
     pthread_mutex_lock(&mu);
@@ -34,6 +39,30 @@ static void on_event(const char *json, void *user) {
     if (strstr(json, "\"mode_change\"")) mode_changes++;
     if (strstr(json, "\"connection_close\"")) closes++;
     pthread_mutex_unlock(&mu);
+}
+
+static void on_blocking_event(const char *json, void *user) {
+    (void)json;
+    (void)user;
+    pthread_mutex_lock(&mu);
+    blocking_callback_entered = 1;
+    pthread_cond_broadcast(&callback_cv);
+    while (!release_blocking_callback) pthread_cond_wait(&callback_cv, &mu);
+    pthread_mutex_unlock(&mu);
+}
+
+static void *unsubscribe_event_callback(void *arg) {
+    RcCore *core = (RcCore *)arg;
+    pthread_mutex_lock(&mu);
+    unsubscribe_started = 1;
+    pthread_cond_broadcast(&callback_cv);
+    pthread_mutex_unlock(&mu);
+    if (rc_set_event_callback(core, NULL, NULL) != 0) return (void *)1;
+    pthread_mutex_lock(&mu);
+    unsubscribe_done = 1;
+    pthread_cond_broadcast(&callback_cv);
+    pthread_mutex_unlock(&mu);
+    return NULL;
 }
 
 static int protected_sockets = 0;
@@ -165,12 +194,26 @@ int main(void) {
     body = rc_request(core, "GET", "/nope", NULL, &status);
     if (status != 404 || !strstr(body, "message")) FAIL("GET /nope: %d %s", status, body);
     rc_free_string(body);
+    body = rc_request(core, NULL, "/proxies", NULL, &status);
+    if (status != 400 || !strstr(body, "message")) FAIL("ошибка аргументов rc_request: %d %s", status, body);
+    rc_free_string(body);
+    if (rc_last_error_code(core) != RC_ERROR_NONE)
+        FAIL("ошибка rc_request ошибочно стала терминальной ошибкой ядра");
 
     char *notes = rc_reload(core, CONFIG, &err);
     if (!notes) FAIL("rc_reload: %s", err);
     rc_free_string(notes);
     if (rc_reload(core, "{\"route\": {\"final\": \"nope\"}}", &err) != NULL) FAIL("битый reload принят");
     rc_free_string(err);
+    if (rc_last_error_code(core) != RC_ERROR_NONE)
+        FAIL("ошибка rc_reload ошибочно стала терминальной ошибкой ядра");
+    diagnostic = rc_last_error_message(core);
+    if (!diagnostic || *diagnostic) FAIL("rc_reload изменил диагностику здорового ядра");
+    rc_free_string(diagnostic);
+    err = NULL;
+    notes = rc_reload(core, CONFIG, &err);
+    if (!notes || err != NULL) FAIL("rc_reload: успешный вызов оставил диагностику");
+    rc_free_string(notes);
     printf("OK: rc_reload\n");
 
     for (int i = 0; i < 100; i++) {
@@ -186,6 +229,63 @@ int main(void) {
     if (mode_changes == 0 || closes == 0) FAIL("события не дошли");
     if (protected_sockets == 0) FAIL("rc_set_protect не вызывался");
     pthread_mutex_unlock(&mu);
+
+    if (rc_set_event_callback(core, NULL, NULL) != 0) FAIL("снятие event callback");
+    pthread_mutex_lock(&mu);
+    int callbacks_at_unsubscribe = events_seen;
+    callback_user_events = -1;
+    pthread_mutex_unlock(&mu);
+    usleep(100000);
+    pthread_mutex_lock(&mu);
+    if (events_seen != callbacks_at_unsubscribe || callback_user_events != -1)
+        FAIL("event callback использовал user после снятия подписки");
+    callback_user_events = 0;
+    pthread_mutex_unlock(&mu);
+    if (rc_set_event_callback(core, on_event, &callback_user_events) != 0)
+        FAIL("повторная регистрация event callback");
+
+    /* Hold a callback in flight and prove unsubscribe waits for its return. */
+    if (rc_set_event_callback(core, on_blocking_event, NULL) != 0)
+        FAIL("установка блокирующего callback");
+    notes = rc_reload(core, CONFIG, &err);
+    if (!notes) FAIL("rc_reload для проверки callback barrier: %s", err ? err : "unknown");
+    rc_free_string(notes);
+    rc_free_string(err);
+    err = NULL;
+    for (int i = 0; i < 500; i++) {
+        pthread_mutex_lock(&mu);
+        int entered = blocking_callback_entered;
+        pthread_mutex_unlock(&mu);
+        if (entered) break;
+        usleep(10000);
+    }
+    pthread_mutex_lock(&mu);
+    if (!blocking_callback_entered) FAIL("rc_reload не доставил событие блокирующему callback");
+    pthread_mutex_unlock(&mu);
+
+    pthread_t unsubscribe_thread;
+    if (pthread_create(&unsubscribe_thread, NULL, unsubscribe_event_callback, core) != 0)
+        FAIL("pthread_create для снятия callback");
+    for (int i = 0; i < 500; i++) {
+        pthread_mutex_lock(&mu);
+        int started = unsubscribe_started;
+        pthread_mutex_unlock(&mu);
+        if (started) break;
+        usleep(10000);
+    }
+    pthread_mutex_lock(&mu);
+    if (!unsubscribe_started) FAIL("поток снятия подписки не запустился");
+    pthread_mutex_unlock(&mu);
+    usleep(100000);
+    pthread_mutex_lock(&mu);
+    if (unsubscribe_done) FAIL("снятие callback вернулось до завершения активного callback");
+    release_blocking_callback = 1;
+    pthread_cond_broadcast(&callback_cv);
+    pthread_mutex_unlock(&mu);
+    void *unsubscribe_result = NULL;
+    pthread_join(unsubscribe_thread, &unsubscribe_result);
+    if (unsubscribe_result) FAIL("параллельное снятие callback");
+    printf("OK: unsubscribe ждёт активный callback и сохраняет lifetime user\n");
 
     rc_stop(core);
     rc_stop(NULL);

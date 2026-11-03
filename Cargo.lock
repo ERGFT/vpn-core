@@ -2402,10 +2402,13 @@ name = "reality-ffi"
 version = "0.1.0"
 dependencies = [
  "reality-core",
+ "rustls",
+ "rustls-pki-types",
  "serde_json",
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "uuid",
 ]
 
 [[package]]
