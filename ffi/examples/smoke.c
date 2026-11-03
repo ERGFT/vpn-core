@@ -28,9 +28,9 @@ static int closes = 0;
 static pthread_mutex_t mu = PTHREAD_MUTEX_INITIALIZER;
 
 static void on_event(const char *json, void *user) {
-    (void)user;
     pthread_mutex_lock(&mu);
     events_seen++;
+    if (user) (*(int *)user)++;
     if (strstr(json, "\"mode_change\"")) mode_changes++;
     if (strstr(json, "\"connection_close\"")) closes++;
     pthread_mutex_unlock(&mu);
@@ -132,7 +132,9 @@ int main(void) {
     diagnostic = rc_last_error_message(core);
     if (!diagnostic || *diagnostic) FAIL("rc_last_error_message: ожидалась пустая строка");
     rc_free_string(diagnostic);
-    if (rc_set_event_callback(core, on_event, NULL) != 0) FAIL("rc_set_event_callback");
+    int callback_user_events = 0;
+    if (rc_set_event_callback(core, on_event, &callback_user_events) != 0)
+        FAIL("rc_set_event_callback");
 
     int status = 0;
     char *body = rc_request(core, "GET", "/proxies", NULL, &status);
@@ -186,6 +188,18 @@ int main(void) {
     pthread_mutex_unlock(&mu);
 
     rc_stop(core);
+    rc_stop(NULL);
+    pthread_mutex_lock(&mu);
+    int callbacks_at_stop = events_seen;
+    callback_user_events = -1; /* caller-owned callback state can now be released */
+    pthread_mutex_unlock(&mu);
+    /* rc_stop is a callback lifetime barrier for the consumer's user data. */
+    usleep(100000);
+    pthread_mutex_lock(&mu);
+    if (events_seen != callbacks_at_stop || callback_user_events != -1)
+        FAIL("event callback used consumer state after rc_stop returned");
+    pthread_mutex_unlock(&mu);
+    printf("OK: rc_stop prevents later event callbacks; NULL stop is safe\n");
     rc_set_protect(NULL, NULL);
     rc_set_connection_owner(NULL, NULL);
 

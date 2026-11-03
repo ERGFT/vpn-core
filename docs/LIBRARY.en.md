@@ -127,7 +127,10 @@ rc_stop(core);
   `debug` (and with `RUST_LOG=debug`) the log — both the callback and
   `GET /logs` — includes the domains of visited sites and DNS results. Do
   not send such a log to a server or show it without the user knowing.
-- **`rc_stop(core)`** — stop: inbounds close, routes are restored.
+- **`rc_stop(core)`** — stop: inbounds close and routes are restored. Before
+  returning, it waits for callbacks to finish; no new callback starts after
+  return. You can release `user` data and callback resources after `rc_stop`.
+  `NULL` is accepted as a no-op.
 - **`rc_free_string(s)`** — free a string returned by the library.
 
 After `rc_is_alive(core) == 0`, retrieve the cause with
@@ -329,3 +332,8 @@ user could take the lock first.
   - `rc_reload` and `rc_stop`;
   - with root, also a start with a ready TUN descriptor (as from
     `VpnService`).
+- The unpacked SDK example runs on Linux, Windows, and macOS. It checks a
+  configuration error and frees its message, performs three
+  `rc_start`/`rc_request`/`rc_stop` cycles, and calls `rc_stop(NULL)` safely.
+  The Linux smoke additionally verifies that no event callback is invoked
+  after `rc_stop` returns.

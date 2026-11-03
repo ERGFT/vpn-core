@@ -21,24 +21,41 @@ int main(void) {
         return 1;
     }
 
-    core = rc_start(CONFIG, NULL, -1, &error);
-    if (core == NULL) {
-        fprintf(stderr, "could not start vpn-core: %s\n", error ? error : "unknown error");
+    /* Invalid configuration returns an owned diagnostic even before startup. */
+    core = rc_start("{invalid-json", NULL, -1, &error);
+    if (core != NULL || error == NULL || error[0] == '\0') {
+        fputs("invalid configuration was not reported\n", stderr);
         rc_free_string(error);
+        if (core != NULL) rc_stop(core);
         return 1;
     }
+    rc_free_string(error);
+    error = NULL;
 
-    char *proxies = rc_request(core, "GET", "/proxies", NULL, &status);
-    if (proxies == NULL || status != 200) {
-        fprintf(stderr, "GET /proxies failed (status %d)\n", status);
+    /* Exercise repeated ownership transfer through the public SDK alone. */
+    for (int iteration = 0; iteration < 3; iteration++) {
+        core = rc_start(CONFIG, NULL, -1, &error);
+        if (core == NULL) {
+            fprintf(stderr, "could not start vpn-core: %s\n", error ? error : "unknown error");
+            rc_free_string(error);
+            return 1;
+        }
+
+        char *proxies = rc_request(core, "GET", "/proxies", NULL, &status);
+        if (proxies == NULL || status != 200) {
+            fprintf(stderr, "GET /proxies failed (status %d)\n", status);
+            rc_free_string(proxies);
+            rc_stop(core);
+            return 1;
+        }
+        if (iteration == 0) puts(proxies);
         rc_free_string(proxies);
-        rc_stop(core);
-        return 1;
-    }
-    puts(proxies);
-    rc_free_string(proxies);
 
-    /* A real app keeps core alive and calls rc_request/callback APIs as needed. */
-    rc_stop(core);
+        /* NULL is explicitly a safe no-op; real handles are stopped once. */
+        rc_stop(NULL);
+        rc_stop(core);
+    }
+
+    puts("C SDK consumer lifecycle passed (3 start/request/stop cycles)");
     return 0;
 }
