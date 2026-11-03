@@ -76,5 +76,6 @@ There has been no third-party crypto review of the REALITY implementation
   negotiates it, the client must answer, and rustls cannot). With REALITY the
   match is exact.
 - On real Windows (CI) the tests, the service and TUN are checked; the system proxy, autostart at logon and Xray-core interop — only under Wine so far.
-- A third-party crypto review (Stage 5) and the decision to publish (Stage 8)
-  are up to people: `docs/stage5-crypto-review-and-interop.en.md`.
+- No independent third-party cryptographic review of REALITY has been done.
+  Release notes state this limitation; the expert checklist and questions are
+  in `docs/stage5-crypto-review-and-interop.en.md`.

@@ -16,6 +16,9 @@ on:
   pull_request:
     paths:
       - .github/workflows/release.yml
+      - CHANGELOG.md
+      - docs/FEATURES.md
+      - docs/FEATURES.en.md
       - ffi/**
       - scripts/package_ffi_sdk.py
       - scripts/check_ffi_sdk.py
