@@ -8,6 +8,10 @@
 
 ## [Не выпущено]
 
+Пока нет изменений после `v0.1.0`.
+
+## [0.1.0] - 2026-11-04
+
 ### Выходы
 - Добавлен SOCKS5 outbound для TCP CONNECT (`network: "tcp"`) в формате sing-box; поддерживаются
   RFC 1929 и чтение пароля из `password_file`. Также добавлен HTTP CONNECT outbound (`type: "http"`):
@@ -84,8 +88,13 @@
   адресу интерфейса (домен по-прежнему отвергается).
 - Подписка: не больше 4096 серверов.
 
-Планируемый стабильный выпуск — `v0.1.0`. В него войдут CLI и SDK для
-встраивания; публикация выполняется отдельным versioned release workflow.
+Выпуск `v0.1.0` включает CLI и C ABI SDK для встраивания ядра.
+
+### Артефакты
+- CLI для Linux x86_64 и Windows x86_64.
+- SDK ZIP для Linux x86_64, Windows x86_64, macOS arm64,
+  Android arm64-v8a и iOS arm64; для каждого ZIP приложен SHA-256.
+- Лицензии зависимостей, CycloneDX SBOM и GitHub build provenance.
 
 ### Протокол и транспорты
 - VLESS с `security=none`/`tls`/`reality`; REALITY с X25519MLKEM768
@@ -211,6 +220,7 @@
   проводилось ([чек-лист](docs/stage5-crypto-review-and-interop.md)).
 
 [Не выпущено]: https://github.com/ERGFT/vpn-core/commits/main
+[0.1.0]: https://github.com/ERGFT/vpn-core/releases/tag/v0.1.0
 
 ---
 
@@ -222,6 +232,10 @@ and the project follows [SemVer](https://semver.org/). The detailed
 stage-by-stage decision history is in [PLAN.md](PLAN.md) (in Russian).
 
 ## [Unreleased]
+
+No changes after `v0.1.0` yet.
+
+## [0.1.0] - 2026-11-04
 
 ### Outbounds
 - Added a sing-box SOCKS5 outbound for TCP CONNECT (`network: "tcp"`), with RFC 1929 and an optional
@@ -266,8 +280,13 @@ stage-by-stage decision history is in [PLAN.md](PLAN.md) (in Russian).
   recovered the request faster after server restart (45.939 versus 86.230 ms).
   This is a baseline from one loopback scenario only.
 
-The planned stable release is `v0.1.0`. It will include the CLI and embedding
-SDKs; publication is handled by the separate versioned release workflow.
+Release `v0.1.0` includes the CLI and C ABI SDKs for embedding the core.
+
+### Release artifacts
+- CLI binaries for Linux x86_64 and Windows x86_64.
+- SDK ZIPs for Linux x86_64, Windows x86_64, macOS arm64,
+  Android arm64-v8a, and iOS arm64; each ZIP has a SHA-256 checksum.
+- Dependency licenses, a CycloneDX SBOM, and GitHub build provenance.
 
 ### Protocol and transports
 - VLESS with `security=none`/`tls`/`reality`; REALITY with X25519MLKEM768
