@@ -70,34 +70,14 @@ def one(index: int) -> None:
 
         total = mib * 1024 * 1024
         payload = os.urandom(chunk)
-        sent = received = 0
-        reader_errors = []
-
-        def reader() -> None:
-            nonlocal received
-            try:
-                while received < total:
-                    data = tls.recv(min(chunk, total - received))
-                    if not data:
-                        reader_errors.append(f"peer closed after {received} of {total} response bytes")
-                        return
-                    received += len(data)
-            except Exception as exc:  # noqa: BLE001
-                reader_errors.append(f"response reader failed after {received} of {total} bytes: {exc}")
-
-        thread = threading.Thread(target=reader, daemon=True)
-        thread.start()
+        sent = 0
         while sent < total:
-            if reader_errors:
-                raise RuntimeError(reader_errors[0])
             size = min(chunk, total - sent)
-            tls.sendall(payload[:size])
+            block = payload[:size]
+            tls.sendall(block)
+            if recv_exact(tls, size) != block:
+                raise RuntimeError(f"TLS echo changed data after {sent} of {total} request bytes")
             sent += size
-        thread.join(timeout=120)
-        if reader_errors:
-            raise RuntimeError(reader_errors[0])
-        if received != total:
-            raise RuntimeError(f"TLS echo returned {received} of {total} bytes")
         tls.close()
         with lock:
             sent_total += total

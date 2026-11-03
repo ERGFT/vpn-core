@@ -103,8 +103,10 @@ The harness pins `xray-rust` to tag `v0.8.0` (commit
 [`fcce4be`](https://github.com/aimalygin/xray-rust/tree/fcce4be2771c1fb3f11e9503741d39a4d8df314e))
 and uses Xray-core `v26.9.9` as the shared VLESS + REALITY + Vision server.
 Both clients run on the same host with the same parameters, Chrome
-fingerprint, eight concurrent flows, and an inner TLS 1.3 echo. Client order
-alternates across five runs. Each run saves JSON and RSS/PSS CSV; the final
+fingerprint, eight concurrent flows, and an inner TLS 1.3 echo. Each flow sends
+and verifies a 64 KiB echo block before sending the next; all eight flows run
+concurrently. Client order alternates across five runs. Each run
+saves JSON and RSS/PSS CSV; the final
 manifest records commits, binary versions, SHA-256 hashes, OS, and CPU model.
 Metrics include throughput, time to first application data after the TLS
 handshake, idle/peak RSS/PSS, client CPU milliseconds per transferred GiB, and
