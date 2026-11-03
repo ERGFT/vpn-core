@@ -126,6 +126,28 @@ change: it does not model WAN loss, energy use, or handling of the host
 `rc_network_changed` signal. Conclusions will follow only after the full
 methodology succeeds.
 
+### First published run
+
+[GitHub Actions run #41675935896](https://github.com/ERGFT/vpn-core/actions/runs/41675935896)
+successfully completed all five paired runs on `ubuntu-24.04` (Azure, x86_64,
+AMD EPYC 9V74, 4 logical CPUs). The table shows medians; the full manifest and
+per-run JSON/CSV files are available in the workflow artifact for 30 days.
+
+| Metric | vpn-core | xray-rust v0.8.0 | Observation in this scenario |
+|---|---:|---:|---|
+| Throughput, MiB/s | 24.938 | 23.261 | vpn-core was about 7.2% higher |
+| First byte after TLS handshake, ms | 41.313 | 42.220 | vpn-core was about 2.1% faster |
+| Peak PSS, KiB | 11,186 | 13,899 | vpn-core was about 19.5% lower |
+| CPU, ms per transferred GiB | 1,500 | 2,100 | vpn-core used about 28.6% less CPU |
+| Recovery after server restart, ms | 88.637 | 48.150 | xray-rust recovered faster |
+
+This is one cloud runner, loopback, one profile, and five repetitions; Rust
+compiler versions differed (`1.99.1` for vpn-core and `1.96.0` for xray-rust).
+Treat it as a reproducible baseline, not an independent VPS benchmark or a
+claim of an advantage on real networks. In particular, recovery includes a
+50 ms polling interval and must not be read as a universal network-change
+recovery time.
+
 ## Performance and memory
 
 Benchmarks and the allocator choice — `PLAN.md`, Stages 0 and 7. In short:
