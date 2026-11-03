@@ -170,24 +170,25 @@ jobs:
         shell: bash
         env:
           PLATFORM: ${{ matrix.platform }}
+          TARGET: ${{ matrix.target }}
           VERSION: ${{ inputs.release_version || github.ref_name }}
         run: |
           mkdir -p dist
           case "$PLATFORM" in
             linux-x86_64)
-              python scripts/package_ffi_sdk.py --platform "$PLATFORM" --version "$VERSION" --output dist --library target/release/libreality.so --library target/release/libreality.a
+              python scripts/package_ffi_sdk.py --platform "$PLATFORM" --target "$TARGET" --version "$VERSION" --output dist --library target/release/libreality.so --library target/release/libreality.a
               ;;
             windows-x86_64)
-              python scripts/package_ffi_sdk.py --platform "$PLATFORM" --version "$VERSION" --output dist --library target/release/reality.dll --library target/release/reality.dll.lib --library target/release/reality.lib
+              python scripts/package_ffi_sdk.py --platform "$PLATFORM" --target "$TARGET" --version "$VERSION" --output dist --library target/release/reality.dll --library target/release/reality.dll.lib --library target/release/reality.lib
               ;;
             android-arm64-v8a)
-              python scripts/package_ffi_sdk.py --platform "$PLATFORM" --version "$VERSION" --output dist --library target/aarch64-linux-android/release/libreality.so --library target/aarch64-linux-android/release/libreality.a
+              python scripts/package_ffi_sdk.py --platform "$PLATFORM" --target "$TARGET" --version "$VERSION" --output dist --library target/aarch64-linux-android/release/libreality.so --library target/aarch64-linux-android/release/libreality.a
               ;;
             ios-arm64)
-              python scripts/package_ffi_sdk.py --platform "$PLATFORM" --version "$VERSION" --output dist --library target/aarch64-apple-ios/release/libreality.a
+              python scripts/package_ffi_sdk.py --platform "$PLATFORM" --target "$TARGET" --version "$VERSION" --output dist --library target/aarch64-apple-ios/release/libreality.a
               ;;
             macos-arm64)
-              python scripts/package_ffi_sdk.py --platform "$PLATFORM" --version "$VERSION" --output dist --library target/aarch64-apple-darwin/release/libreality.dylib --library target/aarch64-apple-darwin/release/libreality.a
+              python scripts/package_ffi_sdk.py --platform "$PLATFORM" --target "$TARGET" --version "$VERSION" --output dist --library target/aarch64-apple-darwin/release/libreality.dylib --library target/aarch64-apple-darwin/release/libreality.a
               ;;
           esac
       - name: Проверить состав SDK и checksum
