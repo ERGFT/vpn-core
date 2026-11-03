@@ -7,6 +7,7 @@ use aes_gcm::{Aes256Gcm, KeyInit, Nonce};
 use hkdf::Hkdf;
 use hmac::{Hmac, Mac};
 use sha2::{Sha256, Sha512};
+use std::fmt;
 use x25519_dalek::{EphemeralSecret, PublicKey as X25519PublicKey};
 
 use crate::error::{Error, Result};
@@ -30,11 +31,20 @@ const PLAINTEXT_LEN: usize = 16;
 /// текущий код не решает, это открытый архитектурный вопрос).
 /// `auth_key` нужен отдельно и позже — им проверяется HMAC-подпись
 /// сертификата сервера в [`verify_ed25519_hmac`]/`verifier.rs`.
-#[derive(Debug)]
 pub struct RealityAuth {
     pub client_public: [u8; 32],
     pub auth_key: [u8; 32],
     pub session_id: [u8; SESSION_ID_LEN],
+}
+
+impl fmt::Debug for RealityAuth {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("RealityAuth")
+            .field("client_public", &self.client_public)
+            .field("auth_key", &"[REDACTED]")
+            .field("session_id", &self.session_id)
+            .finish()
+    }
 }
 
 impl RealityAuth {
@@ -300,6 +310,19 @@ mod tests {
         let shared_b = bob_static.diffie_hellman(&alice_pub);
         assert_eq!(shared_a.as_bytes(), shared_b.as_bytes());
         assert_eq!(shared_a.as_bytes().as_slice(), k_expected.as_slice());
+    }
+
+    #[test]
+    fn debug_redacts_auth_key() {
+        let auth = RealityAuth {
+            client_public: [0x11; 32],
+            auth_key: [0xa5; 32],
+            session_id: [0x22; SESSION_ID_LEN],
+        };
+        let debug = format!("{auth:?}");
+
+        assert!(debug.contains("auth_key: \"[REDACTED]\""));
+        assert!(!debug.contains(&format!("{:?}", auth.auth_key)));
     }
 
     #[test]

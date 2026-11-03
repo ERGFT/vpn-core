@@ -55,6 +55,15 @@ Specific questions for the reviewer (not just "check everything"):
    themselves, but also that the rest of the rustls logic around them is not
    broken — three very narrow but not isolated changes in shared code).
 
+5. ML-KEM shared secret — is the returned `SharedKey` itself wiped on drop,
+   rather than only a copy; does the selected `Zeroizing` wrapper cover the
+   internal `hybrid-array` buffer?
+6. Temporary AuthKey copies in `RealityHook::auth_key()` and certificate
+   verification — can they be avoided or kept in zeroizing wrappers?
+7. TLS group policy — does accepting classical X25519 in an authenticated
+   REALITY session match the project policy, or is hybrid-only enforcement
+   required? Explicitly assess HRR and the transcript used for `pqv=` too.
+
 ### How to record and close the review
 
 Until the review is done, do not use the client where a compromised

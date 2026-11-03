@@ -303,24 +303,11 @@ impl RealityClientHook for RealityHook {
                 "REALITY: некорректный формат ML-KEM768 ciphertext сервера".into(),
             )
         })?;
-        // `decapsulate()` возвращает `ml_kem::SharedKey` — обёртку
-        // крейта `hybrid-array` вокруг `[u8; 32]`, не гарантированно
-        // стирающую себя при Drop (`ml_kem`'s feature "zeroize" стирает
-        // `DecapsulationKey`, но не обязательно транзитивно этот тип —
-        // не полагаемся на это неявно). Сразу копируем в свой
-        // `Zeroizing<[u8; 32]>`, как и везде в этом файле с секретами,
-        // которые храним сами.
-        #[allow(
-            clippy::expect_used,
-            reason = "инвариант: общий ключ ML-KEM-768 — 32 байта (FIPS 203)"
-        )]
-        let mlkem_shared: Zeroizing<[u8; 32]> = Zeroizing::new(
-            self.mlkem_decap
-                .decapsulate(&mlkem_ct)
-                .as_slice()
-                .try_into()
-                .expect("ML-KEM-768 shared key всегда 32 байта (FIPS 203)"),
-        );
+        // `decapsulate()` возвращает `ml_kem::SharedKey` на основе
+        // `hybrid-array`. Оборачиваем именно этот буфер до его удаления:
+        // простая копия в Zeroizing оставила бы исходный временный ключ
+        // в памяти до повторного использования области.
+        let mlkem_shared = Zeroizing::new(self.mlkem_decap.decapsulate(&mlkem_ct));
 
         let server_x25519: [u8; 32] = server_x25519_bytes.try_into().map_err(|_| {
             rustls::Error::General("REALITY: некорректная длина X25519-ключа сервера".into())
