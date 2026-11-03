@@ -247,11 +247,11 @@ jobs:
       - uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
         with:
           draft: false
-          prerelease: false
-          make_latest: true
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          make_latest: ${{ !contains(github.ref_name, '-') }}
           name: vpn-core ${{ github.ref_name }}
           body: |
-            Обычный версионированный release vpn-core (не prerelease).
+            Версионированный выпуск vpn-core: `${{ github.ref_name }}`.
 
             Помимо CLI, релиз содержит SDK C ABI для встраивания ядра в приложения:
             Linux x86_64, Windows x86_64, macOS arm64, Android arm64-v8a и iOS arm64.
@@ -263,6 +263,12 @@ jobs:
             ядра в приложение проверьте требования лицензии и приложите лицензии
             зависимостей из этого релиза.
 
-            Для интеграции прочитайте `docs/LIBRARY.md` в исходниках.
+            Интеграция: [руководство C ABI](https://github.com/ERGFT/vpn-core/blob/${{ github.ref_name }}/docs/LIBRARY.md).
+            [Журнал изменений](https://github.com/ERGFT/vpn-core/blob/${{ github.ref_name }}/CHANGELOG.md).
+
+            Ограничения проверки: Android/iOS SDK собраны и cross-linked, но не
+            запускались на реальных устройствах. Системный прокси и автозапуск
+            Windows, а также interop с Xray-core проверялись под Wine. REALITY
+            не проходил независимое стороннее криптографическое ревью.
           fail_on_unmatched_files: true
           files: dist/*

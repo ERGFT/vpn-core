@@ -84,8 +84,8 @@
   адресу интерфейса (домен по-прежнему отвергается).
 - Подписка: не больше 4096 серверов.
 
-Первый выпуск ещё не сделан (`git tag v0.1.0 && git push origin v0.1.0`).
-В него войдёт:
+Планируемый стабильный выпуск — `v0.1.0`. В него войдут CLI и SDK для
+встраивания; публикация выполняется отдельным versioned release workflow.
 
 ### Протокол и транспорты
 - VLESS с `security=none`/`tls`/`reality`; REALITY с X25519MLKEM768
@@ -202,16 +202,13 @@
   старт для Linux и Windows); справочник — в `docs/` (`CLI`, `CONFIG`,
   `DNS`, `TUN`, `API`, `LINK`, `FEATURES`, оглавление `docs/README.md`).
 
-### Планируется
-Это намерения, а не обещания сроков.
-- Первый выпуск `v0.1.0` с готовыми сборками для Linux и Windows в
-  [Releases](https://github.com/ERGFT/vpn-core/releases) — и инструкции по
-  установке, обновлению и удалению в README.
-- Проверить на настоящей Windows то, что пока проверено только под Wine:
-  системный прокси, автозапуск при входе, интероп с Xray-core.
-- xhttp: `downloadSettings`.
-- Стороннее крипто-ревью REALITY — нужен независимый специалист
-  ([чек-лист](docs/stage5-crypto-review-and-interop.md)).
+### Ограничения и незакрытые проверки
+- Android/iOS SDK собирается и проверяется кросс-компоновкой; запуск на
+  реальных устройствах не подтверждён. Интеграцию выполняет приложение-хост.
+- Системный прокси Windows, автозапуск при входе и interop с Xray-core
+  проверялись под Wine; это не следует считать runtime-проверкой на Windows.
+- Независимое стороннее криптографическое ревью реализации REALITY не
+  проводилось ([чек-лист](docs/stage5-crypto-review-and-interop.md)).
 
 [Не выпущено]: https://github.com/ERGFT/vpn-core/commits/main
 
@@ -269,8 +266,8 @@ stage-by-stage decision history is in [PLAN.md](PLAN.md) (in Russian).
   recovered the request faster after server restart (45.939 versus 86.230 ms).
   This is a baseline from one loopback scenario only.
 
-No stable release has been made yet (`git tag v0.1.0 && git push origin v0.1.0`).
-It will include:
+The planned stable release is `v0.1.0`. It will include the CLI and embedding
+SDKs; publication is handled by the separate versioned release workflow.
 
 ### Protocol and transports
 - VLESS with `security=none`/`tls`/`reality`; REALITY with X25519MLKEM768
@@ -390,15 +387,12 @@ It will include:
   Linux and Windows); the reference moved to `docs/` (`CLI`, `CONFIG`,
   `DNS`, `TUN`, `API`, `LINK`, `FEATURES`, index `docs/README.en.md`).
 
-### Planned
-These are intentions, not promised dates.
-- Publish the first regular versioned release `v0.1.0` (not a prerelease),
-  with CLI binaries and C ABI SDK archives for Linux, Windows, macOS, Android,
-  and iOS on [Releases](https://github.com/ERGFT/vpn-core/releases).
-- Test on real Windows what has only been tested under Wine so far: the
-  system proxy, autostart at logon, interop with Xray-core.
-- xhttp: `downloadSettings`.
-- A third-party crypto review of REALITY — needs an independent expert
-  ([checklist](docs/stage5-crypto-review-and-interop.en.md)).
+### Limitations and outstanding checks
+- Android/iOS SDKs are built and cross-linked; runtime on real devices is not
+  confirmed. Integration belongs to the host application.
+- The Windows system proxy, autostart at logon, and Xray-core interop have been
+  tested under Wine; this is not a runtime check on Windows.
+- The REALITY implementation has not had an independent third-party
+  cryptographic review ([checklist](docs/stage5-crypto-review-and-interop.en.md)).
 
 [Unreleased]: https://github.com/ERGFT/vpn-core/commits/main
