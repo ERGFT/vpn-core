@@ -43,6 +43,17 @@
   подключение через 250 мс, одновременно работает не более двух попыток,
   общий предел — 10 с и 8 адресов.
 
+### Производительность
+- Добавлен повторяемый Linux-бенчмарк `vpn-core` против закреплённого `xray-rust v0.8.0`:
+  общий Xray-core VLESS + REALITY + Vision сервер, внутренний TLS echo,
+  чередование пяти прогонов, сохранение JSON/CSV метрик и параметров среды,
+  а также замер восстановления после краткой остановки тестового сервера.
+  Первые пять парных прогонов на `ubuntu-24.04` опубликованы в [документации
+  методики](docs/TESTING.md): медианная пропускная способность составила
+  24,280 против 23,967 МиБ/с, пиковый PSS — 11 405 против 14 641 КиБ;
+  `xray-rust` быстрее восстановил запрос после перезапуска сервера
+  (45,939 против 86,230 мс). Это только baseline одного loopback-сценария.
+
 ### Исправления
 - Патченный `rustls` обновлён до 0.23.46 (RUSTSEC-2026-0348, RUSTSEC-2026-0349
   и ещё две); патч REALITY перенесён без изменения объёма — 13 файлов,
@@ -246,6 +257,17 @@ stage-by-stage decision history is in [PLAN.md](PLAN.md) (in Russian).
 - The TCP dialer interleaves IPv4/IPv6 candidates: the alternative family
   starts after 250 ms, at most two attempts run concurrently, with a 10 s
   total deadline and an eight-address limit.
+
+### Performance
+- Added a repeatable Linux benchmark for `vpn-core` versus pinned `xray-rust v0.8.0`:
+  a shared Xray-core VLESS + REALITY + Vision server, inner TLS echo, alternating
+  five-run order, JSON/CSV output with metrics and environment details, and a
+  recovery measurement after briefly stopping the test server.
+  The first five paired runs on `ubuntu-24.04` are documented in the
+  [benchmark methodology](docs/TESTING.en.md): median throughput was 24.280
+  versus 23.967 MiB/s, peak PSS was 11,405 versus 14,641 KiB, and `xray-rust`
+  recovered the request faster after server restart (45.939 versus 86.230 ms).
+  This is a baseline from one loopback scenario only.
 
 No stable release has been made yet (`git tag v0.1.0 && git push origin v0.1.0`).
 It will include:

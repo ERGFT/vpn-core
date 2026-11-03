@@ -89,6 +89,65 @@ answers CONNECT in advance, without waiting for the server connection (it
 replies "success" even if there is no server), so its CONNECT reply cannot be
 compared with ours. Details — `PLAN.md`, Stage 8.
 
+## Comparison with xray-rust
+
+Use the dedicated scenario for a new comparison; the older table above is a
+separate Xray-core result:
+
+```sh
+scripts/fetch_xray.sh
+scripts/stage6_compare_with_xray_rust.sh
+```
+
+The harness pins `xray-rust` to tag `v0.8.0` (commit
+[`fcce4be`](https://github.com/aimalygin/xray-rust/tree/fcce4be2771c1fb3f11e9503741d39a4d8df314e))
+and uses Xray-core `v26.9.9` as the shared VLESS + REALITY + Vision server.
+Both clients run on the same host with the same parameters, Chrome
+fingerprint, eight concurrent flows, and an inner TLS 1.3 echo. Each flow sends
+and verifies a 64 KiB echo block before sending the next; all eight flows run
+concurrently. Client order alternates across five runs. Each run
+saves JSON and RSS/PSS CSV; the final
+manifest records commits, binary versions, SHA-256 hashes, OS, and CPU model.
+Metrics include throughput, time to first application data after the TLS
+handshake, idle/peak RSS/PSS, client CPU milliseconds per transferred GiB, and
+application-request recovery.
+
+Override settings with `RUNS`, `CONNS`, `MIB`, and `OUTDIR`. Results are written
+to `target/stage6-xray-rust/`; by default, each of five runs transfers 8 × 64
+MiB in each direction for each core. The shared server is then stopped for
+`OUTAGE_SECS` (2 seconds by default) and restarted while the client process stays
+alive. `stage6_recovery_probe.py` retries SOCKS5 CONNECT and an inner TLS 1.3
+echo until the first successful request. The time from server TCP readiness to
+that echo is stored separately in `*.recovery.json`; `RECOVERY_POLL_MS` sets the
+polling interval and `RECOVERY_TIMEOUT_SECS` sets the deadline. Preserve all
+parameters and raw JSON/CSV, and do not draw conclusions from only the best run.
+This is a loopback server-outage scenario, not a physical network-interface
+change: it does not model WAN loss, energy use, or handling of the host
+`rc_network_changed` signal. Conclusions will follow only after the full
+methodology succeeds.
+
+### First published run
+
+[GitHub Actions run #41678957797](https://github.com/ERGFT/vpn-core/actions/runs/41678957797)
+successfully completed all five paired runs on `ubuntu-24.04` (Azure, x86_64,
+AMD EPYC 9V74, 4 logical CPUs). The table shows medians; the full manifest and
+per-run JSON/CSV files are available in the workflow artifact for 30 days.
+
+| Metric | vpn-core | xray-rust v0.8.0 | Observation in this scenario |
+|---|---:|---:|---|
+| Throughput, MiB/s | 24.280 | 23.967 | vpn-core was about 1.3% higher |
+| First byte after TLS handshake, ms | 40.994 | 41.140 | vpn-core was about 0.4% faster |
+| Peak PSS, KiB | 11,405 | 14,641 | vpn-core was about 22.1% lower |
+| CPU, ms per transferred GiB | 980 | 1,260 | vpn-core used about 22.2% less CPU |
+| Recovery after server restart, ms | 86.230 | 45.939 | xray-rust recovered faster |
+
+This is one cloud runner, loopback, one profile, and five repetitions; Rust
+compiler versions differed (`1.99.1` for vpn-core and `1.96.0` for xray-rust).
+Treat it as a reproducible baseline, not an independent VPS benchmark or a
+claim of an advantage on real networks. In particular, recovery includes a
+50 ms polling interval and must not be read as a universal network-change
+recovery time.
+
 ## Performance and memory
 
 Benchmarks and the allocator choice — `PLAN.md`, Stages 0 and 7. In short:
