@@ -29,6 +29,7 @@ and first run. This is the detailed reference.
 | [TESTING.en.md](TESTING.en.md) | how the project is tested, comparison with Xray-core, performance |
 | [RUSTLS_PATCH.en.md](RUSTLS_PATCH.en.md) | what was changed in rustls and why |
 | [stage5-crypto-review-and-interop.en.md](stage5-crypto-review-and-interop.en.md) | checklist for a third-party crypto review of REALITY |
+| [RELEASING.en.md](RELEASING.en.md) | preflight builds, artifact verification, and tag publishing |
 
 Decision history by stage — [PLAN.md](../PLAN.md) (Russian), what changed —
 [CHANGELOG.md](../CHANGELOG.md#changelog).

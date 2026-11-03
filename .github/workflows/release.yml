@@ -1,4 +1,6 @@
-# Выпуск: git tag v0.1.0 && git push origin v0.1.0 (тег — v + version из
+# Предварительная сборка без публикации: Actions → Release → Run workflow на
+# ветке main; указать точный тег. Сначала скачать и проверить артефакты, затем
+# отправить этот тег на тот же commit. Выпуск: git tag v0.1.0 && git push origin v0.1.0 (тег — v + version из
 # Cargo.toml; первый стабильный выпуск — v0.1.0, см. CHANGELOG.md). К CLI
 # прикладываются SDK-пакеты C ABI для Linux, Windows, macOS, Android и iOS.
 #
@@ -13,6 +15,13 @@ name: Release
 on:
   push:
     tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      release_version:
+        description: "Exact version to embed in SDK preflight packages (for example v0.1.0)"
+        required: true
+        type: string
+        default: v0.1.0
   pull_request:
     paths:
       - .github/workflows/release.yml
@@ -45,6 +54,14 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: Validate preflight ref and version
+        if: github.event_name == 'workflow_dispatch'
+        shell: bash
+        env:
+          VERSION: ${{ inputs.release_version }}
+        run: |
+          [[ "$GITHUB_REF" == "refs/heads/main" ]] || { echo 'Preflight must run from main'; exit 1; }
+          [[ "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]] || { echo 'Invalid release_version'; exit 1; }
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
         with:
           toolchain: stable
@@ -106,6 +123,14 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: Validate preflight ref and version
+        if: github.event_name == 'workflow_dispatch'
+        shell: bash
+        env:
+          VERSION: ${{ inputs.release_version }}
+        run: |
+          [[ "$GITHUB_REF" == "refs/heads/main" ]] || { echo 'Preflight must run from main'; exit 1; }
+          [[ "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]] || { echo 'Invalid release_version'; exit 1; }
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
         with:
           toolchain: stable
@@ -145,7 +170,7 @@ jobs:
         shell: bash
         env:
           PLATFORM: ${{ matrix.platform }}
-          VERSION: ${{ github.ref_name }}
+          VERSION: ${{ inputs.release_version || github.ref_name }}
         run: |
           mkdir -p dist
           case "$PLATFORM" in
@@ -271,7 +296,9 @@ jobs:
 
             Ограничения проверки: Android/iOS SDK собраны и cross-linked, но не
             запускались на реальных устройствах. Системный прокси и автозапуск
-            Windows, а также interop с Xray-core проверялись под Wine. REALITY
-            не проходил независимое стороннее криптографическое ревью.
+            Windows, а также interop с Xray-core проверялись под Wine. Криптография
+            REALITY прошла внутреннее статическое ревью трёх Codex-субагентов для gate
+            первого релиза; это не внешний аудит. `pqv=` с HRR остаётся
+            непокрытым тестом.
           fail_on_unmatched_files: true
           files: dist/*

@@ -223,8 +223,10 @@
   реальных устройствах не подтверждён. Интеграцию выполняет приложение-хост.
 - Системный прокси Windows, автозапуск при входе и interop с Xray-core
   проверялись под Wine; это не следует считать runtime-проверкой на Windows.
-- Независимое стороннее криптографическое ревью реализации REALITY не
-  проводилось ([чек-лист](docs/stage5-crypto-review-and-interop.md)).
+- Для первого release gate принято внутреннее статическое review REALITY
+  тремя Codex-субагентами ([отчёт](docs/reviews/2026-11-04-reality-internal-review.md)).
+  Независимого стороннего аудита не проводилось; сценарий `pqv=` + HRR не
+  покрыт тестом ([чек-лист](docs/stage5-crypto-review-and-interop.md)).
 
 [Не выпущено]: https://github.com/ERGFT/vpn-core/commits/main
 [0.1.0]: https://github.com/ERGFT/vpn-core/releases/tag/v0.1.0
@@ -425,7 +427,9 @@ Release `v0.1.0` includes the CLI and C ABI SDKs for embedding the core.
   confirmed. Integration belongs to the host application.
 - The Windows system proxy, autostart at logon, and Xray-core interop have been
   tested under Wine; this is not a runtime check on Windows.
-- The REALITY implementation has not had an independent third-party
-  cryptographic review ([checklist](docs/stage5-crypto-review-and-interop.en.md)).
+- An internal static REALITY review by three Codex subagents was accepted for
+  the first-release gate ([report](docs/reviews/2026-11-04-reality-internal-review.en.md)).
+  No independent third-party audit has taken place; `pqv=` with HRR is not
+  covered by a test ([checklist](docs/stage5-crypto-review-and-interop.en.md)).
 
 [Unreleased]: https://github.com/ERGFT/vpn-core/commits/main
