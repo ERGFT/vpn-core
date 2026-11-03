@@ -195,12 +195,10 @@ impl RealityHook {
     /// не отправлен (`seal_session_id` не вызывался). Нужен
     /// [`crate::reality::RealityCertVerifier::from_hook`], чтобы проверить
     /// подпись сертификата сервера тем же ключом, что защищает SessionId.
-    /// Возвращает копию (`[u8; 32]` — обычный, не `Zeroizing`): вызывающая
-    /// сторона (`RealityCertVerifier`) использует его сразу же и коротко
-    /// живущей локальной переменной, разумный компромисс, не пытаемся
-    /// протащить `Zeroizing` через весь стек вызовов ради одного чтения.
-    pub fn auth_key(&self) -> Option<[u8; 32]> {
-        self.auth_key.get().map(|k| **k)
+    /// Возвращает заимствованный AuthKey, не создавая незатёртую копию.
+    /// Владельцем массива остаётся `Zeroizing` внутри хука.
+    pub fn auth_key(&self) -> Option<&[u8; 32]> {
+        self.auth_key.get().map(|key| &**key)
     }
 
     /// Отправленный ClientHello (см. поле `client_hello_raw`).

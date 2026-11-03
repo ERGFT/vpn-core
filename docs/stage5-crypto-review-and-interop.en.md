@@ -2,17 +2,21 @@
 
 [Русский](stage5-crypto-review-and-interop.md) | **English**
 
-Neither item can be closed from the sandbox (there is no third person and no
-network access to a real Xray-core server) — see PLAN.md, Stage 5, and
-"Дорожная карта до финала" (the roadmap to the finish). This file is not a
-box-ticking formality but a concrete checklist so that context is not lost
-between sessions.
+An independent third-party review remains a useful additional assurance
+layer, but on 2026-11-04 the user accepted reviews by three separate Codex
+subagents for the first-release gate. Their report and limitations are in
+[RU](reviews/2026-11-04-reality-internal-review.md) / [EN](reviews/2026-11-04-reality-internal-review.en.md).
+That internal AI review is not an external audit. This file preserves the
+checklist for any third-party expert and must not be read as evidence that such
+an audit has happened.
 
 ## 1. Third-party crypto review
 
-The plan itself requires it "before starting, not after" (PLAN.md, Stage 5)
-— that did not happen, and the solo re-check (see below) does NOT replace
-it, it only lowers the probability of certain classes of mistakes.
+The original plan required external review before work started. By user
+decision, the internal subagent review was accepted for the first-release
+gate; this does not change the public fact that no external review has taken
+place. If an external audit is commissioned later, this checklist defines its
+scope and questions.
 
 What to show the reviewer — the whole REALITY authentication and TLS
 substitution implementation, in increasing order of risk:

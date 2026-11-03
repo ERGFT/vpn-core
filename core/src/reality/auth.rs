@@ -9,6 +9,7 @@ use hmac::{Hmac, Mac};
 use sha2::{Sha256, Sha512};
 use std::fmt;
 use x25519_dalek::{EphemeralSecret, PublicKey as X25519PublicKey};
+use zeroize::Zeroizing;
 
 use crate::error::{Error, Result};
 
@@ -33,7 +34,7 @@ const PLAINTEXT_LEN: usize = 16;
 /// сертификата сервера в [`verify_ed25519_hmac`]/`verifier.rs`.
 pub struct RealityAuth {
     pub client_public: [u8; 32],
-    pub auth_key: [u8; 32],
+    pub auth_key: Zeroizing<[u8; 32]>,
     pub session_id: [u8; SESSION_ID_LEN],
 }
 
@@ -89,7 +90,7 @@ impl RealityAuth {
         let client_public = X25519PublicKey::from(&ephemeral);
         let shared = ephemeral.diffie_hellman(&X25519PublicKey::from(*server_public));
 
-        let auth_key = derive_auth_key(shared.as_bytes(), client_hello_random)?;
+        let auth_key = Zeroizing::new(derive_auth_key(shared.as_bytes(), client_hello_random)?);
         let plaintext = build_plaintext(short_id);
 
         let session_id = seal_session_id(
@@ -316,13 +317,13 @@ mod tests {
     fn debug_redacts_auth_key() {
         let auth = RealityAuth {
             client_public: [0x11; 32],
-            auth_key: [0xa5; 32],
+            auth_key: Zeroizing::new([0xa5; 32]),
             session_id: [0x22; SESSION_ID_LEN],
         };
         let debug = format!("{auth:?}");
 
         assert!(debug.contains("auth_key: \"[REDACTED]\""));
-        assert!(!debug.contains(&format!("{:?}", auth.auth_key)));
+        assert!(!debug.contains(&format!("{:?}", *auth.auth_key)));
     }
 
     #[test]
@@ -357,7 +358,7 @@ mod tests {
         let server_auth_key =
             derive_auth_key(server_shared.as_bytes(), &client_hello_random).unwrap();
         assert_eq!(
-            server_auth_key, auth.auth_key,
+            server_auth_key, *auth.auth_key,
             "AuthKey должен совпасть на обеих сторонах ECDH"
         );
 
