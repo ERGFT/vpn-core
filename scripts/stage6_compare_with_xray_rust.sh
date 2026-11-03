@@ -39,7 +39,7 @@ XRAY_VERSION_LINE="$("$XRAY_BIN" version 2>/dev/null | head -n1)"
     exit 2
 }
 if [[ ! -d "$XRAY_RUST_SRC/.git" ]]; then
-    git clone --filter=blob:none --no-checkout --depth 1 --branch v0.8.0 \
+    git clone --filter=blob:none --no-checkout --depth 1 \
         https://github.com/aimalygin/xray-rust.git "$XRAY_RUST_SRC"
 fi
 if [[ "$(git -C "$XRAY_RUST_SRC" rev-parse HEAD 2>/dev/null || true)" != "$XRAY_RUST_COMMIT" ]]; then
@@ -49,7 +49,7 @@ fi
 [[ "$(git -C "$XRAY_RUST_SRC" rev-parse HEAD)" == "$XRAY_RUST_COMMIT" ]] || {
     echo "xray-rust checkout does not match pinned commit" >&2; exit 1;
 }
-(cd "$XRAY_RUST_SRC" && cargo build --locked --release -p xray-cli)
+cargo build --locked --release --manifest-path "$XRAY_RUST_SRC/crates/xray-cli/Cargo.toml"
 [[ -x "$XRAY_RUST_BIN" ]] || { echo "xray-rust binary missing: $XRAY_RUST_BIN" >&2; exit 2; }
 
 cd "$ROOT"
