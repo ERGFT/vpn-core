@@ -1,0 +1,41 @@
+{
+  "format": 1,
+  "functions": {
+    "rc_free_string": "void rc_free_string(char *s);",
+    "rc_is_alive": "int rc_is_alive(RcCore *core);",
+    "rc_last_error_code": "int rc_last_error_code(RcCore *core);",
+    "rc_last_error_message": "char *rc_last_error_message(RcCore *core);",
+    "rc_network_changed": "int rc_network_changed(RcCore *core);",
+    "rc_reload": "char *rc_reload(RcCore *core, const char *config, char **error);",
+    "rc_request": "char *rc_request(RcCore *core, const char *method, const char *path, const char *body, int *status);",
+    "rc_set_connection_owner": "void rc_set_connection_owner(rc_connection_owner cb, void *user);",
+    "rc_set_event_callback": "int rc_set_event_callback(RcCore *core, rc_callback cb, void *user);",
+    "rc_set_lock_dir": "int rc_set_lock_dir(const char *dir);",
+    "rc_set_log_callback": "int rc_set_log_callback(RcCore *core, const char *level, rc_callback cb, void *user);",
+    "rc_set_protect": "void rc_set_protect(rc_protect cb, void *user);",
+    "rc_start": "RcCore *rc_start(const char *config, const char *base_dir, int tun_fd, char **error);",
+    "rc_stop": "void rc_stop(RcCore *core);",
+    "rc_validate": "int rc_validate(const char *config, const char *base_dir);",
+    "rc_version": "const char *rc_version(void);"
+  },
+  "typedefs": [
+    "typedef int (*rc_protect)(int64_t fd, void *user);",
+    "typedef int64_t (*rc_connection_owner)(int protocol, const char *source, const char *destination, void *user);",
+    "typedef struct RcCore RcCore;",
+    "typedef void (*rc_callback)(const char *json, void *user);"
+  ],
+  "enums": {
+    "rc_error_code": {
+      "RC_ERROR_AUTHENTICATION": 7,
+      "RC_ERROR_BLOCKED": 3,
+      "RC_ERROR_CONFIGURATION": 1,
+      "RC_ERROR_DNS": 6,
+      "RC_ERROR_INTERNAL": 255,
+      "RC_ERROR_INVALID_HANDLE": -1,
+      "RC_ERROR_IO": 2,
+      "RC_ERROR_NONE": 0,
+      "RC_ERROR_PROTOCOL": 4,
+      "RC_ERROR_TLS": 5
+    }
+  }
+}

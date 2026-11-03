@@ -35,6 +35,21 @@ else that can call C functions.
 - License — the same GPL-3.0-or-later: an app with the embedded core is
   distributed under the GPL (including the app's source code).
 
+## C ABI compatibility
+
+Public C function signatures, `typedef`s, and numeric `RC_*` enum values are recorded in
+[`ffi/abi-baseline.json`](../ffi/abi-baseline.json). Linux CI compares this
+snapshot with the C header and Rust exports, so an accidental function removal
+or rename, argument/result type change, callback typedef change, or error-code
+renumbering fails the PR. A new function can be added by explicitly updating
+the snapshot and checking consumer compatibility. Changing a published API is
+a breaking change that must be planned and documented before release.
+
+Run the check locally with `python scripts/check_ffi_abi.py`; test the checker
+with `python scripts/test_check_ffi_abi.py`. The `--update-baseline` flag rewrites
+the snapshot, so use it only after reviewing the diff and compatibility impact
+in the PR.
+
 ## Building
 
 ```sh

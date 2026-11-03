@@ -167,6 +167,10 @@ jobs:
         run: |
           bash scripts/fetch_xray.sh
           bash scripts/fetch_sing_box.sh
+      - name: Проверка совместимости публичного C ABI
+        run: |
+          python scripts/check_ffi_abi.py
+          python scripts/test_check_ffi_abi.py
       - name: scripts/ci.sh
         run: bash scripts/ci.sh
       - uses: taiki-e/install-action@86f7a0ffb25f40114606501a311ebcfaf882ea32 # v2
