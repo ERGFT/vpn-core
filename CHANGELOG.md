@@ -50,9 +50,9 @@
   а также замер восстановления после краткой остановки тестового сервера.
   Первые пять парных прогонов на `ubuntu-24.04` опубликованы в [документации
   методики](docs/TESTING.md): медианная пропускная способность составила
-  24,938 против 23,261 МиБ/с, пиковый PSS — 11 186 против 13 899 КиБ;
+  24,280 против 23,967 МиБ/с, пиковый PSS — 11 405 против 14 641 КиБ;
   `xray-rust` быстрее восстановил запрос после перезапуска сервера
-  (48,150 против 88,637 мс). Это только baseline одного loopback-сценария.
+  (45,939 против 86,230 мс). Это только baseline одного loopback-сценария.
 
 ### Исправления
 - Патченный `rustls` обновлён до 0.23.46 (RUSTSEC-2026-0348, RUSTSEC-2026-0349
@@ -264,9 +264,9 @@ stage-by-stage decision history is in [PLAN.md](PLAN.md) (in Russian).
   five-run order, JSON/CSV output with metrics and environment details, and a
   recovery measurement after briefly stopping the test server.
   The first five paired runs on `ubuntu-24.04` are documented in the
-  [benchmark methodology](docs/TESTING.en.md): median throughput was 24.938
-  versus 23.261 MiB/s, peak PSS was 11,186 versus 13,899 KiB, and `xray-rust`
-  recovered the request faster after server restart (48.150 versus 88.637 ms).
+  [benchmark methodology](docs/TESTING.en.md): median throughput was 24.280
+  versus 23.967 MiB/s, peak PSS was 11,405 versus 14,641 KiB, and `xray-rust`
+  recovered the request faster after server restart (45.939 versus 86.230 ms).
   This is a baseline from one loopback scenario only.
 
 No stable release has been made yet (`git tag v0.1.0 && git push origin v0.1.0`).

@@ -128,18 +128,18 @@ methodology succeeds.
 
 ### First published run
 
-[GitHub Actions run #41675935896](https://github.com/ERGFT/vpn-core/actions/runs/41675935896)
+[GitHub Actions run #41678957797](https://github.com/ERGFT/vpn-core/actions/runs/41678957797)
 successfully completed all five paired runs on `ubuntu-24.04` (Azure, x86_64,
 AMD EPYC 9V74, 4 logical CPUs). The table shows medians; the full manifest and
 per-run JSON/CSV files are available in the workflow artifact for 30 days.
 
 | Metric | vpn-core | xray-rust v0.8.0 | Observation in this scenario |
 |---|---:|---:|---|
-| Throughput, MiB/s | 24.938 | 23.261 | vpn-core was about 7.2% higher |
-| First byte after TLS handshake, ms | 41.313 | 42.220 | vpn-core was about 2.1% faster |
-| Peak PSS, KiB | 11,186 | 13,899 | vpn-core was about 19.5% lower |
-| CPU, ms per transferred GiB | 1,500 | 2,100 | vpn-core used about 28.6% less CPU |
-| Recovery after server restart, ms | 88.637 | 48.150 | xray-rust recovered faster |
+| Throughput, MiB/s | 24.280 | 23.967 | vpn-core was about 1.3% higher |
+| First byte after TLS handshake, ms | 40.994 | 41.140 | vpn-core was about 0.4% faster |
+| Peak PSS, KiB | 11,405 | 14,641 | vpn-core was about 22.1% lower |
+| CPU, ms per transferred GiB | 980 | 1,260 | vpn-core used about 22.2% less CPU |
+| Recovery after server restart, ms | 86.230 | 45.939 | xray-rust recovered faster |
 
 This is one cloud runner, loopback, one profile, and five repetitions; Rust
 compiler versions differed (`1.99.1` for vpn-core and `1.96.0` for xray-rust).
