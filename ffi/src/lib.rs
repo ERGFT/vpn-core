@@ -18,7 +18,7 @@ use std::ffi::{c_char, c_int, c_void, CStr, CString};
 use std::os::fd::{FromRawFd, OwnedFd};
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex, Once};
+use std::sync::{Arc, Condvar, Mutex, Once};
 use std::time::Duration;
 
 use reality_core::app::api::Api;
@@ -47,8 +47,97 @@ pub struct RcCore {
     base: PathBuf,
     /// Дескриптор TUN, если его дало приложение.
     tun_fd: Option<FfiTunFd>,
-    events: Mutex<Option<tokio::task::JoinHandle<()>>>,
-    logs: Mutex<Option<tokio::task::JoinHandle<()>>>,
+    events: Mutex<Option<CallbackTask>>,
+    logs: Mutex<Option<CallbackTask>>,
+}
+
+struct CallbackState {
+    closed: bool,
+    active: usize,
+}
+
+/// Prevent callbacks from starting after unsubscribe/stop and wait for any
+/// callback already running on a worker thread to return.
+struct CallbackGate {
+    state: Mutex<CallbackState>,
+    quiescent: Condvar,
+}
+
+impl CallbackGate {
+    fn new() -> Self {
+        Self {
+            state: Mutex::new(CallbackState {
+                closed: false,
+                active: 0,
+            }),
+            quiescent: Condvar::new(),
+        }
+    }
+
+    fn enter(&self) -> Option<CallbackLease<'_>> {
+        let mut state = self.state.lock().unwrap();
+        if state.closed {
+            return None;
+        }
+        state.active += 1;
+        Some(CallbackLease { gate: self })
+    }
+
+    fn close(&self) {
+        self.state.lock().unwrap().closed = true;
+    }
+
+    fn wait_quiescent(&self) {
+        let mut state = self.state.lock().unwrap();
+        while state.active != 0 {
+            state = self.quiescent.wait(state).unwrap();
+        }
+    }
+
+    fn close_and_wait(&self) {
+        self.close();
+        self.wait_quiescent();
+    }
+
+    fn leave(&self) {
+        let mut state = self.state.lock().unwrap();
+        state.active -= 1;
+        if state.active == 0 {
+            self.quiescent.notify_all();
+        }
+    }
+}
+
+struct CallbackLease<'a> {
+    gate: &'a CallbackGate,
+}
+
+impl Drop for CallbackLease<'_> {
+    fn drop(&mut self) {
+        self.gate.leave();
+    }
+}
+
+struct CallbackTask {
+    task: tokio::task::JoinHandle<()>,
+    gate: Arc<CallbackGate>,
+}
+
+impl CallbackTask {
+    fn stop(self) {
+        self.gate.close_and_wait();
+        self.task.abort();
+    }
+}
+
+static PROTECT_GATE: Mutex<Option<Arc<CallbackGate>>> = Mutex::new(None);
+static CONNECTION_OWNER_GATE: Mutex<Option<Arc<CallbackGate>>> = Mutex::new(None);
+
+fn stop_callback_task(slot: &Mutex<Option<CallbackTask>>) {
+    let task = slot.lock().unwrap().take();
+    if let Some(task) = task {
+        task.stop();
+    }
 }
 
 /// Обратный вызов с JSON-строкой (событие или строка журнала).
@@ -388,8 +477,9 @@ pub unsafe extern "C" fn rc_last_error_message(core: *mut RcCore) -> *mut c_char
 }
 
 /// Остановить ядро и освободить его: входы закрываются, маршруты
-/// возвращаются, обратные вызовы больше не вызываются. `core` после
-/// этого недействителен. NULL — ничего.
+/// возвращаются. Ожидает завершения уже выполняющихся event/log callbacks и
+/// запрещает новые вызовы. Не вызывать для этого handle из самого callback.
+/// `core` после этого недействителен. NULL — ничего.
 ///
 /// # Safety
 /// `core` — из [`rc_start`], остановлен ещё не был.
@@ -402,9 +492,7 @@ pub unsafe extern "C" fn rc_stop(core: *mut RcCore) {
     let mut core = unsafe { Box::from_raw(core) };
     let _ = catch_unwind(AssertUnwindSafe(|| {
         for h in [&core.events, &core.logs] {
-            if let Some(t) = h.lock().unwrap().take() {
-                t.abort();
-            }
+            stop_callback_task(h);
         }
         if let Some(rt) = core.rt.take() {
             {
@@ -530,9 +618,12 @@ pub unsafe extern "C" fn rc_reload(
 /// смена режима) — JSON-строкой в `cb` из фонового потока ядра.
 /// `cb` = NULL — перестать. Строка действительна только во время вызова.
 ///
+/// Замена или снятие callback ждёт текущий вызов; после возврата прежние `cb`
+/// и `user` можно освободить. Callback не должен вызывать функции для того же
+/// handle.
+///
 /// # Safety
-/// `core` — из [`rc_start`]; `cb` и `user` — живы, пока подписка не снята
-/// или ядро не остановлено.
+/// `core` — из [`rc_start`]; `cb` и `user` живы, пока подписка активна.
 #[no_mangle]
 pub unsafe extern "C" fn rc_set_event_callback(
     core: *mut RcCore,
@@ -548,15 +639,17 @@ pub unsafe extern "C" fn rc_set_event_callback(
     };
     let mut slot = core.events.lock().unwrap();
     if let Some(t) = slot.take() {
-        t.abort();
+        t.stop();
     }
     let Some(cb) = cb else {
         return 0;
     };
     let user = User(user);
+    let gate = Arc::new(CallbackGate::new());
+    let task_gate = gate.clone();
     // Подписка — сразу, до возврата: события после вызова не теряются.
     let mut l = running.tracker().events.subscribe();
-    *slot = Some(rt.spawn(async move {
+    let task = rt.spawn(async move {
         loop {
             let json = match l.rx.recv().await {
                 Ok(e) => serde_json::to_string(&*e).unwrap_or_default(),
@@ -565,15 +658,20 @@ pub unsafe extern "C" fn rc_set_event_callback(
                 }
                 Err(RecvError::Closed) => return,
             };
-            call(cb, &json, user);
+            call(cb, &json, user, &task_gate);
         }
-    }));
+    });
+    *slot = Some(CallbackTask { task, gate });
     0
 }
 
 /// Получать журнал ядра не подробнее `level` (`debug`, `info`, `warning`,
 /// `error`) — JSON `{"type": "info", "payload": "…"}` в `cb` из фонового
 /// потока. `cb` = NULL — перестать.
+///
+/// Замена или снятие callback ждёт текущий вызов; после возврата прежние `cb`
+/// и `user` можно освободить. Callback не должен вызывать функции для того же
+/// handle.
 ///
 /// # Safety
 /// Как у [`rc_set_event_callback`]; `level` — NULL (`info`) или строка.
@@ -600,29 +698,40 @@ pub unsafe extern "C" fn rc_set_log_callback(
     };
     let mut slot = core.logs.lock().unwrap();
     if let Some(t) = slot.take() {
-        t.abort();
+        t.stop();
     }
     let Some(cb) = cb else {
         return 0;
     };
     let user = User(user);
+    let gate = Arc::new(CallbackGate::new());
+    let task_gate = gate.clone();
     let mut l = events::subscribe_logs();
-    *slot = Some(rt.spawn(async move {
+    let task = rt.spawn(async move {
         loop {
             match l.rx.recv().await {
                 Ok(line) if events::level_rank(line.level) >= Some(min) => {
                     let json = serde_json::to_string(&*line).unwrap_or_default();
-                    call(cb, &json, user);
+                    call(cb, &json, user, &task_gate);
                 }
                 Ok(_) | Err(RecvError::Lagged(_)) => {}
                 Err(RecvError::Closed) => return,
             }
         }
-    }));
+    });
+    *slot = Some(CallbackTask { task, gate });
     0
 }
 
-fn call(cb: unsafe extern "C" fn(*const c_char, *mut c_void), json: &str, user: User) {
+fn call(
+    cb: unsafe extern "C" fn(*const c_char, *mut c_void),
+    json: &str,
+    user: User,
+    gate: &CallbackGate,
+) {
+    let Some(_lease) = gate.enter() else {
+        return;
+    };
     let Ok(s) = CString::new(json) else {
         return;
     };
@@ -632,49 +741,84 @@ fn call(cb: unsafe extern "C" fn(*const c_char, *mut c_void), json: &str, user: 
 
 /// Защищать каждый новый сокет ядра обратным вызовом (Android:
 /// `VpnService.protect(fd)`), чтобы его трафик шёл мимо TUN. Вызывать до
-/// [`rc_start`]; действует на весь процесс. `cb` = NULL — перестать.
+/// [`rc_start`]; действует на весь процесс. `cb` = NULL — перестать. Замена
+/// или снятие ждут уже выполняющийся вызов; после возврата прежние `cb` и
+/// `user` можно освободить. Callback должен быстро вернуться и не вызывать
+/// `rc_set_protect` повторно из самого себя.
 ///
 /// # Safety
-/// `cb` и `user` — живы, пока защита не снята; `cb` вызывается из разных
+/// `cb` и `user` — живы, пока защита активна; `cb` вызывается из разных
 /// потоков ядра.
 #[no_mangle]
 pub unsafe extern "C" fn rc_set_protect(cb: RcProtect, user: *mut c_void) {
-    let f = cb.map(|cb| {
-        let user = User(user);
-        Arc::new(move |fd: i64| {
-            // SAFETY: обещание вызывающего (см. выше).
-            unsafe { cb(fd, user.ptr()) != 0 }
-        }) as Arc<reality_core::net_protect::ProtectFn>
-    });
+    let (f, next_gate) = match cb {
+        Some(cb) => {
+            let user = User(user);
+            let gate = Arc::new(CallbackGate::new());
+            let callback_gate = gate.clone();
+            let f = Arc::new(move |fd: i64| {
+                let Some(_lease) = callback_gate.enter() else {
+                    return false;
+                };
+                // SAFETY: обещание вызывающего (см. выше).
+                unsafe { cb(fd, user.ptr()) != 0 }
+            }) as Arc<reality_core::net_protect::ProtectFn>;
+            (Some(f), Some(gate))
+        }
+        None => (None, None),
+    };
+    let mut slot = PROTECT_GATE.lock().unwrap();
+    let previous = slot.take();
     reality_core::net_protect::set_callback(f);
+    *slot = next_gate;
+    drop(slot);
+    if let Some(previous) = previous {
+        previous.close_and_wait();
+    }
 }
 
 /// Установить доверенный resolver UID для новых TUN-потоков.
-/// Вызывать до запуска; снимать после остановки всех ядер процесса.
+/// Вызывать до запуска; можно снять или заменить после начала работы.
+/// Замена/снятие ждут уже выполняющиеся вызовы, затем позволяют освободить
+/// старые `cb` и `user`. Callback не должен повторно вызывать эту функцию.
 ///
 /// # Safety
-/// `cb` и `user` живут до остановки ядер и завершения всех вызовов callback.
+/// `cb` и `user` живут, пока resolver активен.
 /// Callback потокобезопасен, не блокирует и не переносит исключения через C ABI.
 #[no_mangle]
 pub unsafe extern "C" fn rc_set_connection_owner(cb: RcConnectionOwner, user: *mut c_void) {
-    let resolver = cb.map(|cb| {
-        let user = User(user);
-        Arc::new(
-            move |network, source: std::net::SocketAddr, destination: std::net::SocketAddr| {
-                let protocol = match network {
-                    reality_core::app::Network::Tcp => 6,
-                    reality_core::app::Network::Udp => 17,
-                };
-                let source = CString::new(source.to_string()).ok()?;
-                let destination = CString::new(destination.to_string()).ok()?;
-                // SAFETY: время жизни и потокобезопасность гарантирует приложение.
-                let uid =
-                    unsafe { cb(protocol, source.as_ptr(), destination.as_ptr(), user.ptr()) };
-                u32::try_from(uid).ok()
-            },
-        ) as Arc<reality_core::connection_owner::OwnerFn>
-    });
+    let (resolver, next_gate) = match cb {
+        Some(cb) => {
+            let user = User(user);
+            let gate = Arc::new(CallbackGate::new());
+            let callback_gate = gate.clone();
+            let resolver = Arc::new(
+                move |network, source: std::net::SocketAddr, destination: std::net::SocketAddr| {
+                    let _lease = callback_gate.enter()?;
+                    let protocol = match network {
+                        reality_core::app::Network::Tcp => 6,
+                        reality_core::app::Network::Udp => 17,
+                    };
+                    let source = CString::new(source.to_string()).ok()?;
+                    let destination = CString::new(destination.to_string()).ok()?;
+                    // SAFETY: время жизни и потокобезопасность гарантирует приложение.
+                    let uid =
+                        unsafe { cb(protocol, source.as_ptr(), destination.as_ptr(), user.ptr()) };
+                    u32::try_from(uid).ok()
+                },
+            ) as Arc<reality_core::connection_owner::OwnerFn>;
+            (Some(resolver), Some(gate))
+        }
+        None => (None, None),
+    };
+    let mut slot = CONNECTION_OWNER_GATE.lock().unwrap();
+    let previous = slot.take();
     reality_core::connection_owner::set_callback(resolver);
+    *slot = next_gate;
+    drop(slot);
+    if let Some(previous) = previous {
+        previous.close_and_wait();
+    }
 }
 
 #[cfg(test)]
@@ -796,6 +940,16 @@ mod health_tests {
             super::safe_error_message(&config),
             "Configuration or startup error"
         );
+        assert_eq!(
+            super::error_code(&Error::InvalidUri("uuid=secret".into())),
+            super::RC_ERROR_CONFIGURATION
+        );
+        assert_eq!(
+            super::error_code(&Error::Uuid(
+                uuid::Uuid::parse_str("not-a-uuid").unwrap_err()
+            )),
+            super::RC_ERROR_CONFIGURATION
+        );
 
         let io = Error::Io(std::io::Error::other("127.0.0.1:1234"));
         assert_eq!(super::error_code(&io), super::RC_ERROR_IO);
@@ -805,6 +959,42 @@ mod health_tests {
         assert_eq!(
             super::error_code(&Error::Socks5AuthFailed),
             super::RC_ERROR_AUTHENTICATION
+        );
+        assert_eq!(
+            super::error_code(&Error::Tls(rustls::Error::General("secret".into()))),
+            super::RC_ERROR_TLS
+        );
+        let invalid_dns =
+            rustls_pki_types::ServerName::try_from("bad..name".to_owned()).unwrap_err();
+        assert_eq!(
+            super::error_code(&Error::InvalidDnsName(invalid_dns)),
+            super::RC_ERROR_DNS
+        );
+        assert_eq!(
+            super::safe_error_message(&Error::InvalidDnsName(
+                rustls_pki_types::ServerName::try_from("bad..name".to_owned()).unwrap_err()
+            )),
+            "DNS name error"
+        );
+        assert_eq!(
+            super::error_code(&Error::UnsupportedAddressType(9)),
+            super::RC_ERROR_PROTOCOL
+        );
+        assert_eq!(
+            super::error_code(&Error::UnsupportedSocksVersion(4)),
+            super::RC_ERROR_PROTOCOL
+        );
+        assert_eq!(
+            super::error_code(&Error::UnsupportedSocksCommand(9)),
+            super::RC_ERROR_PROTOCOL
+        );
+        assert_eq!(
+            super::error_code(&Error::Socks5("secret".into())),
+            super::RC_ERROR_PROTOCOL
+        );
+        assert_eq!(
+            super::safe_error_message(&Error::Tls(rustls::Error::General("secret".into()))),
+            "TLS error"
         );
     }
 
@@ -854,6 +1044,36 @@ mod health_tests {
         assert_eq!(unsafe { std::ffi::CStr::from_ptr(message) }.to_bytes(), b"");
         unsafe { super::rc_free_string(message) };
         unsafe { super::rc_stop(core) };
+    }
+}
+
+#[cfg(test)]
+mod callback_gate_tests {
+    use super::CallbackGate;
+    use std::sync::{mpsc, Arc};
+    use std::time::Duration;
+
+    #[test]
+    fn closing_gate_waits_for_running_callback_and_rejects_new_calls() {
+        let gate = Arc::new(CallbackGate::new());
+        let active = gate.enter().expect("gate should initially be open");
+        gate.close();
+        assert!(gate.enter().is_none(), "closed gate must reject callbacks");
+
+        let (done_tx, done_rx) = mpsc::channel();
+        let waiter = Arc::clone(&gate);
+        let thread = std::thread::spawn(move || {
+            waiter.wait_quiescent();
+            done_tx.send(()).unwrap();
+        });
+
+        assert!(done_rx.recv_timeout(Duration::from_millis(50)).is_err());
+        drop(active);
+        done_rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("close must return after the callback exits");
+        thread.join().unwrap();
+        assert!(gate.enter().is_none());
     }
 }
 

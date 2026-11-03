@@ -121,12 +121,16 @@ rc_stop(core);
   error.
 - **`rc_set_event_callback(core, cb, user)`** — events (like the
   `GET /events` stream): connections opening and closing, group switches,
-  subscription updates, reloads, mode changes.
+  subscription updates, reloads, mode changes. The callback receives a
+  temporary JSON string on a background thread. `cb = NULL` unsubscribes;
+  replacing or removing a callback waits for any active invocation. You can
+  release the old callback and `user` after the call returns.
 - **`rc_set_log_callback(core, level, cb, user)`** — the core's log. At
   the `info` level (the default) it contains no site addresses; at
   `debug` (and with `RUST_LOG=debug`) the log — both the callback and
   `GET /logs` — includes the domains of visited sites and DNS results. Do
   not send such a log to a server or show it without the user knowing.
+  Removing or replacing the callback uses the same completion barrier.
 - **`rc_stop(core)`** — stop: inbounds close and routes are restored. Before
   returning, it waits for callbacks to finish; no new callback starts after
   return. You can release `user` data and callback resources after `rc_stop`.
@@ -135,7 +139,10 @@ rc_stop(core);
 
 After `rc_is_alive(core) == 0`, retrieve the cause with
 `rc_last_error_code(core)` and `rc_last_error_message(core)`. Polling is
-non-blocking and the terminal error remains available on repeated reads.
+non-blocking and the terminal error remains available on repeated reads until
+`rc_stop`; the handle is invalid after stop. Errors from an individual
+`rc_request` or `rc_reload` are returned by those calls and do not change a
+healthy core's terminal state.
 `RC_ERROR_*` values are stable ABI values: `0` means no error yet, `-1` is a
 NULL handle, `1` configuration/startup, `2` I/O, `3` blocked by routing,
 `4` protocol/connection, `5` TLS, `6` DNS name, `7` authentication, and `255`
@@ -155,10 +162,10 @@ again when those resources must be recreated.
 Functions may be called from any thread, but the application must serialize
 operations on the same `RcCore`. Do not call `rc_is_alive`, either diagnostic
 function or another operation concurrently on that handle; the handle is
-invalid after `rc_stop`.
-Callbacks arrive on the core's
-background threads and the core waits until each one returns, so hand the
-data over to your own (UI) thread and return quickly.
+invalid after `rc_stop`. Event/log callbacks arrive on background threads.
+Move their data to your own thread and return quickly. Do not call functions
+for the same `RcCore` from a callback: calls can block each other, and
+`rc_stop`/unsubscribe wait for the callback to return.
 
 ## SOCKS5 outbound
 
@@ -332,6 +339,10 @@ user could take the lock first.
   - `rc_reload` and `rc_stop`;
   - with root, also a start with a ready TUN descriptor (as from
     `VpnService`).
+- The smoke verifies that invalid `rc_request` arguments and an `rc_reload`
+  error do not become a terminal core error, and that removing an event
+  callback waits for its active call and does not use `user` afterwards. A
+  Rust unit test checks the gate while a callback is already running.
 - The unpacked SDK example runs on Linux, Windows, and macOS. It checks a
   configuration error and frees its message, performs three
   `rc_start`/`rc_request`/`rc_stop` cycles, and calls `rc_stop(NULL)` safely.

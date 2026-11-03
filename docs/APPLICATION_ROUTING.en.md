@@ -37,11 +37,12 @@ the callback duration. Negative and out-of-range UIDs are rejected.
 
 The callback runs once per new TUN TCP/UDP flow, only when UID rules exist.
 It is not per-packet, does not cache ownership indefinitely by port, and is not
-used for SOCKS/HTTP or internal DNS/health flows. This is process-global:
-install before startup and remove after all cores and callbacks have stopped.
-Keep user data alive and thread-safe. Calls are synchronous: do not block, make
-network requests or unwind exceptions through the C ABI. Existing C ABI signatures
-are unchanged; this adds a symbol. Rust `Metadata` gains `user_id: Option<u32>`.
+used for SOCKS/HTTP or internal DNS/health flows. This is process-global. The
+callback runs synchronously on a core thread: do not block, make network requests
+or unwind exceptions through the C ABI. Replacing or removing the callback waits
+for active calls, so the old callback and `user` can be released after it returns.
+Existing C ABI signatures are unchanged; this adds a symbol. Rust `Metadata`
+gains `user_id: Option<u32>`.
 
 When a relevant UID rule cannot identify its owner, routing selects the block
 outbound `connection-owner-unavailable`, not final/direct. Inversion does not
