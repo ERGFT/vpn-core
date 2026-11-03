@@ -18,6 +18,17 @@ by cross-linking the example. These mobile checks do not replace an
 on-device run. Dependency license notices, SBOM, and build provenance are
 published as separate release files.
 
+Each SDK ZIP contains `manifest.json` with `schema_version: 1`. It records the
+version/tag, platform and Rust target triple, `rustc`/Cargo versions, and build
+runner OS. Every file except the manifest itself has a relative path, size, and
+SHA-256; libraries also have a kind (`shared`, `static`, or `import`). Verify the
+external `.sha256` for the ZIP, then verify the manifest against the extracted
+files. `minimum_os` contains a minimum version explicitly set by the build
+(currently iOS 13.0); `null` means the project does not declare one separately
+and is not a compatibility guarantee for every OS version. Consumers should
+ignore unknown fields. Incompatible schema changes require incrementing
+`schema_version`.
+
 Combined app/site rules use the added `rc_set_connection_owner` API:
 [contract, fail-closed behavior and Android integration](APPLICATION_ROUTING.en.md).
 
