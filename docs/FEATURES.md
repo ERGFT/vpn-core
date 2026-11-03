@@ -22,7 +22,7 @@
 | XHTTP `downloadSettings`: отдельное направление скачивания | готово | отдельные адрес/порт и HTTP-сеанс проверяются интеропом с Xray; HTTP/1.1, h2 и h3 выбираются независимо |
 | Dual-stack TCP dialer (Happy Eyeballs) | готово | IPv4/IPv6 чередуются; виртуальные часы проверяют быстрый fallback, немедленный переход после отказа и лимиты попыток |
 | `flow=xtls-rprx-vision` (XTLS Vision) | готово | padding, распознавание внутреннего TLS, прямая передача в обе стороны; проверено против Xray-core. Как и в Xray — только `type=tcp` с `tls`/`reality` |
-| REALITY: X25519MLKEM768 (и откат на X25519 для сайтов без ML-KEM), ShortId, `minClientVer`/`maxClientVer`, HMAC-сертификат | готово | против Xray-core и Go-библиотеки XTLS/REALITY; стороннего крипто-ревью не было |
+| REALITY: X25519MLKEM768, ShortId, `minClientVer`/`maxClientVer`, HMAC-сертификат | готово | гибридная группа предлагается; классический X25519 тоже принимается, поэтому post-quantum TLS не гарантируется; стороннего крипто-ревью не было |
 | REALITY: ML-DSA-65 (`pqv=`) | готово | против Xray-core, в т.ч. отказ при чужом ключе |
 | TLS-отпечаток как у Chrome 133 | готово | REALITY — совпадает полностью, включая JA4 `t13d1516h2_8daaf6152771_d8a2da3f94cd`; обычный TLS — без legacy cipher suite'ов и ALPS (см. ниже) |
 | `fp=firefox` (Firefox 148), `safari`/`ios` (Safari 26.3), `edge`/`android` (как Chrome), `random`, `randomized` | готово | cipher suites, расширения в порядке браузера, группы, доли ключа (у Firefox — настоящая P-256), подписи, сжатие сертификата (zlib, brotli, zstd — с распаковкой), GREASE — сверены с utls; HTTP-заголовки ws/httpupgrade/xhttp — того же браузера; проверено против REALITY-сервера Xray (tcp, Vision, xhttp, gRPC) |

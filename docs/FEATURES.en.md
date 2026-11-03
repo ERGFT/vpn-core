@@ -22,7 +22,7 @@ Statuses:
 | XHTTP `downloadSettings`: separate download direction | ready | separate address/port and HTTP session are checked against Xray; HTTP/1.1, h2 and h3 are selected independently |
 | Dual-stack TCP dialer (Happy Eyeballs) | ready | IPv4/IPv6 candidates are interleaved; paused-clock tests cover fast fallback, immediate retry after failure, and attempt limits |
 | `flow=xtls-rprx-vision` (XTLS Vision) | ready | padding, inner TLS detection, direct copy in both directions; tested against Xray-core. As in Xray — only `type=tcp` with `tls`/`reality` |
-| REALITY: X25519MLKEM768 (with fallback to X25519 for sites without ML-KEM), ShortId, `minClientVer`/`maxClientVer`, HMAC certificate | ready | against Xray-core and the XTLS/REALITY Go library; no third-party crypto review |
+| REALITY: X25519MLKEM768, ShortId, `minClientVer`/`maxClientVer`, HMAC certificate | ready | the hybrid group is offered, but classical X25519 is also accepted, so post-quantum TLS is not guaranteed; no third-party crypto review |
 | REALITY: ML-DSA-65 (`pqv=`) | ready | against Xray-core, including rejection of a wrong key |
 | Chrome 133 TLS fingerprint | ready | REALITY — exact match, including JA4 `t13d1516h2_8daaf6152771_d8a2da3f94cd`; plain TLS — without legacy cipher suites and ALPS (see below) |
 | `fp=firefox` (Firefox 148), `safari`/`ios` (Safari 26.3), `edge`/`android` (same as Chrome), `random`, `randomized` | ready | cipher suites, extensions in browser order, groups, key shares (real P-256 for Firefox), signature algorithms, certificate compression (zlib, brotli, zstd — with decompression), GREASE — checked against utls; ws/httpupgrade/xhttp HTTP headers of the same browser; tested against an Xray REALITY server (tcp, Vision, xhttp, gRPC) |
