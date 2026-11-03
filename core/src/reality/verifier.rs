@@ -5,6 +5,8 @@
 use std::fmt;
 use std::sync::Arc;
 
+use zeroize::Zeroizing;
+
 use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
 use rustls::crypto::{verify_tls12_signature, verify_tls13_signature, CryptoProvider};
 use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
@@ -19,16 +21,17 @@ use crate::error::Error as CoreError;
 /// путь через `transport/`: `RealityHook` вычисляет AuthKey не раньше,
 /// чем отправит ClientHello (нужен `client_hello_random`), а
 /// `verify_server_cert` вызывается позже — к тому моменту значение уже
-/// есть (гарантирует порядок сообщений TLS-рукопожатия).
+/// есть (гарантирует порядок сообщений TLS-рукопожатия). AuthKey заимствуется
+/// из источника, чтобы не оставлять незатёртую копию на стеке.
 enum AuthKeySource {
-    Fixed([u8; 32]),
+    Fixed(Zeroizing<[u8; 32]>),
     Hook(Arc<RealityHook>),
 }
 
 impl AuthKeySource {
-    fn get(&self) -> Result<[u8; 32], TlsError> {
+    fn get(&self) -> Result<&[u8; 32], TlsError> {
         match self {
-            Self::Fixed(key) => Ok(*key),
+            Self::Fixed(key) => Ok(key),
             Self::Hook(hook) if hook.is_degenerate() => Err(TlsError::General(
                 "REALITY: ключ сервера pbk= вырожденный (точка малого порядка X25519) — \
                  проверка REALITY с ним ничего не доказывает"
@@ -85,7 +88,7 @@ impl RealityCertVerifier {
     /// (`crate::transport::tcp_tls::ensure_crypto_provider()`), иначе
     /// возвращает ошибку, а не паникует.
     pub fn new(auth_key: [u8; 32]) -> Result<Self, CoreError> {
-        Self::with_source(AuthKeySource::Fixed(auth_key))
+        Self::with_source(AuthKeySource::Fixed(Zeroizing::new(auth_key)))
     }
 
     /// Реальный путь (`transport/`, `security=reality`): AuthKey ещё
@@ -165,11 +168,11 @@ impl RealityCertVerifier {
             return Ok(false);
         }
         let auth_key = self.auth_key.get()?;
-        if !verify_ed25519_hmac(&auth_key, spki, cert.signature_value.data.as_ref()) {
+        if !verify_ed25519_hmac(auth_key, spki, cert.signature_value.data.as_ref()) {
             return Ok(false);
         }
         if let Some(pk) = &self.mldsa65 {
-            self.verify_mldsa65(pk, &auth_key, spki, &cert)?;
+            self.verify_mldsa65(pk, auth_key, spki, &cert)?;
         }
         Ok(true)
     }
