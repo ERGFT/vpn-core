@@ -1,0 +1,45 @@
+name: Benchmark xray-rust
+
+on:
+  pull_request:
+    paths:
+      - "scripts/stage6_compare_with_xray_rust.sh"
+      - "scripts/stage6_loadgen.py"
+      - "scripts/fetch_xray.sh"
+      - "docs/TESTING.md"
+      - "docs/TESTING.en.md"
+      - "README.md"
+      - "README.en.md"
+      - ".github/workflows/benchmark-xray-rust.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: benchmark-xray-rust-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  compare:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Fetch pinned Xray-core test server
+        run: scripts/fetch_xray.sh
+      - name: Run repeated VLESS + REALITY + Vision comparison
+        env:
+          RUNS: "5"
+          CONNS: "8"
+          MIB: "64"
+        run: bash scripts/stage6_compare_with_xray_rust.sh
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: xray-rust-benchmark-${{ github.sha }}
+          path: target/stage6-xray-rust/
+          if-no-files-found: warn
+          retention-days: 30

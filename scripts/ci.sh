@@ -60,9 +60,12 @@ step "cargo fmt --check" cargo fmt --check
 step "SPDX-метки лицензии" bash scripts/check_license_headers.sh
 if command -v python3 >/dev/null 2>&1; then
     step "ссылки в документации" python3 scripts/check_doc_links.py
+    step "синтаксис генератора бенчмарка" python3 -m py_compile scripts/stage6_loadgen.py
 else
     skip "ссылки в документации" "нужен python3"
+    skip "синтаксис генератора бенчмарка" "нужен python3"
 fi
+step "синтаксис сценария бенчмарка" bash -n scripts/stage6_compare_with_xray_rust.sh
 step "cargo clippy (без предупреждений)" \
     cargo clippy --locked --workspace --all-targets -- -D warnings
 step "cargo test --workspace" cargo test --locked --workspace

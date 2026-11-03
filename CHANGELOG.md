@@ -43,6 +43,11 @@
   подключение через 250 мс, одновременно работает не более двух попыток,
   общий предел — 10 с и 8 адресов.
 
+### Производительность
+- Добавлен повторяемый Linux-бенчмарк `vpn-core` против закреплённого `xray-rust v0.8.0`:
+  общий Xray-core VLESS + REALITY + Vision сервер, внутренний TLS echo,
+  чередование пяти прогонов и сохранение JSON/CSV метрик и параметров среды.
+
 ### Исправления
 - Патченный `rustls` обновлён до 0.23.46 (RUSTSEC-2026-0348, RUSTSEC-2026-0349
   и ещё две); патч REALITY перенесён без изменения объёма — 13 файлов,
@@ -246,6 +251,11 @@ stage-by-stage decision history is in [PLAN.md](PLAN.md) (in Russian).
 - The TCP dialer interleaves IPv4/IPv6 candidates: the alternative family
   starts after 250 ms, at most two attempts run concurrently, with a 10 s
   total deadline and an eight-address limit.
+
+### Performance
+- Added a repeatable Linux benchmark for `vpn-core` versus pinned `xray-rust v0.8.0`:
+  a shared Xray-core VLESS + REALITY + Vision server, inner TLS echo, alternating
+  five-run order, and JSON/CSV output with metrics and environment details.
 
 No stable release has been made yet (`git tag v0.1.0 && git push origin v0.1.0`).
 It will include:

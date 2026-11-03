@@ -113,7 +113,7 @@ These projects cover different scopes. This table compares their intended use, n
 | [Xray-core](https://github.com/XTLS/Xray-core) | Broad proxy platform and network scenarios | You need the wider Xray ecosystem or more protocols |
 | [sing-box](https://github.com/SagerNet/sing-box) | Multi-protocol proxy with many inbounds, outbounds, and network features | You need a general-purpose proxy platform or an existing sing-box integration |
 
-vpn-core also has a local memory and throughput comparison against Xray-core, with methodology and caveats: [test results](docs/TESTING.en.md). Those numbers apply only to the stated setup and do not establish general superiority.
+The [test results](docs/TESTING.en.md) describe the local Xray-core comparison and a separate reproducible methodology for `xray-rust`. Each comparison applies only to its stated setup and does not establish general superiority.
 
 ## Documentation
 

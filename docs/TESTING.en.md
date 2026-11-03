@@ -89,6 +89,33 @@ answers CONNECT in advance, without waiting for the server connection (it
 replies "success" even if there is no server), so its CONNECT reply cannot be
 compared with ours. Details — `PLAN.md`, Stage 8.
 
+## Comparison with xray-rust
+
+Use the dedicated scenario for a new comparison; the older table above is a
+separate Xray-core result:
+
+```sh
+scripts/fetch_xray.sh
+scripts/stage6_compare_with_xray_rust.sh
+```
+
+The harness pins `xray-rust` to tag `v0.8.0` (commit
+[`fcce4be`](https://github.com/aimalygin/xray-rust/tree/fcce4be2771c1fb3f11e9503741d39a4d8df314e))
+and uses Xray-core `v26.9.9` as the shared VLESS + REALITY + Vision server.
+Both clients run on the same host with the same parameters, Chrome
+fingerprint, eight concurrent flows, and an inner TLS 1.3 echo. Client order
+alternates across five runs. Each run saves JSON and RSS/PSS CSV; the final
+manifest records commits, binary versions, SHA-256 hashes, OS, and CPU model.
+Metrics include throughput, time to first application data after the TLS
+handshake, idle/peak RSS/PSS, and client CPU milliseconds per transferred GiB.
+
+Override settings with `RUNS`, `CONNS`, `MIB`, and `OUTDIR`. Results are written
+to `target/stage6-xray-rust/`; by default, each of five runs transfers 8 × 64
+MiB in each direction for each core. Preserve the parameters and raw JSON/CSV,
+and do not draw conclusions from only the best run. This loopback test does
+not model WAN loss, energy use, or recovery after a network change. We will add
+comparative figures and conclusions only after the full methodology succeeds.
+
 ## Performance and memory
 
 Benchmarks and the allocator choice — `PLAN.md`, Stages 0 and 7. In short:
