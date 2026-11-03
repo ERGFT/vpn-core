@@ -24,6 +24,7 @@ done
 for value in "$RECOVERY_TIMEOUT_SECS" "$RECOVERY_POLL_MS"; do
     [[ "$value" =~ ^[1-9][0-9]*$ ]] || { echo "RECOVERY_TIMEOUT_SECS and RECOVERY_POLL_MS must be positive integers" >&2; exit 2; }
 done
+export OUTAGE_SECS RECOVERY_TIMEOUT_SECS RECOVERY_POLL_MS
 for tool in cargo git openssl python3; do
     command -v "$tool" >/dev/null || { echo "required tool not found: $tool" >&2; exit 2; }
 done
