@@ -65,11 +65,21 @@ ACTIVE_SAMPLER=""
 ECHO_PID=""
 XRAY_SERVER_PID=""
 cleanup() {
+    local status=$?
+    trap - EXIT
+    if (( status != 0 )); then
+        mkdir -p "$OUTDIR/diagnostics"
+        for log in "$TMP"/*.log; do
+            [[ -f "$log" ]] || continue
+            cp "$log" "$OUTDIR/diagnostics/$(basename "$log")" 2>/dev/null || true
+        done
+    fi
     [[ -z "$ACTIVE_SAMPLER" ]] || kill "$ACTIVE_SAMPLER" 2>/dev/null || true
     [[ -z "$ACTIVE_PID" ]] || kill "$ACTIVE_PID" 2>/dev/null || true
     [[ -z "$ECHO_PID" ]] || kill "$ECHO_PID" 2>/dev/null || true
     [[ -z "$XRAY_SERVER_PID" ]] || kill "$XRAY_SERVER_PID" 2>/dev/null || true
     rm -rf "$TMP"
+    exit "$status"
 }
 trap cleanup EXIT
 trap 'exit 130' INT
@@ -200,7 +210,10 @@ run_case() {
     cpu_ticks_before="$(python3 -c 'import sys; f=open(sys.argv[1]).read(); p=f.rsplit(") ",1)[1].split(); print(int(p[11])+int(p[12]))' "/proc/$ACTIVE_PID/stat")"
     "$MEMWATCH" --pid "$ACTIVE_PID" --interval-ms 100 --duration-secs 3600 --csv "$output.rss.csv" >/dev/null 2>&1 &
     ACTIVE_SAMPLER=$!
-    sample="$(python3 scripts/stage6_loadgen.py "$SOCKS_PORT" "$CONNS" "$MIB" "$ECHO_PORT")"
+    if ! sample="$(python3 scripts/stage6_loadgen.py "$SOCKS_PORT" "$CONNS" "$MIB" "$ECHO_PORT")"; then
+        echo "load generator failed for $engine; server/client diagnostics are included in the artifact" >&2
+        return 1
+    fi
     cpu_ticks_after="$(python3 -c 'import sys; f=open(sys.argv[1]).read(); p=f.rsplit(") ",1)[1].split(); print(int(p[11])+int(p[12]))' "/proc/$ACTIVE_PID/stat")"
     kill "$ACTIVE_SAMPLER" 2>/dev/null || true; wait "$ACTIVE_SAMPLER" 2>/dev/null || true; ACTIVE_SAMPLER=""
     python3 - "$engine" "$idle_rss" "$cpu_ticks_before" "$cpu_ticks_after" "$(getconf CLK_TCK)" "$CONNS" "$MIB" "$sample" "$output.json" "$output.rss.csv" <<'PY'
