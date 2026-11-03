@@ -151,6 +151,13 @@
 - Пути в настройках через API проверяются и после разрешения
   символических ссылок, включая кеш подписки по умолчанию.
 - Общий секрет TLS не оставляет незатёртой копии в памяти.
+- REALITY: `auth_key` скрыт в `Debug`; ключ хранится в `Zeroizing`, а hook и
+  verifier заимствуют его вместо создания обычных копий. Это меняет Rust API
+  `RealityAuth.auth_key` и `RealityHook::auth_key()`; C ABI не меняется.
+- Внутреннее статическое REALITY-review трёх Codex-субагентов и его
+  ограничения опубликованы в [отчёте](docs/reviews/2026-11-04-reality-internal-review.md).
+  Оно принято для первого release gate по решению владельца проекта, но не
+  является внешним аудитом; вопросы `pqv=` + HRR остаются непокрытыми тестом.
 - Выпуск: сборка без права записи, публикация — отдельным шагом; actions
   закреплены на коммитах.
 - Патч rustls описан честно: `vendor/rustls-reality-patch.diff` и
@@ -345,6 +352,13 @@ Release `v0.1.0` includes the CLI and C ABI SDKs for embedding the core.
 - Paths in a config sent through the API are also checked after resolving
   symlinks, including the default subscription cache.
 - The TLS shared secret leaves no unwiped copy in memory.
+- REALITY: `auth_key` is redacted from `Debug`, stored in `Zeroizing`, and
+  borrowed by the hook and verifier to avoid ordinary copies. This changes
+  the Rust API of `RealityAuth.auth_key` and `RealityHook::auth_key()`; the C ABI is unchanged.
+- The [report](docs/reviews/2026-11-04-reality-internal-review.en.md) records
+  a static review by three Codex subagents and its limits. The project owner
+  accepted it for the first-release gate; it is not an external audit, and
+  `pqv=` with HRR remains untested.
 - Release: the build has no write access, publishing is a separate step;
   actions are pinned to commits.
 - The rustls patch is described honestly: `vendor/rustls-reality-patch.diff`
