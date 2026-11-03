@@ -831,6 +831,10 @@ async fn vision_inner_tls(pqv: Option<(&str, &str)>, expect_ok: bool) {
     }
     echo_roundtrip(&mut tls, 2 * 1024 * 1024).await;
 
+    // Дополнительный roundtrip заставляет клиента обработать возможную команду
+    // Direct, которая приходит сразу после последнего блока большого эха.
+    echo_roundtrip(&mut tls, 64 * 1024).await;
+
     let TcpVlessStream::Vision(v) = tls.get_ref().0 else {
         panic!("ожидался Vision")
     };
@@ -842,8 +846,6 @@ async fn vision_inner_tls(pqv: Option<(&str, &str)>, expect_ok: bool) {
         v.is_read_direct(),
         "приём должен перейти на прямую передачу"
     );
-    // И после переключения всё работает в обе стороны.
-    echo_roundtrip(&mut tls, 64 * 1024).await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
