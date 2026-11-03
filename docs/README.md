@@ -29,6 +29,7 @@
 | [TESTING.md](TESTING.md) | как проверяется проект, сравнение с Xray-core, производительность |
 | [RUSTLS_PATCH.md](RUSTLS_PATCH.md) | что изменено в rustls и почему |
 | [stage5-crypto-review-and-interop.md](stage5-crypto-review-and-interop.md) | чек-лист для стороннего крипто-ревью REALITY |
+| [RELEASING.md](RELEASING.md) | предварительная сборка, проверка артефактов и публикация тега |
 
 История решений по этапам — [PLAN.md](../PLAN.md), что изменилось —
 [CHANGELOG.md](../CHANGELOG.md).
