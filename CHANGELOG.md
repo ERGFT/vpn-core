@@ -46,7 +46,8 @@
 ### Производительность
 - Добавлен повторяемый Linux-бенчмарк `vpn-core` против закреплённого `xray-rust v0.8.0`:
   общий Xray-core VLESS + REALITY + Vision сервер, внутренний TLS echo,
-  чередование пяти прогонов и сохранение JSON/CSV метрик и параметров среды.
+  чередование пяти прогонов, сохранение JSON/CSV метрик и параметров среды,
+  а также замер восстановления после краткой остановки тестового сервера.
 
 ### Исправления
 - Патченный `rustls` обновлён до 0.23.46 (RUSTSEC-2026-0348, RUSTSEC-2026-0349
@@ -255,7 +256,8 @@ stage-by-stage decision history is in [PLAN.md](PLAN.md) (in Russian).
 ### Performance
 - Added a repeatable Linux benchmark for `vpn-core` versus pinned `xray-rust v0.8.0`:
   a shared Xray-core VLESS + REALITY + Vision server, inner TLS echo, alternating
-  five-run order, and JSON/CSV output with metrics and environment details.
+  five-run order, JSON/CSV output with metrics and environment details, and a
+  recovery measurement after briefly stopping the test server.
 
 No stable release has been made yet (`git tag v0.1.0 && git push origin v0.1.0`).
 It will include:

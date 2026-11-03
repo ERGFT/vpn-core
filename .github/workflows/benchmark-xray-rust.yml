@@ -5,6 +5,7 @@ on:
     paths:
       - "scripts/stage6_compare_with_xray_rust.sh"
       - "scripts/stage6_loadgen.py"
+      - "scripts/stage6_recovery_probe.py"
       - "scripts/fetch_xray.sh"
       - "docs/TESTING.md"
       - "docs/TESTING.en.md"

@@ -8,6 +8,9 @@ OUTDIR="${OUTDIR:-$ROOT/target/stage6-xray-rust}"
 RUNS="${RUNS:-5}"
 CONNS="${CONNS:-8}"
 MIB="${MIB:-64}"
+OUTAGE_SECS="${OUTAGE_SECS:-2}"
+RECOVERY_TIMEOUT_SECS="${RECOVERY_TIMEOUT_SECS:-60}"
+RECOVERY_POLL_MS="${RECOVERY_POLL_MS:-50}"
 XRAY_VERSION="${XRAY_VERSION:-v26.9.9}"
 XRAY_BIN="${XRAY_BIN:-$ROOT/target/xray/xray}"
 XRAY_RUST_COMMIT="fcce4be2771c1fb3f11e9503741d39a4d8df314e" # v0.8.0 peeled commit
@@ -16,6 +19,10 @@ XRAY_RUST_BIN="$XRAY_RUST_SRC/target/release/xray-rust"
 
 for value in "$RUNS" "$CONNS" "$MIB"; do
     [[ "$value" =~ ^[1-9][0-9]*$ ]] || { echo "RUNS, CONNS and MIB must be positive integers" >&2; exit 2; }
+done
+[[ "$OUTAGE_SECS" =~ ^[0-9]+$ ]] || { echo "OUTAGE_SECS must be a non-negative integer" >&2; exit 2; }
+for value in "$RECOVERY_TIMEOUT_SECS" "$RECOVERY_POLL_MS"; do
+    [[ "$value" =~ ^[1-9][0-9]*$ ]] || { echo "RECOVERY_TIMEOUT_SECS and RECOVERY_POLL_MS must be positive integers" >&2; exit 2; }
 done
 for tool in cargo git openssl python3; do
     command -v "$tool" >/dev/null || { echo "required tool not found: $tool" >&2; exit 2; }
@@ -148,6 +155,35 @@ PY
     exec "$XRAY_RUST_BIN" run -config "$config"
 }
 
+wait_for_server() {
+    local ready=0
+    for _ in $(seq 1 300); do
+        if python3 -c "import socket,sys; s=socket.socket(); sys.exit(0 if s.connect_ex(('127.0.0.1',$SERVER_PORT))==0 else 1)" 2>/dev/null; then ready=1; break; fi
+        sleep 0.1
+    done
+    [[ "$ready" == 1 ]] || { cat "$TMP/xray-server-recovery.log" >&2; return 1; }
+}
+
+measure_recovery() {
+    local output="$1" result
+    # Stop the shared VLESS server, keep the client core alive, and restore the
+    # same endpoint before timing the first successful application-level flow.
+    kill "$XRAY_SERVER_PID" 2>/dev/null || true
+    wait "$XRAY_SERVER_PID" 2>/dev/null || true
+    XRAY_SERVER_PID=""
+    sleep "$OUTAGE_SECS"
+    "$XRAY_BIN" run -c "$TMP/xray-server.json" >"$TMP/xray-server-recovery.log" 2>&1 &
+    XRAY_SERVER_PID=$!
+    wait_for_server
+    result="$(python3 scripts/stage6_recovery_probe.py "$SOCKS_PORT" "$ECHO_PORT" "$RECOVERY_TIMEOUT_SECS" "$RECOVERY_POLL_MS")"
+    python3 - "$output.recovery.json" "$result" <<'PY'
+import json, sys
+path, raw = sys.argv[1:]
+with open(path, "w", encoding="utf-8") as stream:
+    json.dump(json.loads(raw), stream, ensure_ascii=False, indent=2)
+PY
+}
+
 run_case() {
     local engine="$1" output="$2" launcher="$3" ready=0 before after sample
     SOCKS_PORT="$(free_port)"
@@ -182,6 +218,7 @@ d.update({"engine": engine, "idle_rss_kb": int(idle),
           "cpu_ms_per_gib": round(cpu_seconds * 1000 / gib, 2)})
 with open(path, "w", encoding="utf-8") as f: json.dump(d, f, ensure_ascii=False, indent=2)
 PY
+    measure_recovery "$output"
     kill "$ACTIVE_PID" 2>/dev/null || true; wait "$ACTIVE_PID" 2>/dev/null || true; ACTIVE_PID=""
 }
 
@@ -219,6 +256,11 @@ for engine,rows in data.items():
     for metric in metrics:
         values=[row[metric] for row in rows if row[metric] is not None]
         summary[engine][metric]=({"median":statistics.median(values),"min":min(values),"max":max(values),"samples":values} if values else None)
+    recovery=[]
+    for n in range(1,int(runs)+1):
+        with open(out/"runs"/f"run-{n:03d}"/f"{engine}.recovery.json",encoding="utf-8") as f:
+            recovery.append(json.load(f)["recovery_ms"])
+    summary[engine]["recovery_ms"]={"median":statistics.median(recovery),"min":min(recovery),"max":max(recovery),"samples":recovery}
 cpu=next((line.split(":",1)[1].strip() for line in open("/proc/cpuinfo",encoding="utf-8") if line.startswith("model name")),"unknown")
 manifest={"status":"complete","runs":int(runs),"connections":int(conns),"mib_each_direction_per_connection":int(mib),
  "profile":"VLESS + REALITY + XTLS Vision over TCP; Chrome ClientHello; inner TLS 1.3 echo",
@@ -230,7 +272,8 @@ manifest={"status":"complete","runs":int(runs),"connections":int(conns),"mib_eac
  "os":platform.platform(),"machine":platform.machine(),"cpu_model":cpu,"logical_cpus":os.cpu_count(),
  "rustc_vpn_core":version_line("rustc","--version"),"rustc_xray_rust":subprocess.check_output(["rustc","--version"],cwd=source,text=True).strip(),
  "run_order":[["vpn-core","xray-rust"] if n % 2 else ["xray-rust","vpn-core"] for n in range(1,int(runs)+1)],"summary":summary,
- "limitations":["loopback only; WAN latency, packet loss, energy, and network-change recovery are not measured","CPU metric is client process CPU time per GiB transferred","the Xray-core server and echo service are shared and not included in client RSS/CPU"]}
+ "recovery_scenario":{"outage":"stop the shared VLESS server process for OUTAGE_SECS, then restart it on the same loopback address and port","metric":"time from server TCP readiness until the first successful SOCKS5 CONNECT plus inner TLS 1.3 echo","poll_interval_ms":int(os.environ["RECOVERY_POLL_MS"]),"outage_secs":int(os.environ["OUTAGE_SECS"]),"timeout_secs":int(os.environ["RECOVERY_TIMEOUT_SECS"]),"client_process_kept_alive":True},
+ "limitations":["loopback only; WAN latency, packet loss, energy, and host network-change callback behavior are not measured","recovery is measured after the server becomes TCP-ready and includes polling quantization; it is not full outage duration","CPU metric is client process CPU time per GiB transferred","the Xray-core server and echo service are shared and not included in client RSS/CPU"]}
 with open(out/"manifest.json","w",encoding="utf-8") as f: json.dump(manifest,f,ensure_ascii=False,indent=2)
 print(json.dumps(summary,ensure_ascii=False,indent=2)); print(f"Raw results and manifest: {out}")
 PY

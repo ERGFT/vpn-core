@@ -107,14 +107,22 @@ fingerprint, eight concurrent flows, and an inner TLS 1.3 echo. Client order
 alternates across five runs. Each run saves JSON and RSS/PSS CSV; the final
 manifest records commits, binary versions, SHA-256 hashes, OS, and CPU model.
 Metrics include throughput, time to first application data after the TLS
-handshake, idle/peak RSS/PSS, and client CPU milliseconds per transferred GiB.
+handshake, idle/peak RSS/PSS, client CPU milliseconds per transferred GiB, and
+application-request recovery.
 
 Override settings with `RUNS`, `CONNS`, `MIB`, and `OUTDIR`. Results are written
 to `target/stage6-xray-rust/`; by default, each of five runs transfers 8 × 64
-MiB in each direction for each core. Preserve the parameters and raw JSON/CSV,
-and do not draw conclusions from only the best run. This loopback test does
-not model WAN loss, energy use, or recovery after a network change. We will add
-comparative figures and conclusions only after the full methodology succeeds.
+MiB in each direction for each core. The shared server is then stopped for
+`OUTAGE_SECS` (2 seconds by default) and restarted while the client process stays
+alive. `stage6_recovery_probe.py` retries SOCKS5 CONNECT and an inner TLS 1.3
+echo until the first successful request. The time from server TCP readiness to
+that echo is stored separately in `*.recovery.json`; `RECOVERY_POLL_MS` sets the
+polling interval and `RECOVERY_TIMEOUT_SECS` sets the deadline. Preserve all
+parameters and raw JSON/CSV, and do not draw conclusions from only the best run.
+This is a loopback server-outage scenario, not a physical network-interface
+change: it does not model WAN loss, energy use, or handling of the host
+`rc_network_changed` signal. Conclusions will follow only after the full
+methodology succeeds.
 
 ## Performance and memory
 

@@ -60,7 +60,7 @@ step "cargo fmt --check" cargo fmt --check
 step "SPDX-метки лицензии" bash scripts/check_license_headers.sh
 if command -v python3 >/dev/null 2>&1; then
     step "ссылки в документации" python3 scripts/check_doc_links.py
-    step "синтаксис генератора бенчмарка" python3 -m py_compile scripts/stage6_loadgen.py
+    step "синтаксис генераторов бенчмарка" python3 -m py_compile scripts/stage6_loadgen.py scripts/stage6_recovery_probe.py
 else
     skip "ссылки в документации" "нужен python3"
     skip "синтаксис генератора бенчмарка" "нужен python3"
