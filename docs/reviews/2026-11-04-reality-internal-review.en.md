@@ -15,7 +15,7 @@
 |---|---|---|---|
 | R1 | P2 | Public `RealityAuth` exposed `auth_key` through `Debug`. | Fixed in `c4d168da63f11d4a2afb24845dd18c08f5cd5c15`: custom redacted `Debug` plus a regression test. |
 | R2 | P2 | ML-KEM `SharedKey` was copied into `Zeroizing`, while the original temporary buffer was dropped without wiping. | Fixed in `c4d168da63f11d4a2afb24845dd18c08f5cd5`: `Zeroizing` now wraps the original `SharedKey` before Drop. |
-| R3 | P3 | `RealityHook::auth_key()` and `AuthKeySource::get()` created ordinary stack copies of AuthKey. | Fix prepared in a separate PR: the hook returns a borrow; the verifier stores fixed keys in `Zeroizing` and uses a borrowed key. Record the merge commit after that PR completes. |
+| R3 | P3 | `RealityHook::auth_key()` and `AuthKeySource::get()` created ordinary stack copies of AuthKey. | Fixed in PR #61, squash commit `56c397cdface8814c6ebc26d5987fd3007008a1e`: the hook returns a borrow; the verifier stores fixed keys in `Zeroizing` and uses a borrowed key. PR passed 8/8 checks. |
 | R4 | Policy | An authenticated REALITY session can negotiate classical X25519 even when the client offers the hybrid group. | Accepted for first-release compatibility; RU/EN FEATURES state that post-quantum TLS is not guaranteed. No hybrid-only mode is implemented. |
 | R5 | Coverage | Transcript semantics for `pqv=` after HelloRetryRequest are not confirmed by a test. | No confirmed defect or bypass was found. Recorded as a coverage limitation; the usual offered key shares are expected to avoid HRR. External or additional verification remains useful. |
 
