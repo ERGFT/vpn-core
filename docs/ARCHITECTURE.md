@@ -1313,8 +1313,8 @@ API совместимо с Clash API — как у sing-box и mihomo: гото
   | `tls_loopback.rs`, `ws_loopback.rs`, `grpc_loopback.rs`, `full_pipeline_duplex.rs`, `connect_robustness.rs` | транспорты, дуплекс, устойчивость открытия |
   | `interop_xray.rs` | против настоящего Xray-core (скачивается скриптом) |
 - **Скрипты** (`scripts/`):
-  - `ci.sh` — всё доступное на машине; `--quick` — fmt, SPDX, clippy,
-    тесты;
+  - `ci.sh` — все доступные проверки на машине; `--quick` — fmt, SPDX,
+    ссылки, синтаксис скриптов, clippy и тесты;
   - `smoke_xray.sh` — настоящий трафик через Xray с настройками обоих
     форматов;
   - `tun_netns.sh` — TUN в изолированном netns (root);

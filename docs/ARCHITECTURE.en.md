@@ -1396,8 +1396,8 @@ PLAN.md):
   | `tls_loopback.rs`, `ws_loopback.rs`, `grpc_loopback.rs`, `full_pipeline_duplex.rs`, `connect_robustness.rs` | transports, duplex, connection-opening robustness |
   | `interop_xray.rs` | against real Xray-core (downloaded by a script) |
 - **Scripts** (`scripts/`):
-  - `ci.sh` — everything available on the machine; `--quick` runs fmt,
-    SPDX, clippy and tests;
+  - `ci.sh` — every check available on the machine; `--quick` runs fmt,
+    SPDX, doc links, script syntax, clippy and tests;
   - `smoke_xray.sh` — real traffic through Xray, with configs in both
     formats;
   - `tun_netns.sh` — TUN in an isolated netns (root);
