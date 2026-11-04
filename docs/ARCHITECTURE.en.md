@@ -803,8 +803,12 @@ current member.
   - existing members with the same tag keep their delay history.
 - **Cache**:
   - the last working list is kept in `<tag>.subscription` next to the
-    config (mode 600, since it contains UUIDs), so the client starts
-    without the panel;
+    config and contains UUIDs; its permissions depend on the platform. On
+    Unix, the file is created with mode `0600`; on Windows, its ACL is
+    inherited from the directory. The service stores config and cache under
+    the protected `%ProgramData%\RealityClient`; for a normal run, access is
+    determined by the config directory's ACL. See the [CONFIG guide](CONFIG.en.md)
+    for details;
   - scheduled updates run every `update_interval` (12 h by default) with
     ±10 % jitter;
   - after an error, retry in a minute while there is no list, otherwise in
