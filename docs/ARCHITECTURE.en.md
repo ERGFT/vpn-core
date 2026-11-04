@@ -10,7 +10,7 @@ A technical description for anyone who will read, change or embed the core:
 what it consists of, what happens to a connection from the inbound to the
 server, where each decision is made and why. How to use the client is in
 the [README](../README.en.md); the stage-by-stage decision history is in
-[PLAN.md](../PLAN.md) (in Russian).
+[PLAN.en.md](../PLAN.en.md).
 
 Contents:
 
@@ -534,7 +534,7 @@ through the client.
     is window ÷ RTT; the OS allocates the buffer memory lazily, as it is
     written.
 - Before smoltcp there was ipstack, whose connections stalled after packet
-  loss. The replacement is described in PLAN.md.
+  loss. The replacement is described in PLAN.en.md.
 
 ### 8.2. Connections
 
@@ -1098,7 +1098,7 @@ The patch is applied to the whole dependency graph via `[patch.crates-io]`.
   ([section 10](#10-outbounds)).
 
 No third-party cryptographic review has been done; this is noted in
-`reality/mod.rs` and PLAN.md.
+`reality/mod.rs` and PLAN.en.md.
 
 ### 15.3. Fingerprints (`fingerprint/`)
 
@@ -1267,7 +1267,7 @@ lists.
 ## 17. Security
 
 A summary of measures (the threat model is in [SECURITY-MODEL.en.md](SECURITY-MODEL.en.md), the audit in
-PLAN.md):
+PLAN.en.md):
 
 | Threat | Measure |
 |---|---|
