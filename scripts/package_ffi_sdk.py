@@ -14,6 +14,8 @@ import tempfile
 import zipfile
 from pathlib import Path
 
+from ffi_sdk_metadata import generate_metadata
+
 
 ROOT = Path(__file__).resolve().parents[1]
 DOCS = (
@@ -105,6 +107,8 @@ def main() -> None:
         for library in args.library:
             shutil.copy2(library, stage / "lib" / library.name)
 
+        generate_metadata(stage, args.platform, args.version.removeprefix("v"), native_static_libs)
+
         (stage / "README.md").write_text(
             f"# vpn-core C ABI SDK {args.version}\n\n"
             f"Platform: `{args.platform}`. See `manifest.json` for the target, "
@@ -112,6 +116,9 @@ def main() -> None:
             "This package contains the compiled "
             "vpn-core library, its C ABI header, a minimal C integration "
             "example, and the API/integration guides in `docs/`.\n\n"
+            "CMake metadata is in `cmake/vpn-core/`; pkg-config metadata, where "
+            "supported, is in `lib/pkgconfig/vpn-core.pc`. Both use paths "
+            "relative to the extracted SDK directory.\n\n"
             "Start with `docs/LIBRARY.md` or `docs/LIBRARY.en.md`. The API can "
             "be called directly through `rc_request`; event and log streams "
             "are available through callbacks. Android and iOS VPN host APIs "

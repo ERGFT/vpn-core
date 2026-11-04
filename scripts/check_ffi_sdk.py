@@ -22,6 +22,7 @@ TARGETS = {
     "ios-arm64": "aarch64-apple-ios",
 }
 MINIMUM_OS = {"ios-arm64": "13.0"}
+PKG_CONFIG_PLATFORMS = {"linux-x86_64", "macos-arm64"}
 
 
 def main():
@@ -43,6 +44,9 @@ def main():
             "APPLICATION_ROUTING.md", "APPLICATION_ROUTING.en.md",
         )),
         *(f"vpn-core-sdk/lib/{name}" for name in LIBRARIES[args.platform]),
+        "vpn-core-sdk/cmake/vpn-core/vpn-coreConfig.cmake",
+        "vpn-core-sdk/cmake/vpn-core/vpn-coreConfigVersion.cmake",
+        *({"vpn-core-sdk/lib/pkgconfig/vpn-core.pc"} if args.platform in PKG_CONFIG_PLATFORMS else set()),
     }
     with zipfile.ZipFile(args.archive) as archive:
         names = archive.namelist()
@@ -109,7 +113,8 @@ def main():
             if item.get("sha256") != hashlib.sha256(data).hexdigest():
                 raise SystemExit(f"SDK manifest SHA-256 mismatch: {name}")
         library_records = {item["path"].removeprefix("lib/"): item.get("kind")
-                           for item in records if item["path"].startswith("lib/")}
+                           for item in records if item["path"].startswith("lib/")
+                           and item.get("kind") is not None}
         expected_kinds = {
             name: ("import" if name.endswith(".dll.lib") else
                    "shared" if name.endswith((".so", ".dylib", ".dll")) else "static")

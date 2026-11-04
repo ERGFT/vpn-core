@@ -14,7 +14,9 @@ CHECKER = Path(__file__).with_name("check_ffi_sdk.py")
 DOCS = ("LIBRARY.md", "LIBRARY.en.md", "API.md", "API.en.md",
         "APPLICATION_ROUTING.md", "APPLICATION_ROUTING.en.md")
 FILES = ("README.md", "LICENSE", "include/reality.h", "examples/minimal.c",
-         "lib/libreality.so", "lib/libreality.a", *(f"docs/{x}" for x in DOCS))
+         "lib/libreality.so", "lib/libreality.a", "lib/pkgconfig/vpn-core.pc",
+         "cmake/vpn-core/vpn-coreConfig.cmake", "cmake/vpn-core/vpn-coreConfigVersion.cmake",
+         *(f"docs/{x}" for x in DOCS))
 TARGET = "x86_64-unknown-linux-gnu"
 
 
@@ -60,7 +62,8 @@ class ArchiveCheck(unittest.TestCase):
                                       capture_output=True, text=True)
 
             create(FILES)
-            self.assertEqual(check().returncode, 0)
+            result = check()
+            self.assertEqual(result.returncode, 0, result.stderr)
             checksum.write_text("wrong\n", encoding="ascii")
             self.assertNotEqual(check().returncode, 0)
             create([name for name in FILES if name != "lib/libreality.so"])

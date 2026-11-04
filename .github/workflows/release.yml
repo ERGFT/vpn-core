@@ -30,9 +30,11 @@ on:
       - docs/FEATURES.en.md
       - ffi/**
       - scripts/package_ffi_sdk.py
+      - scripts/ffi_sdk_metadata.py
       - scripts/check_ffi_sdk.py
       - scripts/test_check_ffi_sdk.py
       - scripts/test_package_ffi_sdk.py
+      - scripts/test_ffi_sdk_metadata.py
       - Cargo.lock
       - Cargo.toml
 
@@ -220,6 +222,9 @@ jobs:
       - name: Проверить parser native static link args
         if: matrix.platform == 'linux-x86_64'
         run: python scripts/test_package_ffi_sdk.py
+      - name: Проверить генерацию CMake и pkg-config SDK metadata
+        if: matrix.platform == 'linux-x86_64'
+        run: python scripts/test_ffi_sdk_metadata.py
       - name: Проверить использование распакованного SDK на Linux
         if: matrix.platform == 'linux-x86_64'
         shell: bash
