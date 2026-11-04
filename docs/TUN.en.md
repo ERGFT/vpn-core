@@ -10,7 +10,11 @@ The `tun` inbound creates a virtual network interface and, with `auto_route`,
 redirects system routes into it. Programs do not need separate proxy settings,
 but the core handles only TCP and UDP:
 
-```json
+The following JSONC fragment is partial, not a complete config file: it shows
+TUN fields and related rules. For complete configuration examples, see the
+[config guide](CONFIG.en.md).
+
+```jsonc
 "inbounds": [
   { "type": "tun", "tag": "tun",
     "address": ["172.19.0.1/30"],               // default, plus fdfe:dcba:9876::1/126
