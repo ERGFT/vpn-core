@@ -23,7 +23,7 @@ error at startup with the path to the key, e.g. `outbounds[2].multiplex: не
 поддерживается` (not supported), rather than a silently ignored setting. A
 typo in a key name is an error too.
 
-```json
+```jsonc
 {
   "inbounds": [
     { "type": "mixed", "tag": "local", "listen": "127.0.0.1", "listen_port": 1080 }
@@ -136,7 +136,10 @@ to `direct`. Only TCP chains are supported.
 Several servers make a group; a group is itself an outbound, and its tag is
 used in rules and `route.final`:
 
-```json
+The following JSONC fragment shows only the group and subscription sections,
+not a complete config file.
+
+```jsonc
 "outbounds": [
   { "type": "urltest", "tag": "auto",            // fastest; "fallback" — first working;
     "outbounds": ["proxy"],                      // "selector" — selected (default or first)

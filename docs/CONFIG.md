@@ -23,7 +23,7 @@ reality-client --config config.json
 поддерживается`, а не молча пропущенная настройка. Опечатка в имени
 ключа — тоже ошибка.
 
-```json
+```jsonc
 {
   "inbounds": [
     { "type": "mixed", "tag": "local", "listen": "127.0.0.1", "listen_port": 1080 }
@@ -138,7 +138,10 @@ VLESS или Trojan:
 Несколько серверов — группа; группа сама выход, её tag пишут в правила и
 `route.final`:
 
-```json
+Следующий JSONC-фрагмент показывает только группу и подписку, а не полный файл
+настроек.
+
+```jsonc
 "outbounds": [
   { "type": "urltest", "tag": "auto",            // самый быстрый; "fallback" — первый работающий;
     "outbounds": ["proxy"],                      // "selector" — выбранный (default или первый)
