@@ -6,6 +6,7 @@
  * этого же процесса.
  */
 #include <arpa/inet.h>
+#include <errno.h>
 #include <fcntl.h>
 #ifdef __linux__
 #include <linux/if.h>
@@ -18,6 +19,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
+#include <time.h>
 #include <unistd.h>
 
 #include "reality.h"
@@ -38,6 +40,7 @@ static void on_event(const char *json, void *user) {
     if (user) (*(int *)user)++;
     if (strstr(json, "\"mode_change\"")) mode_changes++;
     if (strstr(json, "\"connection_close\"")) closes++;
+    pthread_cond_broadcast(&callback_cv);
     pthread_mutex_unlock(&mu);
 }
 
@@ -72,6 +75,74 @@ static int on_protect(int64_t fd, void *user) {
     if (fd >= 0) protected_sockets++;
     pthread_mutex_unlock(&mu);
     return 1;
+}
+
+static struct timespec deadline_after_ms(long timeout_ms) {
+    struct timespec deadline;
+    clock_gettime(CLOCK_REALTIME, &deadline);
+    deadline.tv_sec += timeout_ms / 1000;
+    deadline.tv_nsec += (timeout_ms % 1000) * 1000000L;
+    if (deadline.tv_nsec >= 1000000000L) {
+        deadline.tv_sec++;
+        deadline.tv_nsec -= 1000000000L;
+    }
+    return deadline;
+}
+
+/* Wait for an expected condition without polling. 0=ready, 1=timeout, -1=error. */
+static int wait_for_events(int need_mode_change, int need_close, long timeout_ms) {
+    struct timespec deadline = deadline_after_ms(timeout_ms);
+    pthread_mutex_lock(&mu);
+    while ((need_mode_change && mode_changes == 0) || (need_close && closes == 0)) {
+        int result = pthread_cond_timedwait(&callback_cv, &mu, &deadline);
+        if (result == ETIMEDOUT) {
+            pthread_mutex_unlock(&mu);
+            return 1;
+        }
+        if (result != 0) {
+            pthread_mutex_unlock(&mu);
+            return -1;
+        }
+    }
+    int ready = (!need_mode_change || mode_changes > 0) && (!need_close || closes > 0);
+    pthread_mutex_unlock(&mu);
+    return ready ? 0 : 1;
+}
+
+static int wait_for_flag(int *flag, long timeout_ms) {
+    struct timespec deadline = deadline_after_ms(timeout_ms);
+    pthread_mutex_lock(&mu);
+    while (!*flag) {
+        int result = pthread_cond_timedwait(&callback_cv, &mu, &deadline);
+        if (result == ETIMEDOUT) {
+            pthread_mutex_unlock(&mu);
+            return 1;
+        }
+        if (result != 0) {
+            pthread_mutex_unlock(&mu);
+            return -1;
+        }
+    }
+    pthread_mutex_unlock(&mu);
+    return 0;
+}
+
+static int wait_for_event_count_change(int baseline, long timeout_ms) {
+    struct timespec deadline = deadline_after_ms(timeout_ms);
+    pthread_mutex_lock(&mu);
+    while (events_seen == baseline) {
+        int result = pthread_cond_timedwait(&callback_cv, &mu, &deadline);
+        if (result == ETIMEDOUT) {
+            pthread_mutex_unlock(&mu);
+            return 1;
+        }
+        if (result != 0) {
+            pthread_mutex_unlock(&mu);
+            return -1;
+        }
+    }
+    pthread_mutex_unlock(&mu);
+    return 0;
 }
 
 #define FAIL(...)                                                                                  \
@@ -216,13 +287,7 @@ int main(void) {
     rc_free_string(notes);
     printf("OK: rc_reload\n");
 
-    for (int i = 0; i < 100; i++) {
-        pthread_mutex_lock(&mu);
-        int ok = mode_changes > 0 && closes > 0;
-        pthread_mutex_unlock(&mu);
-        if (ok) break;
-        usleep(20000);
-    }
+    if (wait_for_events(1, 1, 10000) != 0) FAIL("тайм-аут ожидания событий ядра");
     pthread_mutex_lock(&mu);
     printf("событий: %d (mode_change: %d, connection_close: %d), защищено сокетов: %d\n",
            events_seen, mode_changes, closes, protected_sockets);
@@ -235,7 +300,8 @@ int main(void) {
     int callbacks_at_unsubscribe = events_seen;
     callback_user_events = -1;
     pthread_mutex_unlock(&mu);
-    usleep(100000);
+    if (wait_for_event_count_change(callbacks_at_unsubscribe, 100) != 1)
+        FAIL("ошибка ожидания барьера снятия callback");
     pthread_mutex_lock(&mu);
     if (events_seen != callbacks_at_unsubscribe || callback_user_events != -1)
         FAIL("event callback использовал user после снятия подписки");
@@ -252,13 +318,8 @@ int main(void) {
     rc_free_string(notes);
     rc_free_string(err);
     err = NULL;
-    for (int i = 0; i < 500; i++) {
-        pthread_mutex_lock(&mu);
-        int entered = blocking_callback_entered;
-        pthread_mutex_unlock(&mu);
-        if (entered) break;
-        usleep(10000);
-    }
+    if (wait_for_flag(&blocking_callback_entered, 5000) != 0)
+        FAIL("тайм-аут ожидания блокирующего callback");
     pthread_mutex_lock(&mu);
     if (!blocking_callback_entered) FAIL("rc_reload не доставил событие блокирующему callback");
     pthread_mutex_unlock(&mu);
@@ -266,19 +327,13 @@ int main(void) {
     pthread_t unsubscribe_thread;
     if (pthread_create(&unsubscribe_thread, NULL, unsubscribe_event_callback, core) != 0)
         FAIL("pthread_create для снятия callback");
-    for (int i = 0; i < 500; i++) {
-        pthread_mutex_lock(&mu);
-        int started = unsubscribe_started;
-        pthread_mutex_unlock(&mu);
-        if (started) break;
-        usleep(10000);
-    }
+    if (wait_for_flag(&unsubscribe_started, 5000) != 0)
+        FAIL("тайм-аут запуска потока снятия callback");
+    /* A short bounded negative wait checks that unregister is still blocked. */
+    int unregister_returned = wait_for_flag(&unsubscribe_done, 100);
+    if (unregister_returned != 1)
+        FAIL("снятие callback вернулось до завершения активного callback");
     pthread_mutex_lock(&mu);
-    if (!unsubscribe_started) FAIL("поток снятия подписки не запустился");
-    pthread_mutex_unlock(&mu);
-    usleep(100000);
-    pthread_mutex_lock(&mu);
-    if (unsubscribe_done) FAIL("снятие callback вернулось до завершения активного callback");
     release_blocking_callback = 1;
     pthread_cond_broadcast(&callback_cv);
     pthread_mutex_unlock(&mu);
@@ -294,7 +349,8 @@ int main(void) {
     callback_user_events = -1; /* caller-owned callback state can now be released */
     pthread_mutex_unlock(&mu);
     /* rc_stop is a callback lifetime barrier for the consumer's user data. */
-    usleep(100000);
+    if (wait_for_event_count_change(callbacks_at_stop, 100) != 1)
+        FAIL("ошибка ожидания барьера rc_stop");
     pthread_mutex_lock(&mu);
     if (events_seen != callbacks_at_stop || callback_user_events != -1)
         FAIL("event callback used consumer state after rc_stop returned");
