@@ -58,6 +58,7 @@ in [README.en.md](README.en.md).
   contribution rules, vulnerability reporting, support, and community rules.
 - `.github/ISSUE_TEMPLATE/`, `.github/pull_request_template.md` — issue and
   pull request templates.
-- `PLAN.md` — historical decision log in Russian; it is not the source of
-  current project status. Actual capabilities and limits are in
+- `PLAN.md` / `PLAN.en.md` — the Russian historical decision log and its
+  English translation; neither is the source of current project status.
+  Actual capabilities and limits are in
   `docs/FEATURES.en.md`.

@@ -61,7 +61,7 @@ Useful to include:
 - access to the proxy, the API or the Windows service without permission.
 
 Known limitations are listed in [docs/SECURITY-MODEL.en.md](docs/SECURITY-MODEL.en.md), [docs/FEATURES.en.md](docs/FEATURES.en.md) and
-[PLAN.md](PLAN.md) (in Russian): there has been no third-party crypto review
+[PLAN.en.md](PLAN.en.md): there has been no third-party crypto review
 of REALITY.
 
 ## Supported versions
