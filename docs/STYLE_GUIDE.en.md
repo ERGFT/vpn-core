@@ -2,13 +2,13 @@
 
 [Русский](STYLE_GUIDE.md) | [English](STYLE_GUIDE.en.md) · [Glossary](GLOSSARY.en.md)
 
-This standard defines the project's editorial rules for Russian and English documentation. It adapts practices from ASD-STE100, the Google Developer Documentation Style Guide, and the Microsoft Writing Style Guide. **It is an internal project standard, not a claim of formal compliance with those guides.**
+This standard defines the project's editorial rules for Russian and English documentation. It adapts selected practices from [ASD-STE100](https://www.asd-ste100.org/about.html), the [Google Developer Documentation Style Guide](https://developers.google.com/style), and the [Microsoft Writing Style Guide](https://learn.microsoft.com/en-us/style-guide). **It is an internal project standard, not a claim of formal compliance with those guides.**
 
 Priority order: technical accuracy → safety and limitations → clarity → contract completeness → navigation → consistency → brevity.
 
 ## Rule strength
 
-- **MUST** — mandatory editorial rule. If accuracy or format requires an exception, explain it next to the exception or in the pull request.
+- **MUST** — mandatory editorial rule. Explain an exception when it affects technical accuracy, safety, limitations, or a public contract.
 - **SHOULD** — follow the rule unless it reduces accuracy or clarity.
 - **MAY** — permitted option.
 
@@ -34,10 +34,10 @@ The README may use a more engaging presentation, comparison tables, and visual e
 
 ## Clear technical language
 
-- **MUST:** Each sentence conveys one main idea or instruction.
+- **SHOULD:** Each sentence conveys one main idea or instruction.
 - **SHOULD:** Name the actor and use active voice when possible.
-- **MUST:** Address the reader directly in procedures: “Run,” “Check,” “Set.”
-- **MUST:** State a condition before the action that depends on it.
+- **SHOULD:** Address the reader directly in procedures: “Run,” “Check,” “Set.”
+- **SHOULD:** When practical, state a condition before the action that depends on it.
 - **MUST:** Preserve negatives, exceptions, and limitations; do not shorten them away.
 - **MUST:** Use one term for one concept. Refer to the [glossary](GLOSSARY.en.md).
 - **SHOULD:** Expand an uncommon abbreviation on first use when its meaning is not obvious to the intended reader.
@@ -49,6 +49,28 @@ The README may use a more engaging presentation, comparison tables, and visual e
 Do not use words such as “fully,” “securely,” “seamlessly,” “fast,” or “guarantees” without conditions and verifiable evidence. Do not call a feature supported only because its name appears in a configuration option or test.
 
 English guidance: aim for no more than 20 words per instruction and 25 per descriptive sentence. These are editorial targets, not CI requirements. Keep Russian text similarly concise without mechanical counting. A paragraph usually has no more than six sentences.
+
+### Editing examples
+
+These examples use project contracts and terminology. The “before” text illustrates a common ambiguity; it is not a quotation from a specific document version.
+
+**Procedure — verify the result**
+
+- Before: “Start the client; it works.”
+- After: “Create `server.txt` with a valid VLESS link and restrict access to the file. Run `reality-client --server-file server.txt --listen 127.0.0.1:1080`. Run `curl --socks5-hostname 127.0.0.1:1080 https://example.com`; a successful response confirms the request was handled by the local SOCKS5 inbound, but does not by itself confirm the selected route or TUN operation.”
+- Why: The check result is separated from the conclusion about network connectivity.
+
+**API parameter**
+
+- Before: “`base_dir` is the configuration folder.”
+- After: “In `rc_validate(config, base_dir)`, `base_dir` may be `NULL`. See the [library contract](LIBRARY.en.md).”
+- Why: The example names the function and states whether `NULL` is allowed; the claim follows the `rc_validate` contract.
+
+**Security**
+
+- Before: “REALITY securely hides the server.”
+- After: “If REALITY verification fails, the client does not send the VLESS UUID to that server. An observer can still see the server IP address, connection time, and traffic volume. See the [security model](SECURITY-MODEL.en.md).”
+- Why: An absolute promise is replaced with a condition and an explicit limit.
 
 ## Procedures and warnings
 
@@ -179,5 +201,7 @@ Give changing figures for test counts, benchmarks, platforms, and versions a sou
 ## Maintaining this standard
 
 Before changing a document, identify its class and primary source of facts. In the pull request, link the sources and list the relevant checks. For documentation changes, run `git diff --check` and `python scripts/check_doc_links.py`; check language pairs, commands, and examples. When changing a C ABI header, also run `python scripts/check_ffi_abi.py`. Required CI must pass for the current PR head before merge.
+
+Scale the review to the change: check the edited content and claims related to it. A typo fix alone does not require a full technical review of the document. Legacy documentation can be brought into conformance incrementally. However, do not treat a known material error as verified or leave it unrecorded just because fixing it is outside the current change. Record it for separate work.
 
 Record implementation defects separately. This standard does not authorize changes to code, public API/ABI, configuration formats, or protocol behavior for documentation purposes. Third-party files in `vendor/` are excluded unless the file is project-authored explanatory documentation.
