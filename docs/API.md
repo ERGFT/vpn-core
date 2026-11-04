@@ -64,6 +64,8 @@ curl -H "$T" "http://127.0.0.1:9090/dns/query?name=example.com&type=A"
 
 | Запрос | Что делает |
 |---|---|
+| `GET /` | приветствие без токена; если настроена панель, браузер перенаправляется в `/ui/` |
+| `GET /version` | сведения о версии API |
 | `GET /configs`, `PATCH /configs` | порты входов и режим; сменить режим (`mode`; порты и прочее — только в файле настроек) |
 | `PUT /configs` | перечитать файл настроек; с `payload` — применить новые настройки (без записи в файл, как у Clash) |
 | `GET /proxies[/{имя}]`, `PUT /proxies/{группа}` | выходы, группы (`now`, `all`), серверы подписок; выбрать участника selector |
@@ -72,6 +74,7 @@ curl -H "$T" "http://127.0.0.1:9090/dns/query?name=example.com&type=A"
 | `GET /connections`, `DELETE /connections[/{id}]` | открытые соединения (выход, цепочка, правило, трафик); закрыть |
 | `GET /rules` | правила по порядку и `route.final` |
 | `GET /providers/proxies[/{имя}]`, `PUT …/{имя}`, `GET …/{имя}/healthcheck` | подписки: серверы, обновить, проверить |
+| `GET /providers/rules` | совместимый ответ без rule providers (`providers: {}`) |
 | `GET /dns/query?name=&type=` | спросить DNS клиента |
 
 Свои запросы (в Clash API их нет): `GET /stats` (трафик по выходам),

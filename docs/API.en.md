@@ -66,6 +66,8 @@ curl -H "$T" "http://127.0.0.1:9090/dns/query?name=example.com&type=A"
 
 | Request | What it does |
 |---|---|
+| `GET /` | greeting without a token; browsers are redirected to `/ui/` when a dashboard is configured |
+| `GET /version` | API version information |
 | `GET /configs`, `PATCH /configs` | inbound ports and the mode; change the mode (`mode`; ports and the rest — only in the config file) |
 | `PUT /configs` | reread the config file; with `payload` — apply a new config (without writing the file, as in Clash) |
 | `GET /proxies[/{name}]`, `PUT /proxies/{group}` | outbounds, groups (`now`, `all`), subscription servers; select a selector member |
@@ -74,6 +76,7 @@ curl -H "$T" "http://127.0.0.1:9090/dns/query?name=example.com&type=A"
 | `GET /connections`, `DELETE /connections[/{id}]` | open connections (outbound, chain, rule, traffic); close |
 | `GET /rules` | rules in order and `route.final` |
 | `GET /providers/proxies[/{name}]`, `PUT …/{name}`, `GET …/{name}/healthcheck` | subscriptions: servers, update, check |
+| `GET /providers/rules` | compatible response with no rule providers (`providers: {}`) |
 | `GET /dns/query?name=&type=` | ask the client's DNS |
 
 Own requests (not in the Clash API): `GET /stats` (traffic per outbound),
