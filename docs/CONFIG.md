@@ -100,7 +100,10 @@ MetaCubeX/meta-rules-dat) и исходный `.json`, только `type: local
 
 - у выходов `vless`/`trojan`: `link` или `link_file` — ссылка
   `vless://`/`trojan://` вместо полей (секрет можно держать в отдельном
-  файле); `allow_insecure` — разрешить сервер без шифрования; `mux` —
+  файле); `allow_insecure` — явно разрешить `security=none` для VLESS или
+  Trojan. В этом режиме соединение с сервером не шифруется; пароль Trojan
+  также передаётся открытым текстом. Это поле не отключает проверку
+  сертификата TLS; ключи такого назначения не поддерживаются; `mux` —
   Mux.Cool (в sing-box: `"mux": 8`); `fragment`;
 - у `direct` (sing-box): `fragment`, `noises` — как у `freedom` в Xray;
 - выход `fallback` (первый работающий) и `subscriptions` у групп;
