@@ -14,7 +14,7 @@ but the core handles only TCP and UDP:
 "inbounds": [
   { "type": "tun", "tag": "tun",
     "address": ["172.19.0.1/30"],               // default, plus fdfe:dcba:9876::1/126
-    "auto_route": true,                         // all traffic into TUN (default)
+    "auto_route": true,                         // route system TCP/UDP traffic through TUN (default)
     "strict_route": true,                       // kill switch
     "route_exclude_address": ["192.168.0.0/16"] }
 ],
@@ -36,8 +36,9 @@ DNS is hijacked by an `inboundTag` rule → a `dns` outbound.
 - Requires administrator (Windows) or root (Linux) rights. On Windows,
   `wintun.dll` (from [wintun.net](https://www.wintun.net/), amd64) must be
   next to `reality-client.exe`.
-- `auto_route` sends all traffic into TUN; the client's own connections (to
-  the server, `direct`, DNS) bypass TUN: on Linux they are marked
+- `auto_route` routes system traffic into TUN; the core handles only TCP and
+  UDP there. The client's own connections (to the server, `direct`, DNS)
+  bypass TUN: on Linux they are marked
   (`SO_MARK`), on Windows they are bound to the physical interface. There is
   no loop, and `direct` rules work as usual. If the computer has no IPv6,
   IPv6 is not routed into TUN.
