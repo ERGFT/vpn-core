@@ -10,7 +10,8 @@ Statuses:
 
 - **ready** — works and is covered by tests (where stated — against real Xray-core);
 - **experimental** — works, but has little testing or the result depends on the network;
-- **not supported** — not available and not planned soon;
+- **not supported** — unavailable in the current version or stated scenario.
+  This status does not describe project plans;
 - **partially verified** — a specific part of the platform integration is checked, but not a full client or VPN scenario;
 - **not tested on this platform** — the code exists but has not been properly tested on this OS.
 
