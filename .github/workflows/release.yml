@@ -1,8 +1,9 @@
 # Предварительная сборка без публикации: Actions → Release → Run workflow на
-# ветке main; указать точный тег. Сначала скачать и проверить артефакты, затем
-# отправить этот тег на тот же commit. Выпуск: git tag v0.1.0 && git push origin v0.1.0 (тег — v + version из
-# Cargo.toml; первый стабильный выпуск — v0.1.0, см. CHANGELOG.md). К CLI
-# прикладываются SDK-пакеты C ABI для Linux, Windows, macOS, Android и iOS.
+# ветке main; указать новый, ранее не опубликованный тег. Сначала скачать и
+# проверить артефакты, затем отправить этот тег на тот же commit. `v0.1.0` уже
+# опубликован; для будущего выпуска используйте новый vX.Y.Z. Tag event
+# публикует релиз. К CLI прикладываются C ABI SDK для Linux, Windows, macOS,
+# Android и iOS.
 #
 # Права: сборка (чужие actions, зависимости, build.rs) — только чтение;
 # запись в репозиторий и подпись происхождения (attestation, keyless
@@ -18,7 +19,7 @@ on:
   workflow_dispatch:
     inputs:
       release_version:
-        description: "Exact version to embed in SDK preflight packages (for example v0.1.0)"
+        description: "Exact new, unused version for SDK preflight packages (for example vX.Y.Z)"
         required: true
         type: string
         default: v0.1.0

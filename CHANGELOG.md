@@ -8,7 +8,18 @@
 
 ## [Не выпущено]
 
-Пока нет изменений после `v0.1.0`.
+### SDK и C ABI
+- Добавлены manifest архива с SHA-256 каждого файла и сведениями о сборке,
+  переносимые CMake/pkg-config metadata и native link arguments для статической
+  библиотеки.
+- Добавлены независимые C/C++ проверки SDK из распакованного архива и контроль
+  совместимости экспортируемого C ABI.
+- Уточнены контракты callbacks и владения памятью; проверены ожидание завершения
+  callbacks, адаптер C++ и валидация внешнего TUN-дескриптора.
+
+Проверки SDK подтверждают запуск consumer-приложений на поддерживаемых CI
+раннерах; Android/iOS проверяются сборкой и линковкой, а не запуском VPN на
+устройстве.
 
 ## [0.1.0] - 2026-11-04
 
@@ -242,7 +253,17 @@ stage-by-stage decision history is in [PLAN.md](PLAN.md) (in Russian).
 
 ## [Unreleased]
 
-No changes after `v0.1.0` yet.
+### SDK and C ABI
+- SDK archives now include a per-file SHA-256 manifest and build metadata,
+  relocatable CMake/pkg-config metadata, and native link arguments for static
+  libraries.
+- Added independent C/C++ consumers that build from extracted SDK archives
+  and a compatibility guard for exported C ABI symbols.
+- Clarified callback and memory-ownership contracts; added checks for callback
+  completion, the C++ adapter, and external TUN descriptor validation.
+
+SDK checks confirm consumer execution on supported CI runners. Android/iOS
+checks cover compilation and linking, not VPN execution on a device.
 
 ## [0.1.0] - 2026-11-04
 
