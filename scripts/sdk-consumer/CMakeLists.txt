@@ -12,6 +12,7 @@ endif()
 find_package(vpn-core CONFIG REQUIRED
   PATHS "${VPN_CORE_SDK_ROOT}/cmake/vpn-core"
   NO_DEFAULT_PATH
+  NO_CMAKE_FIND_ROOT_PATH
 )
 
 if(NOT TARGET "vpn-core::${VPN_CORE_LINKAGE}")
