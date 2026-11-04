@@ -25,6 +25,9 @@ example, is not claimed as tested here.
 "route": { "presets": ["block-ads", "private-direct", "ru-direct"] }
 ```
 
+This is a partial config fragment, not a complete JSON file. Add the shown fields
+to the corresponding sections of your configuration.
+
 - `secret` — the token right in the config, `secret_file` (extension) — in
   a separate file; at least 16 UTF-8 bytes. Use an ASCII token to make its
   length unambiguous.
