@@ -4,10 +4,7 @@
 
 Локальное API ядра реализует перечисленное ниже подмножество Clash API и собственные расширения. Это не полная совместимость со всеми маршрутами и схемами Clash, sing-box, mihomo или Xray. Включается в [файле настроек](CONFIG.md).
 
-Реализовано подмножество **Clash API** для перечисленных ниже операций.
-Документация не обещает полную совместимость с API sing-box/mihomo или со
-всеми панелями и клиентами, которые говорят на Clash API. Панели
-[metacubexd](https://github.com/MetaCubeX/metacubexd) и
+Панели [metacubexd](https://github.com/MetaCubeX/metacubexd) и
 [yacd](https://github.com/haishanh/yacd) проверены вручную в браузере на
 настоящем ядре: группы, выбор сервера, проверка задержки, соединения, правила,
 журнал и режим. Эта проверка не подтверждает совместимость остальных панелей;
@@ -46,7 +43,7 @@
   Перехват DNS работает в любом режиме. Группа `GLOBAL` (все выходы,
   по умолчанию — `route.final`) создаётся сама, как у Clash.
 
-Запросы Clash — те же адреса и ответы, что у sing-box:
+Ниже — примеры запросов к поддерживаемым маршрутам API в стиле Clash:
 
 ```sh
 T="Authorization: Bearer $(cat api-token.txt)"
@@ -61,6 +58,7 @@ curl -H "$T" "http://127.0.0.1:9090/dns/query?name=example.com&type=A"
 
 | Запрос | Что делает |
 |---|---|
+| `GET /version` | версия ядра и поля версии для клиентов Clash API |
 | `GET /configs`, `PATCH /configs` | порты входов и режим; сменить режим (`mode`; порты и прочее — только в файле настроек) |
 | `PUT /configs` | перечитать файл настроек; с `payload` — применить новые настройки (без записи в файл, как у Clash) |
 | `GET /proxies[/{имя}]`, `PUT /proxies/{группа}` | выходы, группы (`now`, `all`), серверы подписок; выбрать участника selector |
@@ -69,6 +67,7 @@ curl -H "$T" "http://127.0.0.1:9090/dns/query?name=example.com&type=A"
 | `GET /connections`, `DELETE /connections[/{id}]` | открытые соединения (выход, цепочка, правило, трафик); закрыть |
 | `GET /rules` | правила по порядку и `route.final` |
 | `GET /providers/proxies[/{имя}]`, `PUT …/{имя}`, `GET …/{имя}/healthcheck` | подписки: серверы, обновить, проверить |
+| `GET /providers/rules` | пустой список rule providers (`{"providers": {}}`) |
 | `GET /dns/query?name=&type=` | спросить DNS клиента |
 
 Свои запросы (в Clash API их нет): `GET /stats` (трафик по выходам),
