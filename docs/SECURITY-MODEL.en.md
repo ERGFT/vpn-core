@@ -28,7 +28,9 @@ history — [PLAN.en.md, “Security audit (2026-09-26)”](../PLAN.en.md#securi
   request with the selected browser profile's headers. The client returns the
   REALITY error immediately without waiting for that request; the background
   request can fail or time out. No VLESS header or UUID is sent over that
-  connection.
+  connection. This is a simplified mimic: it makes one request and does not
+  open a full browser. The Chrome profile is used when `fp=` is absent;
+  supported `fp=` values select other profiles.
 - **DNS for proxied traffic:** if the app passes the site name (SOCKS5 with a
   hostname, HTTP proxy, TUN with fake-IP), the name is resolved by the
   server and the local DNS does not see it. Visible to the local network may be:
