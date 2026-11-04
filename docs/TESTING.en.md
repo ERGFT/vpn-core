@@ -9,10 +9,14 @@ How the project is tested, the comparison with Xray-core, memory and speed measu
 One command — everything available on this machine:
 
 ```sh
-scripts/ci.sh          # fmt, SPDX headers, clippy (no warnings), tests, release build,
-                       # + interop and smoke with the Go test server and Xray-core, fingerprint check
-scripts/ci.sh --quick  # fmt, SPDX headers, doc links, clippy, tests only
+scripts/ci.sh          # all available checks; optional tools run when installed
+scripts/ci.sh --quick  # fmt, SPDX, doc links, script syntax, warning-free clippy, tests
 ```
+
+`--quick` skips the release build, interoperability and end-to-end checks,
+platform builds, and dependency patch checks. Without this flag, the script
+runs every additional check available on the machine; missing tools are
+reported as `SKIP`.
 
 Individually:
 
