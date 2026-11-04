@@ -10,6 +10,7 @@ from pathlib import Path
 
 PC_PLATFORMS = {"linux-x86_64", "macos-arm64"}
 SAFE_LINK_ARGUMENT = re.compile(r"(?:-l[A-Za-z0-9_+.:-]+|-pthread|-Wl,[A-Za-z0-9_.,=+-]+|/DEFAULTLIB:[A-Za-z0-9_.+-]+)")
+SAFE_WINDOWS_LIBRARY = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.+-]*\.lib", re.IGNORECASE)
 SAFE_FRAMEWORK = re.compile(r"[A-Za-z][A-Za-z0-9_.+-]*")
 
 
@@ -25,7 +26,7 @@ def validate_link_arguments(arguments: list[str]) -> list[str]:
             result.extend((argument, arguments[index + 1]))
             index += 2
             continue
-        if not SAFE_LINK_ARGUMENT.fullmatch(argument):
+        if not (SAFE_LINK_ARGUMENT.fullmatch(argument) or SAFE_WINDOWS_LIBRARY.fullmatch(argument)):
             raise ValueError(f"unsupported or non-relocatable native link argument: {argument!r}")
         result.append(argument)
         index += 1

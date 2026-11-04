@@ -59,9 +59,14 @@ class MetadataGeneration(unittest.TestCase):
 
     def test_rejects_absolute_and_malformed_arguments(self):
         for arguments in (["-L/usr/local/lib"], ["/Users/runner/sysroot/lib.a"],
+                          ["C:\\runner\\sysroot\\dnsapi.lib"], ["../dnsapi.lib"],
                           ["-framework"], ["-lfoo;message(FATAL_ERROR x)"]):
             with self.subTest(arguments=arguments), self.assertRaises(ValueError):
                 validate_link_arguments(arguments)
+
+    def test_preserves_plain_windows_system_library_names(self):
+        self.assertEqual(validate_link_arguments(["dnsapi.lib", "bcrypt.lib"]),
+                         ["dnsapi.lib", "bcrypt.lib"])
 
 
 if __name__ == "__main__":
