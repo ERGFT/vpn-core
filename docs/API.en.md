@@ -2,14 +2,16 @@
 
 [Русский](API.md) | **English**
 
-The local API, compatible with the Clash API: control from web dashboards and your own programs. Enabled in the [config file](CONFIG.en.md).
+The core's local API implements the Clash API subset listed below, plus its own extensions. It is not fully compatible with every Clash, sing-box, mihomo, or Xray endpoint and schema. Enable it in the [config file](CONFIG.en.md).
 
-The API is compatible with the **Clash API** (as in sing-box and mihomo):
-ready-made web dashboards — [metacubexd](https://github.com/MetaCubeX/metacubexd),
-[yacd](https://github.com/haishanh/yacd), zashboard — and clients that speak
-the Clash API work with the core unchanged. metacubexd and yacd were tested
-against the real core in a browser: groups, server selection, latency
-tests, connections, rules, logs, mode.
+The API implements a **subset of the Clash API** for the operations listed
+below. This does not promise full sing-box/mihomo API compatibility or
+compatibility with every dashboard and client that speaks the Clash API.
+[metacubexd](https://github.com/MetaCubeX/metacubexd) and
+[yacd](https://github.com/haishanh/yacd) were manually tested in a browser
+against the real core for groups, server selection, latency tests, connections,
+rules, logs, and mode. This does not verify other dashboards; zashboard, for
+example, is not claimed as tested here.
 
 ```json
 "experimental": {
@@ -64,6 +66,7 @@ curl -H "$T" "http://127.0.0.1:9090/dns/query?name=example.com&type=A"
 | `GET /configs`, `PATCH /configs` | inbound ports and the mode; change the mode (`mode`; ports and the rest — only in the config file) |
 | `PUT /configs` | reread the config file; with `payload` — apply a new config (without writing the file, as in Clash) |
 | `GET /proxies[/{name}]`, `PUT /proxies/{group}` | outbounds, groups (`now`, `all`), subscription servers; select a selector member |
+| `GET /group[/{name}]` | groups in Clash format, or one group |
 | `GET /proxies/{name}/delay`, `GET /group/{name}/delay` | test the latency of an outbound or of all group members |
 | `GET /connections`, `DELETE /connections[/{id}]` | open connections (outbound, chain, rule, traffic); close |
 | `GET /rules` | rules in order and `route.final` |

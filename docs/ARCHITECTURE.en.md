@@ -1135,9 +1135,11 @@ No third-party cryptographic review has been done; this is noted in
 
 ### 16.1. The API server (`app/api.rs`, `app/clash.rs`)
 
-The API is compatible with the Clash API, as in sing-box and mihomo:
-ready-made web dashboards (metacubexd, yacd, zashboard) and clients work
-with the core unchanged. `api.rs` is the HTTP server, the checks and
+The API implements the Clash API subset listed in the [API reference](API.en.md)
+plus core-specific extensions; it is not fully compatible with every Clash,
+sing-box, or mihomo endpoint. metacubexd and yacd were tested in a browser for
+the operations listed below; this does not establish compatibility with other
+dashboards, including zashboard. `api.rs` is the HTTP server, the checks and
 request parsing; `clash.rs` is what to answer (`Controller` methods behind
 the `api::Control` trait). Response formats were checked against a real
 sing-box 1.12 with the same config, and metacubexd and yacd were driven in
