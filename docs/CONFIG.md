@@ -55,7 +55,7 @@ reality-client --config config.json
 |---|---|---|
 | Входы | `socks`, `http`, `mixed`, `tun`; `direct` + правило `hijack-dns` — DNS-сервер | `socks`, `http`, `mixed`, `tun`; `dokodemo-door`, отданный маршрутизацией выходу `dns`, — DNS-сервер |
 | Выходы | `vless`, `trojan`, TCP `socks` и `http` (HTTP CONNECT), `direct`, `block`, `dns`, `selector`, `urltest`; `fallback` — расширение vpn-core | `vless`, `trojan`, `freedom` (с `fragment`, `noises`), `blackhole`, `dns`; `balancers` с `leastPing`/`leastLoad` преобразуются в `urltest` (проверка — из `observatory`) |
-| Транспорт и TLS | `tls` (`reality`, `utls`, `alpn`, `certificate_path`), `transport`: `ws`, `grpc`, `httpupgrade` | `streamSettings`: `raw`/`tcp`, `ws`, `grpc`, `httpupgrade`, `xhttp`; `tls`/`reality`; `mux` (Mux.Cool) |
+| Транспорт и TLS | `tls` (`reality`, `utls`, `alpn`, `certificate_path`), `transport`: `ws`, `grpc`, `httpupgrade`; расширение ядра `type: xhttp` | `streamSettings`: `raw`/`tcp`, `ws`, `grpc`, `httpupgrade`, `xhttp` (также старое имя `splithttp`); `tls`/`reality`; `mux` (Mux.Cool) |
 | Правила | `domain`, `domain_suffix`, `domain_keyword`, `domain_regex`, `geosite`, `geoip`, `ip_cidr`, `ip_is_private`, `port`, `port_range`, `network`, `inbound`, `rule_set`, `user_id`, `invert`, `protocol: dns`; действия `route`, `reject`, `sniff`, `hijack-dns` | `domain` (`geosite:`, `domain:`, `full:`, `regexp:`, `keyword:`, просто подстрока), `ip` (`geoip:`, адреса), `port`, `network`, `inboundTag`, `outboundTag`/`balancerTag`; `domainStrategy` `AsIs`/`IPIfNonMatch` |
 | DNS | `servers` (с `type` и старые с `address`), `rules`, `final`, `strategy`, `fakeip` | `servers` (строки и объекты с `domains`; `+local` — напрямую), `queryStrategy`, `fakedns` |
 | API | `experimental.clash_api`: `external_controller`, `secret` | то же расширение `experimental.clash_api` |
@@ -165,10 +165,13 @@ VLESS или Trojan:
   (`ca_file` — для самоподписанного сертификата панели); серверы с
   `security=none` пропускаются без `allow_insecure`. Загрузка — через
   группу, а пока список пуст — через `direct` (или через `detour`).
-  Последний список — в `<tag>.subscription` рядом с настройками (права
-  600): клиент стартует без панели. В журнал попадает только имя сервера
-  панели, не адрес подписки. С TUN подписка без сохранённого списка
-  загружается до включения маршрутов.
+  Последний список — в `<tag>.subscription` рядом с настройками: на Unix
+  файл создаётся с режимом `0600`; на Windows права наследуются от каталога.
+  Каталог службы в `%ProgramData%` закрыт для записи обычным пользователям,
+  но для обычного запуска уровень доступа определяет ACL каталога настроек.
+  Файл содержит UUID; с кешем клиент стартует без панели. В журнал попадает
+  только имя сервера панели, не адрес подписки. С TUN подписка без
+  сохранённого списка загружается до включения маршрутов.
 
 ## Против DPI: fragment и noises
 

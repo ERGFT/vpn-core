@@ -55,7 +55,7 @@ What each format supports:
 |---|---|---|
 | Inbounds | `socks`, `http`, `mixed`, `tun`; `direct` + a `hijack-dns` rule — DNS server | `socks`, `http`, `mixed`, `tun`; `dokodemo-door` routed to a `dns` outbound — DNS server |
 | Outbounds | `vless`, `trojan`, TCP `socks` and `http` (HTTP CONNECT), `direct`, `block`, `dns`, `selector`, `urltest`; `fallback` is a vpn-core extension | `vless`, `trojan`, `freedom` (with `fragment`, `noises`), `blackhole`, `dns`; `balancers` with `leastPing`/`leastLoad` are converted to `urltest` (checks from `observatory`) |
-| Transport and TLS | `tls` (`reality`, `utls`, `alpn`, `certificate_path`), `transport`: `ws`, `grpc`, `httpupgrade` | `streamSettings`: `raw`/`tcp`, `ws`, `grpc`, `httpupgrade`, `xhttp`; `tls`/`reality`; `mux` (Mux.Cool) |
+| Transport and TLS | `tls` (`reality`, `utls`, `alpn`, `certificate_path`), `transport`: `ws`, `grpc`, `httpupgrade`; core extension `type: xhttp` | `streamSettings`: `raw`/`tcp`, `ws`, `grpc`, `httpupgrade`, `xhttp` (also the legacy alias `splithttp`); `tls`/`reality`; `mux` (Mux.Cool) |
 | Rules | `domain`, `domain_suffix`, `domain_keyword`, `domain_regex`, `geosite`, `geoip`, `ip_cidr`, `ip_is_private`, `port`, `port_range`, `network`, `inbound`, `rule_set`, `user_id`, `invert`, `protocol: dns`; actions `route`, `reject`, `sniff`, `hijack-dns` | `domain` (`geosite:`, `domain:`, `full:`, `regexp:`, `keyword:`, plain substring), `ip` (`geoip:`, addresses), `port`, `network`, `inboundTag`, `outboundTag`/`balancerTag`; `domainStrategy` `AsIs`/`IPIfNonMatch` |
 | DNS | `servers` (with `type`, and the legacy form with `address`), `rules`, `final`, `strategy`, `fakeip` | `servers` (strings and objects with `domains`; `+local` — direct), `queryStrategy`, `fakedns` |
 | API | `experimental.clash_api`: `external_controller`, `secret` | the same `experimental.clash_api` extension |
@@ -164,9 +164,13 @@ strategy and `observatory` (check URL and interval).
   (`ca_file` — for a panel's self-signed certificate); `security=none`
   servers are skipped without `allow_insecure`. Downloads go through the
   group, and while the list is empty — through `direct` (or `detour`). The
-  last list is saved to `<tag>.subscription` next to the config (mode 600):
-  the client starts without the panel. Only the panel's host name is logged,
-  not the subscription URL. With TUN, a subscription without a saved list is
+  last list is saved to `<tag>.subscription` next to the config. On Unix, the
+  file is created with mode `0600`; on Windows, permissions are inherited from
+  the directory. The service directory under `%ProgramData%` is not writable by
+  regular users, but for a normal run access depends on the config directory's
+  ACL. The file contains UUIDs, and the cache lets the client start without the
+  panel. Only the panel's host name is logged, not the subscription URL. With
+  TUN, a subscription without a saved list is
   downloaded before routes are enabled.
 
 ## Anti-DPI: fragment and noises
