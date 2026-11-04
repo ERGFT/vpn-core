@@ -94,6 +94,7 @@ The SDK is for apps that need an embedded VLESS client. Its public interface is 
 | `rc_start` / `rc_stop` | Create, start, and cleanly stop a core instance |
 | `rc_request` | Call the core API directly, without a network HTTP server or token |
 | `rc_reload` | Apply a new configuration without recreating the whole app |
+| `rc_network_changed` | Notify the core of a network change detected by the host application |
 | `rc_is_alive` | Check the instance state and detect a terminal error |
 | Callbacks | Receive events/logs and provide platform functions such as socket protection or UID lookup |
 
@@ -103,13 +104,17 @@ from an extracted ZIP. Public headers and examples are in [`ffi/`](ffi/).
 
 ## Features and status
 
-| Area | Support |
+| Layer | Capabilities |
 |---|---|
-| Protocol | VLESS, REALITY, TLS, XTLS Vision; TCP, WebSocket, gRPC, HTTPUpgrade, and XHTTP |
-| Network | SOCKS5/HTTP/mixed inbounds; sing-box SOCKS5 and HTTP CONNECT TCP outbounds with `detour` chains; fast IPv4/IPv6 address selection (Happy Eyeballs); UDP/XUDP, DNS (DoH/DoT/DoQ), TUN, kill switch |
-| Configuration | Xray-core format and part of sing-box format; rules, server groups, subscriptions |
-| Management | Local Clash API, metacubexd and yacd dashboards, systemd and Windows service |
-| Experimental | Android/iOS through C ABI; `fragment` and `noises`; application routing integration |
+| Protocols and flow | VLESS, Trojan, and XTLS Vision |
+| Connection security | REALITY and TLS |
+| Transports | TCP, WebSocket, gRPC, HTTPUpgrade, and XHTTP |
+| Inbounds | SOCKS5, HTTP, and mixed |
+| Outbounds | Include VLESS, Trojan, direct, block, DNS, and server groups. SOCKS5 and HTTP CONNECT are supported only for TCP and only in sing-box format; `detour` chains are also available there |
+| Configuration | Xray-core format and part of sing-box format; rules, server groups, and subscriptions |
+| Networking and routing | UDP over VLESS through XUDP, DNS (DoH/DoT/DoQ), TUN, kill switch, and IPv4/IPv6 selection (Happy Eyeballs) |
+| Management and platform integration | Local Clash API, metacubexd and yacd dashboards, systemd, and Windows service; Android/iOS through C ABI remain experimental |
+| Experimental | `fragment`, `noises`, and application routing integration |
 | Not supported | KCP transport; ICMP/ping through TUN |
 
 Importing a sing-box config **does not mean full compatibility** with all of its options. See the [full matrix](docs/FEATURES.en.md) for each feature's status and test coverage.
@@ -135,9 +140,13 @@ The [test results](docs/TESTING.en.md) describe the local Xray-core comparison a
 | Development | [core as a library](docs/LIBRARY.en.md) · [API](docs/API.en.md) · [internals](docs/README.en.md) |
 | Reliability and security | [features and tests](docs/FEATURES.en.md) · [comparison and methodology](docs/TESTING.en.md) · [security model](docs/SECURITY-MODEL.en.md) |
 
+The internal [REALITY review](docs/reviews/2026-11-04-reality-internal-review.en.md)
+describes its scope and limitations. It is an internal report, not an
+independent external audit.
+
 ## Security and limitations
 
-This is an educational and research project. It has not had a third-party security audit or cryptographic review of REALITY. A listed feature is not a security guarantee for every configuration.
+This is an educational and research project with no independent external security audit. REALITY has received only an internal review; the report and its limits are described above. A listed feature does not guarantee security for every configuration.
 
 - With `security=none`, traffic is not encrypted; this mode requires the explicit `--allow-insecure` option.
 - With REALITY, the UUID is sent only after REALITY verification. With TLS, the server must present a valid certificate.

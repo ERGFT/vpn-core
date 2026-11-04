@@ -17,7 +17,8 @@ and first run. This is the detailed reference.
 | [API.en.md](API.en.md) | local API (Clash API), web dashboards, config reload |
 | [LINK.en.md](LINK.en.md) | `vless://` link parameters |
 | [WINDOWS.en.md](WINDOWS.en.md) | building and running on Windows |
-| [SECURITY-MODEL.en.md](SECURITY-MODEL.en.md) | what the client guarantees, threats on a shared Wi-Fi network |
+| [SECURITY-MODEL.en.md](SECURITY-MODEL.en.md) | assumptions, security boundaries, and threats on shared Wi-Fi |
+| [Internal REALITY review](reviews/2026-11-04-reality-internal-review.en.md) | scope and findings of an internal review; not an independent external audit |
 
 ## Embedding and development
 
@@ -29,7 +30,7 @@ and first run. This is the detailed reference.
 | [REPOSITORY.en.md](REPOSITORY.en.md) | where things are in the repository |
 | [TESTING.en.md](TESTING.en.md) | how the project is tested, comparison with Xray-core, performance |
 | [RUSTLS_PATCH.en.md](RUSTLS_PATCH.en.md) | what was changed in rustls and why |
-| [stage5-crypto-review-and-interop.en.md](stage5-crypto-review-and-interop.en.md) | checklist for a third-party crypto review of REALITY |
+| [stage5-crypto-review-and-interop.en.md](stage5-crypto-review-and-interop.en.md) | checklist for a future independent REALITY cryptographic review |
 | [RELEASING.en.md](RELEASING.en.md) | preflight builds, artifact verification, and tag publishing |
 
 ## Documentation rules
