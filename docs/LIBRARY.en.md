@@ -164,7 +164,10 @@ rc_stop(core);
     `reality-client --config`);
   - `base_dir` — the folder for relative paths in it (geosite/geoip
     databases, rule sets, subscription caches);
-  - `tun_fd` — a TUN descriptor or -1.
+  - `tun_fd` — a TUN descriptor on Unix, or -1. Windows does not accept an
+    externally supplied descriptor; other negative values are rejected.
+    On Unix, ownership of a supplied descriptor (value >= 0) transfers to the
+    core immediately, including if startup fails.
 
   On a config error it returns NULL and puts the text in `err`.
 - **`rc_request(core, method, path, body, &status)`** — everything the

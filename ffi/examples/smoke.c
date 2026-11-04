@@ -221,6 +221,12 @@ int main(void) {
     rc_free_string(err);
     err = NULL;
 
+    if (rc_start(CONFIG, NULL, -2, &err) != NULL)
+        FAIL("rc_start принял отрицательный tun_fd, отличный от -1");
+    if (!err || !strstr(err, "tun_fd")) FAIL("rc_start не объяснил недопустимый tun_fd");
+    rc_free_string(err);
+    err = NULL;
+
     rc_set_protect(on_protect, NULL);
     rc_set_connection_owner(on_connection_owner, NULL);
     RcCore *core = rc_start(CONFIG, NULL, -1, &err);

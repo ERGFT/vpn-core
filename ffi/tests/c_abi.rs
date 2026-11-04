@@ -56,6 +56,17 @@ fn start_request_reload_stop() {
 
     let cfg = CString::new(CONFIG).unwrap();
     let mut err: *mut c_char = ptr::null_mut();
+    assert!(unsafe { rc_start(cfg.as_ptr(), ptr::null(), -2, &mut err) }.is_null());
+    assert!(take(err).contains("tun_fd"));
+
+    #[cfg(not(unix))]
+    {
+        let mut err: *mut c_char = ptr::null_mut();
+        assert!(unsafe { rc_start(cfg.as_ptr(), ptr::null(), 3, &mut err) }.is_null());
+        assert!(take(err).contains("Unix"));
+    }
+
+    let mut err: *mut c_char = ptr::null_mut();
     let core = unsafe { rc_start(cfg.as_ptr(), ptr::null(), -1, &mut err) };
     assert!(!core.is_null(), "{}", take(err));
     assert_eq!(unsafe { rc_network_changed(core) }, 0);
