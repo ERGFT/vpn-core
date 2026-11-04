@@ -41,6 +41,8 @@ class ArchiveCheck(unittest.TestCase):
                     "minimum_os": None, "toolchain": {
                         "rustc": "rustc 1.89", "cargo": "cargo 1.89", "build_host": "Linux"
                     },
+                    "static_link": {"source": "rustc --print=native-static-libs",
+                                    "arguments": ["-ldl", "-lpthread"]},
                     "files": records,
                 }
                 manifest.update(manifest_overrides or {})
@@ -80,6 +82,7 @@ class ArchiveCheck(unittest.TestCase):
                         "release_tag": "v0.1.0",
                         "platform": "linux-x86_64", "target": TARGET,
                         "toolchain": {"rustc": "rustc 1.89", "cargo": "cargo 1.89", "build_host": "Linux"},
+                        "static_link": {"source": "rustc --print=native-static-libs", "arguments": ["-ldl"]},
                         "files": manifest_files}
             files["manifest.json"] = json.dumps(manifest).encode()
             files["README.md"] = b"changed"
@@ -96,7 +99,8 @@ class ArchiveCheck(unittest.TestCase):
 
     def test_rejects_unlisted_files_and_wrong_target(self):
         for overrides, extra in (({}, {"unexpected.bin": "extra"}),
-                                 ({"target": "aarch64-linux-android"}, None)):
+                                 ({"target": "aarch64-linux-android"}, None),
+                                 ({"static_link": {"source": "rustc", "arguments": "-ldl"}}, None)):
             with self.subTest(overrides=overrides, extra=extra), tempfile.TemporaryDirectory() as directory:
                 archive = Path(directory) / "sdk.zip"
                 with zipfile.ZipFile(archive, "w") as out:
@@ -113,6 +117,7 @@ class ArchiveCheck(unittest.TestCase):
                                 "release_tag": "v0.1.0",
                                 "platform": "linux-x86_64", "target": TARGET,
                                 "toolchain": {"rustc": "rustc 1.89", "cargo": "cargo 1.89", "build_host": "Linux"},
+                                "static_link": {"source": "rustc --print=native-static-libs", "arguments": ["-ldl"]},
                                 "files": records, **overrides}
                     contents["manifest.json"] = json.dumps(manifest).encode()
                     for name, data in contents.items():

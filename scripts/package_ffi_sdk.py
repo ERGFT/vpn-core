@@ -7,6 +7,7 @@ import argparse
 import hashlib
 import json
 import platform
+import shlex
 import shutil
 import subprocess
 import tempfile
@@ -49,12 +50,23 @@ def tool_version(command: str) -> str:
     ).stdout.strip().splitlines()[0]
 
 
+def parse_native_static_libs(text: str) -> list[str]:
+    """Extract rustc's machine-searchable native-static-libs diagnostic."""
+    marker = "native-static-libs:"
+    lines = [line.split(marker, 1)[1].strip() for line in text.splitlines() if marker in line]
+    if len(lines) != 1:
+        raise ValueError(f"expected exactly one {marker} diagnostic, found {len(lines)}")
+    return shlex.split(lines[0])
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--platform", required=True)
     parser.add_argument("--target", required=True)
     parser.add_argument("--version", required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--native-static-libs", type=Path, required=True,
+                        help="stderr captured from rustc --print=native-static-libs")
     parser.add_argument(
         "--library", action="append", type=Path, required=True,
         help="shared/static library or import library to include; repeat as needed",
@@ -65,6 +77,12 @@ def main() -> None:
         parser.error(f"unsupported platform: {args.platform}")
     if TARGETS[args.platform] != args.target:
         parser.error(f"target for {args.platform} must be {TARGETS[args.platform]}")
+    try:
+        native_static_libs = parse_native_static_libs(
+            args.native_static_libs.read_text(encoding="utf-8", errors="replace")
+        )
+    except (OSError, ValueError) as error:
+        parser.error(f"cannot read native static link arguments: {error}")
 
     for path in args.library:
         if not path.is_file():
@@ -135,6 +153,10 @@ def main() -> None:
                 "rustc": tool_version("rustc"),
                 "cargo": tool_version("cargo"),
                 "build_host": platform.system(),
+            },
+            "static_link": {
+                "source": "rustc --print=native-static-libs",
+                "arguments": native_static_libs,
             },
             "files": files,
         }
