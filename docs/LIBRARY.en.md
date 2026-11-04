@@ -202,6 +202,13 @@ rc_stop(core);
   `GET /logs` — includes the domains of visited sites and DNS results. Do
   not send such a log to a server or show it without the user knowing.
   Removing or replacing the callback uses the same completion barrier.
+- **Callback contract:** callback functions may run concurrently on core
+  threads. Synchronize shared state and do not block a core thread for long.
+  Every callback must return normally: do not let a C++ exception, Rust panic,
+  or `longjmp` cross the C ABI; catch C++ exceptions inside the callback.
+  Event/log callbacks must not call functions for the same `RcCore`; their JSON
+  and address strings are borrowed until the callback returns, and their `user`
+  context must stay alive until callback removal or until `rc_stop` returns.
 - **`rc_stop(core)`** — stop: inbounds close and routes are restored. Before
   returning, it waits for callbacks to finish; no new callback starts after
   return. You can release `user` data and callback resources after `rc_stop`.
