@@ -185,9 +185,13 @@ rc_stop(core);
     core immediately, including if startup fails.
 
   On a config error it returns NULL and puts the text in `err`.
-- **`rc_request(core, method, path, body, &status)`** — everything the
-  HTTP API can do ([API.en.md](API.en.md)), with the same
-  path and the same response, but without the network or a token:
+- **`rc_request(core, method, path, body, &status)`** — synchronous requests
+  to the local API ([API.en.md](API.en.md)), with the same path and response,
+  but without networking or a token. Streaming paths (`/events`, `/traffic`,
+  `/memory`, `/logs`) and the WebSocket `/connections` stream are not available
+  through this function: events and logs use callbacks, while streaming
+  traffic/memory data is not exposed in library mode. A regular
+  `GET /connections` returns one snapshot. Supported requests include:
   - groups and server selection (`/proxies`);
   - the mode (`PATCH /configs`);
   - connections (`/connections`);
