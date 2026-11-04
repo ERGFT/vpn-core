@@ -46,7 +46,7 @@ Specific questions for the reviewer (not just "check everything"):
    exactly what guarantees uniqueness, and not something subtler).
 2. The `mlkem || ecdh` byte order for `X25519MLKEM768` — checked against the
    Go stdlib and against the native implementation of the same group in the
-   rustls used by the project (see PLAN.md, Stage 5), but that is a solo
+   rustls used by the project (see PLAN.en.md, Stage 5), but that is a solo
    check of two sources by the same person — an independent third check
    would not hurt exactly here, because a byte-order mistake would not break
    the handshake loudly but would quietly weaken the secret.
@@ -121,7 +121,7 @@ curl --socks5 127.0.0.1:1080 https://example.com -v
 
 # 5. Additionally — capture and compare the fingerprint against THIS
 #    particular server (this also checks minClientVer/maxClientVer live, if
-#    the server uses them — see PLAN.md, Stage 5)
+#    the server uses them — see PLAN.en.md, Stage 5)
 cargo run -p fpcheck -- --server 'vless://UUID@host:443?security=reality&sni=host&pbk=...&sid=...'
 ```
 

@@ -49,15 +49,16 @@ scripts/ci.sh           # все дополнительные проверки, 
   `README.en.md`, нужную страницу в `docs/` и допишите строку в
   `CHANGELOG.md` (раздел «Не выпущено»). Где что: README — что доступно
   сейчас и как начать; `docs/` — справочник; `CHANGELOG.md` — что
-  изменилось и что планируется; `PLAN.md` — технические решения и история
-  этапов. Статусы возможностей — одними словами: «готово»,
+  изменилось и что планируется; `PLAN.md` и перевод `PLAN.en.md` —
+  технические решения и история этапов. Статусы возможностей — одними словами: «готово»,
   «экспериментально», «не поддерживается», «не проверено на этой
   платформе».
-- Меняется решение или открывается риск — `PLAN.md`; меняется устройство
+- Меняется решение или открывается риск — `PLAN.md` / `PLAN.en.md`; меняется устройство
   ядра (новый модуль, путь соединения, предел) — `docs/ARCHITECTURE.md` и
   `docs/ARCHITECTURE.en.md`. С него же удобно начинать знакомство с кодом.
-- Комментарии в коде, `PLAN.md` и сообщения коммитов — на русском, как в
-  остальном проекте; документация для пользователя — на двух языках
+- Комментарии в коде, исходный `PLAN.md` и сообщения коммитов — на русском,
+  как в остальном проекте; у плана есть перевод `PLAN.en.md`; документация
+  для пользователя — на двух языках
   (`*.md` и `*.en.md`); issue и pull request — на русском или английском.
 - **Две языковые версии меняются вместе.** Правите возможности,
   ограничения или инструкции в `README.md` или в `docs/*.md` — в том же
@@ -118,15 +119,16 @@ same script: the Linux and Windows jobs cover different parts of the project.
   the relevant page in `docs/`, and add a line to `CHANGELOG.md` (the
   "Unreleased" section). Where things go: the README — what is available
   now and how to start; `docs/` — the reference; `CHANGELOG.md` — what
-  changed and what is planned; `PLAN.md` — technical decisions and the
-  history of stages. Feature statuses use the same words everywhere:
+  changed and what is planned; `PLAN.md` / `PLAN.en.md` — the Russian
+  historical log and its English translation. Feature statuses use the same words everywhere:
   "ready", "experimental", "not supported", "not tested on this platform".
-- If a decision changes or a risk appears — `PLAN.md`; if the core's
+- If a decision changes or a risk appears — `PLAN.md` / `PLAN.en.md`; if the core's
   structure changes (a new module, connection path, limit) —
   `docs/ARCHITECTURE.md` and `docs/ARCHITECTURE.en.md`. It is also the best
   place to start reading the code.
-- Code comments, `PLAN.md` and commit messages are in Russian, like the rest
-  of the project; user documentation is in two languages (`*.md` and
+- Code comments, the original `PLAN.md` and commit messages are in Russian,
+  like the rest of the project; the plan has an English translation in
+  `PLAN.en.md`; user documentation is in two languages (`*.md` and
   `*.en.md`); issues and pull requests may be in English or Russian.
 - **Both language versions change together.** If you change features,
   limitations or instructions in `README.md` or `docs/*.md`, update the
