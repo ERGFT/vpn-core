@@ -202,10 +202,11 @@ Key types:
      window and logoff.
 
    SIGHUP (Unix) reloads the config.
-6. Stop: `Running` is dropped. Inbounds stop and TUN routes installed by the
-   core through `auto_route` are removed. The host application controls routes
-   for an external TUN. The system proxy (if enabled) is restored. The runtime
-   gets at most 2 s to shut down.
+6. On exit, `reality-client` restores the previous system proxy settings if
+   its guard was enabled. Dropping `Running` stops inbounds and removes routes
+   installed by the core through `auto_route`; the host application controls
+   routes for an external TUN. After the async flow returns, the runtime waits
+   no longer than 2 s for blocking tasks.
 
 ### 4.2. `App::build` — everything that can be checked before starting
 
