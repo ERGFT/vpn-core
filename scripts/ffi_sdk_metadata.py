@@ -42,10 +42,11 @@ def _cmake_quote(value: str) -> str:
     return f"[{delimiter}[{value}]{delimiter}]"
 
 
-def _cmake_target(name: str, library: str, *, import_library: str | None = None,
+def _cmake_target(name: str, library: str, *, library_type: str,
+                  import_library: str | None = None,
                   static_link: list[str] | None = None) -> str:
     lines = [f"if(NOT TARGET vpn-core::{name})",
-             f"  add_library(vpn-core::{name} UNKNOWN IMPORTED GLOBAL)"]
+             f"  add_library(vpn-core::{name} {library_type} IMPORTED GLOBAL)"]
     properties = [
         f'IMPORTED_LOCATION "${{_VPN_CORE_PREFIX}}/lib/{library}"',
         'INTERFACE_INCLUDE_DIRECTORIES "${_VPN_CORE_PREFIX}/include"',
@@ -55,10 +56,19 @@ def _cmake_target(name: str, library: str, *, import_library: str | None = None,
     lines.append("  set_target_properties(vpn-core::" + name + " PROPERTIES\n  " +
                  "\n  ".join(properties) + "\n)")
     if static_link:
-        rendered = "\n".join(f"  {_cmake_quote(argument)}" for argument in static_link)
-        lines.extend((f"  set(_VPN_CORE_STATIC_LINK_ARGS\n{rendered}\n  )",
-                      "  set_property(TARGET vpn-core::static PROPERTY INTERFACE_LINK_LIBRARIES "
-                      '"${_VPN_CORE_STATIC_LINK_ARGS}")'))
+        link_options = [argument for argument in static_link
+                        if argument.upper().startswith("/DEFAULTLIB:")]
+        link_libraries = [argument for argument in static_link if argument not in link_options]
+        if link_libraries:
+            rendered = "\n".join(f"  {_cmake_quote(argument)}" for argument in link_libraries)
+            lines.extend((f"  set(_VPN_CORE_STATIC_LINK_LIBRARIES\n{rendered}\n  )",
+                          "  set_property(TARGET vpn-core::static PROPERTY INTERFACE_LINK_LIBRARIES "
+                          '"${_VPN_CORE_STATIC_LINK_LIBRARIES}")'))
+        if link_options:
+            rendered = "\n".join(f"  {_cmake_quote(argument)}" for argument in link_options)
+            lines.extend((f"  set(_VPN_CORE_STATIC_LINK_OPTIONS\n{rendered}\n  )",
+                          "  set_property(TARGET vpn-core::static PROPERTY INTERFACE_LINK_OPTIONS "
+                          '"${_VPN_CORE_STATIC_LINK_OPTIONS}")'))
     lines.append("endif()")
     return "\n".join(lines)
 
@@ -84,10 +94,12 @@ def generate_metadata(stage: Path, platform: str, version: str, static_arguments
     ]
     if shared_libraries:
         config.append(_cmake_target(
-            "shared", shared_libraries[0],
+            "shared", shared_libraries[0], library_type="SHARED",
             import_library=import_libraries[0] if import_libraries else None,
         ))
-    config.append(_cmake_target("static", static_libraries[0], static_link=static_arguments))
+    config.append(_cmake_target(
+        "static", static_libraries[0], library_type="STATIC", static_link=static_arguments
+    ))
     config.extend((
         "if(NOT TARGET vpn-core::vpn-core)",
         "  add_library(vpn-core::vpn-core INTERFACE IMPORTED GLOBAL)",
