@@ -31,7 +31,10 @@ scripts/ci.sh           # плюс release-сборка, интероп с Xray-
                         # режим библиотеки (C-программа через C ABI)
 ```
 
-То же запускает CI на GitHub — на Linux и на настоящей Windows.
+В GitHub Actions Linux запускает полный `scripts/ci.sh`. На настоящей Windows
+отдельная задача выполняет Windows-специфичные `clippy`, тесты, release-сборку
+`reality-client` и сквозную проверку службы и TUN. Это не запуск того же
+скрипта: Linux- и Windows-задачи проверяют разные части проекта.
 
 - У каждого нового исходника (`.rs`, `.go`, `.sh`, `.ps1`, `.py`, `.c`, `.h`)
   первая строка (у скриптов — сразу после `#!`):
@@ -99,7 +102,10 @@ scripts/ci.sh           # plus release build, interop with Xray-core and the Go 
                         # library mode (a C program over the C ABI)
 ```
 
-CI on GitHub runs the same — on Linux and on real Windows.
+In GitHub Actions, Linux runs the full `scripts/ci.sh`. A separate job on real
+Windows runs Windows-specific clippy, tests, a release build of
+`reality-client`, and an end-to-end service and TUN check. It does not run the
+same script: the Linux and Windows jobs cover different parts of the project.
 
 - Every new source file (`.rs`, `.go`, `.sh`, `.ps1`, `.py`, `.c`, `.h`) starts with
   (for scripts — right after `#!`):
