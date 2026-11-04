@@ -25,7 +25,7 @@ Statuses:
 | Dual-stack TCP dialer (Happy Eyeballs) | ready | IPv4/IPv6 candidates are interleaved; paused-clock tests cover fast fallback, immediate retry after failure, and attempt limits |
 | `flow=xtls-rprx-vision` (XTLS Vision) | ready | padding, inner TLS detection, direct copy in both directions; tested against Xray-core. As in Xray — only `type=tcp` with `tls`/`reality` |
 | REALITY: X25519MLKEM768, ShortId, `minClientVer`/`maxClientVer`, HMAC certificate | ready | the hybrid group is offered, but classical X25519 is also accepted, so post-quantum TLS is not guaranteed; no third-party crypto review |
-| REALITY: ML-DSA-65 (`pqv=`) | ready | against Xray-core, including rejection of a wrong key |
+| REALITY: ML-DSA-65 (`pqv=`) | ready | tested against Xray-core, including rejection of a wrong key; no test covers `pqv=` when TLS negotiates through HelloRetryRequest (HRR) |
 | Chrome 133 TLS fingerprint | ready | REALITY — exact match, including JA4 `t13d1516h2_8daaf6152771_d8a2da3f94cd`; plain TLS — without legacy cipher suites and ALPS (see below) |
 | `fp=firefox` (Firefox 148), `safari`/`ios` (Safari 26.3), `edge`/`android` (same as Chrome), `random`, `randomized` | ready | cipher suites, extensions in browser order, groups, key shares (real P-256 for Firefox), signature algorithms, certificate compression (zlib, brotli, zstd — with decompression), GREASE — checked against utls; ws/httpupgrade/xhttp HTTP headers of the same browser; tested against an Xray REALITY server (tcp, Vision, xhttp, gRPC) |
 | UDP (SOCKS5 UDP ASSOCIATE) over XUDP — like the Xray client: all destinations in one stream, Full Cone NAT | ready | including with Vision (the only way an Xray Vision account accepts UDP); `--no-xudp` — one stream per destination |
