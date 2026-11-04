@@ -24,10 +24,11 @@ Publish a stable tag only after checking the builds and artifacts.
 
 Create a new, unused `vX.Y.Z` tag and push it at the exact commit SHA checked
 by preflight. Never move or reuse a published tag. The tag workflow rebuilds
-and attaches the files, checksums, licenses, CycloneDX SBOM, and GitHub build
-provenance to the release. Compare the published asset names and SHA-256 with
-the preflight artifacts. The attestation verification command is documented in
-`.github/workflows/release.yml`.
+and attaches the files, checksums, licenses, and CycloneDX SBOM to the release.
+GitHub separately publishes a build provenance attestation for the files; this
+is a verifiable GitHub record, not a separate downloadable asset. Compare the
+published asset names and SHA-256 with the preflight artifacts. Verify a
+downloaded file with `gh attestation verify <file> --repo ERGFT/vpn-core`.
 
 Android/iOS artifacts are cross-compiled and linked; this does not confirm
 execution on physical devices. REALITY has not received an external
