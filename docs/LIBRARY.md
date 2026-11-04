@@ -10,6 +10,11 @@ SDK-архивы с библиотекой, заголовком C ABI и при
 Внутри архива есть `include/reality.h`, библиотека в `lib/`, пример на C и
 локальные копии этого руководства и документации API.
 
+Опубликованный архив `v0.1.0` создан до добавления manifest, CMake и
+pkg-config metadata и не содержит их. Ниже описана упаковка, которую создаёт
+текущий release workflow на `main`; она появится в последующем выпуске и не
+добавляется задним числом в `v0.1.0`.
+
 Версионированный release workflow собирает SDK для Linux x86_64, Windows
 x86_64, macOS arm64, Android arm64-v8a и iOS arm64. Для каждого ZIP рядом
 публикуется файл `.sha256`. CI проверяет состав ZIP и checksum; пример C из
@@ -18,8 +23,9 @@ Android и iOS проверяются кросс-компоновкой прим
 заменяют запуск на устройстве. Списки лицензий зависимостей, SBOM и build
 provenance публикуются отдельными файлами релиза.
 
-В каждом SDK ZIP есть `manifest.json` со схемой `schema_version: 1`. В нём указаны
-версия/тег, платформа и Rust target triple, версия `rustc`/Cargo и ОС сборочного
+В SDK ZIP, собранных текущим workflow из `main`, есть `manifest.json` со схемой
+`schema_version: 1`. В нём указаны версия/тег, платформа и Rust target triple,
+версия `rustc`/Cargo и ОС сборочного
 раннера. Для каждого файла, кроме самого manifest, записаны относительный путь,
 размер и SHA-256; для библиотек также указан тип (`shared`, `static` или `import`).
 Поле `static_link.arguments` содержит native linker arguments, которые `rustc`
@@ -41,8 +47,9 @@ SHA-256 файлов с `manifest.json`. Доступные платформы: 
 
 ## Подключение C/C++ проекта
 
-Каждый архив содержит relocatable CMake package в `cmake/vpn-core/`. Путь до
-библиотек и заголовка вычисляется относительно config-файла, поэтому SDK можно
+Каждый архив, собранный текущим workflow, содержит relocatable CMake package в
+`cmake/vpn-core/`. Путь до библиотек и заголовка вычисляется относительно
+config-файла, поэтому SDK можно
 перемещать и распаковывать в каталог с пробелами. Минимальный CMake 3.15:
 
 ```cmake
@@ -52,7 +59,7 @@ find_package(vpn-core CONFIG REQUIRED
     NO_CMAKE_FIND_ROOT_PATH)
 
 add_executable(my_app main.c)
-target_link_libraries(my_app PRIVATE vpn-core::shared)
+target_link_libraries(my_app PRIVATE vpn-core::vpn-core)
 ```
 
 Передайте путь к распакованному архиву при конфигурации своего проекта:
@@ -68,13 +75,18 @@ cmake --build build --config Release
 `vpn-core::shared` доступен там, где архив содержит динамическую библиотеку;
 `vpn-core::static` — статическую. У Windows shared target использует DLL вместе
 с import library. Универсальный target `vpn-core::vpn-core` выбирает shared,
-если он есть, иначе static. Статический target получает native зависимости из
-того же `rustc --print=native-static-libs` вывода, который записан в manifest.
+если он есть, иначе static. В текущей упаковке Linux, Windows, macOS и Android
+содержат shared и static варианты; iOS содержит только static библиотеку.
+Поэтому `vpn-core::shared` на iOS отсутствует, а универсальная цель выбирает
+там static. Статический target получает native зависимости из того же
+`rustc --print=native-static-libs` вывода, который записан в manifest. iOS ZIP
+содержит обычную `libreality.a`, не XCFramework.
 Для Android и iOS передайте путь SDK проекту с подходящим NDK/iOS CMake
 toolchain; `NO_CMAKE_FIND_ROOT_PATH` не даёт Android NDK перенаправить явный
 поиск SDK в sysroot. Cross-link проверка не подтверждает запуск на устройстве.
 
-Для Linux и macOS рядом с библиотекой есть `lib/pkgconfig/vpn-core.pc`:
+В архивах Linux и macOS, собранных текущим workflow, рядом с библиотекой есть
+`lib/pkgconfig/vpn-core.pc`:
 
 ```sh
 export PKG_CONFIG_PATH="$VPN_CORE_SDK/lib/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
@@ -99,6 +111,8 @@ Kotlin/Java (JNI), Swift, C/C++, Go (cgo), C# (P/Invoke), Python (ctypes) и
 - Код: [`ffi/src/lib.rs`](../ffi/src/lib.rs), пример на C —
   [`ffi/examples/smoke.c`](../ffi/examples/smoke.c) (его собирает и
   запускает `scripts/ffi_smoke.sh`).
+- Готовые JNI/Kotlin- и Swift-обёртки не поставляются; приложение вызывает C ABI
+  и реализует платформенный bridge самостоятельно.
 - Лицензия — та же GPL-3.0-or-later: приложение со встроенным ядром
   распространяется на условиях GPL (исходники приложения — тоже).
 
@@ -122,8 +136,8 @@ Kotlin/Java (JNI), Swift, C/C++, Go (cgo), C# (P/Invoke), Python (ctypes) и
 
 ```sh
 cargo build --release -p reality-ffi
-# target/release/libreality.so (Linux, Android), libreality.dylib (macOS, iOS),
-# reality.dll (Windows) и статическая libreality.a / reality.lib
+# Linux/Android: libreality.so и libreality.a; macOS: libreality.dylib и .a;
+# Windows: reality.dll + reality.dll.lib и reality.lib; iOS: только libreality.a.
 ```
 
 Под Android — через [cargo-ndk](https://github.com/bbqsrc/cargo-ndk):
@@ -134,8 +148,9 @@ cargo ndk -t arm64-v8a -t armeabi-v7a -t x86_64 -o app/src/main/jniLibs \
 ```
 
 Под iOS — `IPHONEOS_DEPLOYMENT_TARGET=13.0 cargo build --release -p
-reality-ffi --target aarch64-apple-ios` (статическая `libreality.a` в
-XCFramework). Минимальная версия iOS нужна одна для Rust и для C-кода
+reality-ffi --target aarch64-apple-ios` (статическая `libreality.a`; workflow
+не упаковывает её в XCFramework). Минимальная версия iOS нужна одна для Rust и
+для C-кода
 aws-lc: без неё aws-lc собирается под iOS из SDK, а Rust линкует под
 10.0 — ошибка `___chkstk_darwin`.
 

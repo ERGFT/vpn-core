@@ -24,6 +24,7 @@
 | Страница | О чём |
 |---|---|
 | [LIBRARY.md](LIBRARY.md) | ядро как библиотека (C ABI): Android, iOS, десктоп |
+| [APPLICATION_ROUTING.md](APPLICATION_ROUTING.md) | привязка соединений к приложениям и сайтам, ограничения платформ |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | как устроено ядро изнутри |
 | [REPOSITORY.md](REPOSITORY.md) | где что лежит в репозитории |
 | [TESTING.md](TESTING.md) | как проверяется проект, сравнение с Xray-core, производительность |
