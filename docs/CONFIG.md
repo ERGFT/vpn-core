@@ -53,7 +53,7 @@ reality-client --config config.json
 
 | | sing-box | Xray-core |
 |---|---|---|
-| Входы | `socks`, `http`, `mixed`, `tun`; `direct` + правило `hijack-dns` — DNS-сервер | `socks`, `http`, `mixed`, `tun`; `dokodemo-door`, отданный маршрутизацией выходу `dns`, — DNS-сервер |
+| Входы | `socks`, `http`, `mixed`, `tun`; `direct` + правило `hijack-dns` — DNS-сервер | `socks`, `http`, `mixed`, `tun`; `dokodemo-door` (или `tunnel`, только в роли DNS-сервера), отданный маршрутизацией выходу `dns` |
 | Выходы | `vless`, `trojan`, TCP `socks` и `http` (HTTP CONNECT), `direct`, `block`, `dns`, `selector`, `urltest`; `fallback` — расширение vpn-core | `vless`, `trojan`, `freedom` (с `fragment`, `noises`), `blackhole`, `dns`; `balancers` с `leastPing`/`leastLoad` преобразуются в `urltest` (проверка — из `observatory`) |
 | Транспорт и TLS | `tls` (`reality`, `utls`, `alpn`, `certificate_path`), `transport`: `ws`, `grpc`, `httpupgrade`; расширение ядра `type: xhttp` | `streamSettings`: `raw`/`tcp`, `ws`, `grpc`, `httpupgrade`, `xhttp` (также старое имя `splithttp`); `tls`/`reality`; `mux` (Mux.Cool) |
 | Правила | `domain`, `domain_suffix`, `domain_keyword`, `domain_regex`, `geosite`, `geoip`, `ip_cidr`, `ip_is_private`, `port`, `port_range`, `network`, `inbound`, `rule_set`, `user_id`, `invert`, `protocol: dns`; действия `route`, `reject`, `sniff`, `hijack-dns` | `domain` (`geosite:`, `domain:`, `full:`, `regexp:`, `keyword:`, просто подстрока), `ip` (`geoip:`, адреса), `port`, `network`, `inboundTag`, `outboundTag`/`balancerTag`; `domainStrategy` `AsIs`/`IPIfNonMatch` |
