@@ -59,10 +59,10 @@ DNS is hijacked by an `inboundTag` rule → a `dns` outbound.
   resolve through the tunnel.
 - `auto_route` is held by one instance per computer (on Linux — per
   network namespace): the routing table, rules and WFP filters are shared.
-  A second instance with `auto_route` will not start ("auto_route уже
-  держит другой запущенный экземпляр" — already held by another running
-  instance), and `--tun-cleanup` touches nothing while one is running and
-  exits with an error.
+  A second instance with `auto_route` will not start. The current runtime
+  error is in Russian and means “auto_route is already held by another
+  running reality-client instance.” `--tun-cleanup` touches nothing while
+  one is running and exits with an error.
 - On Linux the client uses rule priorities 9000–9002 and routing table
   2022 and marks its entries with protocol 202 (`ip rule … proto 202`).
   It removes only marked entries — on exit, on the next start after
