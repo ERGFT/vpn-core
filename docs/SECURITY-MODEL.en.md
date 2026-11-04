@@ -7,7 +7,7 @@ What the client guarantees and what it protects against. How to report a vulnera
 ## Security
 
 What the client guarantees and what it protects against (details and
-history — `PLAN.md`, section "Аудит безопасности" / security audit):
+history — [PLAN.en.md, “Security audit (2026-09-26)”](../PLAN.en.md#security-audit-2026-09-26)):
 
 - **Who receives the UUID depends on `security`:**
   - `reality` — only a server that passed REALITY verification. VLESS data
