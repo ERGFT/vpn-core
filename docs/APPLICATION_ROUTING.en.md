@@ -42,7 +42,9 @@ callback runs synchronously on a core thread and may be called concurrently
 from multiple threads, so the callback and shared state must be thread-safe.
 Do not block a core thread, make network requests or unwind exceptions through
 the C ABI. For the C ABI, replacing or removing the callback waits for active
-calls; the previous callback and `user` can be released after it returns. The
+calls, so the callback must not call `rc_set_connection_owner` itself; the
+previous callback and `user` can be released after replacement or removal
+returns. The
 Rust API stores the callback in an `Arc`, and each active resolver call keeps
 its own clone: replacing the registered callback does not wait for calls that
 have already started. With the Rust API, remove the callback after all cores in
