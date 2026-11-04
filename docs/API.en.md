@@ -4,9 +4,6 @@
 
 The core's local API implements the Clash API subset listed below, plus its own extensions. It is not fully compatible with every Clash, sing-box, mihomo, or Xray endpoint and schema. Enable it in the [config file](CONFIG.en.md).
 
-The API implements a **subset of the Clash API** for the operations listed
-below. This does not promise full sing-box/mihomo API compatibility or
-compatibility with every dashboard and client that speaks the Clash API.
 [metacubexd](https://github.com/MetaCubeX/metacubexd) and
 [yacd](https://github.com/haishanh/yacd) were manually tested in a browser
 against the real core for groups, server selection, latency tests, connections,
@@ -51,7 +48,7 @@ to the corresponding sections of your configuration.
   `GLOBAL` group (all outbounds, `route.final` by default) is created
   automatically, as in Clash.
 
-Clash requests — the same paths and responses as sing-box:
+Below are example requests to the supported Clash-style API routes:
 
 ```sh
 T="Authorization: Bearer $(cat api-token.txt)"
@@ -67,7 +64,7 @@ curl -H "$T" "http://127.0.0.1:9090/dns/query?name=example.com&type=A"
 | Request | What it does |
 |---|---|
 | `GET /` | greeting without a token; browsers are redirected to `/ui/` when a dashboard is configured |
-| `GET /version` | API version information |
+| `GET /version` | core version and Clash client compatibility flags (`premium`, `meta`) |
 | `GET /configs`, `PATCH /configs` | inbound ports and the mode; change the mode (`mode`; ports and the rest — only in the config file) |
 | `PUT /configs` | reread the config file; with `payload` — apply a new config (without writing the file, as in Clash) |
 | `GET /proxies[/{name}]`, `PUT /proxies/{group}` | outbounds, groups (`now`, `all`), subscription servers; select a selector member |
@@ -76,7 +73,7 @@ curl -H "$T" "http://127.0.0.1:9090/dns/query?name=example.com&type=A"
 | `GET /connections`, `DELETE /connections[/{id}]` | open connections (outbound, chain, rule, traffic); close |
 | `GET /rules` | rules in order and `route.final` |
 | `GET /providers/proxies[/{name}]`, `PUT …/{name}`, `GET …/{name}/healthcheck` | subscriptions: servers, update, check |
-| `GET /providers/rules` | compatible response with no rule providers (`providers: {}`) |
+| `GET /providers/rules` | empty rule-provider map (`{"providers": {}}`) |
 | `GET /dns/query?name=&type=` | ask the client's DNS |
 
 Own requests (not in the Clash API): `GET /stats` (traffic per outbound),
