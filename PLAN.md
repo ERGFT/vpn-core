@@ -1,5 +1,8 @@
 # План: своё ядро VLESS(+REALITY) — с пометками по рискам
 
+English translation: [PLAN.en.md](PLAN.en.md). Historical status notes are
+not a substitute for the current implementation, tests, or release artifacts.
+
 ## 2026-10-17: UID и сайты в одном TUN (экспериментально)
 
 - Вместо подмены package_name доверяем только UID от приложения через callback
