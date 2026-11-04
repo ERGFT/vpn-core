@@ -2,7 +2,7 @@
 
 **Русский** | [English](CONFIG.en.md)
 
-Файл настроек в формате sing-box или Xray-core: входы, выходы, маршрутизация, группы серверов, подписки, `fragment` и `noises`. Отдельно: [DNS](DNS.md), [TUN](TUN.md), [API](API.md), [параметры ссылки](LINK.md).
+Файл настроек в формате sing-box или Xray-core: входы, выходы, маршрутизация, группы серверов, подписки, `fragment` и `noises`. Отдельно: [DNS](DNS.md), [TUN](TUN.md), [привязка к приложениям](APPLICATION_ROUTING.md), [API](API.md), [параметры ссылки](LINK.md).
 
 Для нескольких входов и выходов вместо ключей — файл настроек в формате
 **sing-box** или **Xray-core** (JSON, комментарии разрешены); формат
@@ -54,11 +54,15 @@ reality-client --config config.json
 | | sing-box | Xray-core |
 |---|---|---|
 | Входы | `socks`, `http`, `mixed`, `tun`; `direct` + правило `hijack-dns` — DNS-сервер | `socks`, `http`, `mixed`, `tun`; `dokodemo-door`, отданный маршрутизацией выходу `dns`, — DNS-сервер |
-| Выходы | `vless`, `trojan`, `direct`, `block`, `dns`, `selector`, `urltest` | `vless`, `trojan`, `freedom` (с `fragment`, `noises`), `blackhole`, `dns`; `balancers` с `leastPing`/`leastLoad` — группа `urltest` (проверка — из `observatory`) |
+| Выходы | `vless`, `trojan`, TCP `socks` и `http` (HTTP CONNECT), `direct`, `block`, `dns`, `selector`, `urltest`; `fallback` — расширение vpn-core | `vless`, `trojan`, `freedom` (с `fragment`, `noises`), `blackhole`, `dns`; `balancers` с `leastPing`/`leastLoad` преобразуются в `urltest` (проверка — из `observatory`) |
 | Транспорт и TLS | `tls` (`reality`, `utls`, `alpn`, `certificate_path`), `transport`: `ws`, `grpc`, `httpupgrade` | `streamSettings`: `raw`/`tcp`, `ws`, `grpc`, `httpupgrade`, `xhttp`; `tls`/`reality`; `mux` (Mux.Cool) |
-| Правила | `domain`, `domain_suffix`, `domain_keyword`, `domain_regex`, `geosite`, `geoip`, `ip_cidr`, `ip_is_private`, `port`, `port_range`, `network`, `inbound`, `rule_set`, `protocol: dns`; действия `route`, `reject`, `sniff`, `hijack-dns` | `domain` (`geosite:`, `domain:`, `full:`, `regexp:`, `keyword:`, просто подстрока), `ip` (`geoip:`, адреса), `port`, `network`, `inboundTag`, `outboundTag`/`balancerTag`; `domainStrategy` `AsIs`/`IPIfNonMatch` |
+| Правила | `domain`, `domain_suffix`, `domain_keyword`, `domain_regex`, `geosite`, `geoip`, `ip_cidr`, `ip_is_private`, `port`, `port_range`, `network`, `inbound`, `rule_set`, `user_id`, `invert`, `protocol: dns`; действия `route`, `reject`, `sniff`, `hijack-dns` | `domain` (`geosite:`, `domain:`, `full:`, `regexp:`, `keyword:`, просто подстрока), `ip` (`geoip:`, адреса), `port`, `network`, `inboundTag`, `outboundTag`/`balancerTag`; `domainStrategy` `AsIs`/`IPIfNonMatch` |
 | DNS | `servers` (с `type` и старые с `address`), `rules`, `final`, `strategy`, `fakeip` | `servers` (строки и объекты с `domains`; `+local` — напрямую), `queryStrategy`, `fakedns` |
 | API | `experimental.clash_api`: `external_controller`, `secret` | то же расширение `experimental.clash_api` |
+
+В Xray `leastLoad` не сохраняет исходную семантику: оба типа balancer
+преобразуются в одну latency-based группу `urltest`, а `strategy.settings`
+игнорируются. Не рассчитывайте на полную совместимость Xray routing.
 
 Правила проверяются по порядку, срабатывает первое подошедшее. В одном
 правиле условия «куда» (домены, `geosite`, адреса, `geoip`) соединяются

@@ -33,6 +33,11 @@ Minimal split-download example (the full JSON is the value of `extra=`):
 
 The path must match `path=` on the main channel. Only the documented nested
 fields are supported; `stream-one` and unknown fields are rejected.
+
+Additional parameters:
+
+| Parameter | Value |
+|---|---|
 | `serviceName` | gRPC service name |
 | `alpn` | comma-separated ALPN list; default `h2,http/1.1` (like Chrome), `http/1.1` for ws and httpupgrade, always `h2` for gRPC; for xhttp `alpn=http/1.1` turns on HTTP/1.1, `alpn=h3` — HTTP/3 over QUIC (`security=tls` only) |
 | `encryption` | `none` only |
