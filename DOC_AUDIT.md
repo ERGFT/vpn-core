@@ -30,6 +30,97 @@
 
 `python scripts/check_doc_links.py` не проверяет все эти группы: он проверяет отслеживаемые Markdown-файлы документации, пропускает `vendor/`, не доказывает актуальность текста и не исполняет примеры.
 
+## Инвентаризация Rust doc-комментариев
+
+На проверенном после PR #92 `main` SHA `49a34132a90c87c7b81dbe1b3c2988758e43bfc6` найдено 85 Rust-файлов в `core/src/`, `bin/` и `ffi/src/`; doc-комментарий `///`, `//!` или атрибут `#[doc]` присутствует в 84 файлах. Полный файловый перечень:
+
+- `bin/client/src/logfile.rs`
+- `bin/client/src/main.rs`
+- `bin/client/src/sysproxy.rs`
+- `bin/client/src/winservice.rs`
+- `bin/fpcheck/src/main.rs`
+- `core/src/app/access.rs`
+- `core/src/app/api.rs`
+- `core/src/app/clash.rs`
+- `core/src/app/config/link.rs`
+- `core/src/app/config/mod.rs`
+- `core/src/app/config/obj.rs`
+- `core/src/app/config/singbox.rs`
+- `core/src/app/config/xray.rs`
+- `core/src/app/dns/cache.rs`
+- `core/src/app/dns/fakeip.rs`
+- `core/src/app/dns/mod.rs`
+- `core/src/app/dns/upstream.rs`
+- `core/src/app/dns_in.rs`
+- `core/src/app/events.rs`
+- `core/src/app/geo.rs`
+- `core/src/app/group.rs`
+- `core/src/app/http_client.rs`
+- `core/src/app/http_connect_out.rs`
+- `core/src/app/http_in.rs`
+- `core/src/app/mod.rs`
+- `core/src/app/outbound.rs`
+- `core/src/app/proxy_in.rs`
+- `core/src/app/router.rs`
+- `core/src/app/rules.rs`
+- `core/src/app/ruleset.rs`
+- `core/src/app/sniff.rs`
+- `core/src/app/sniff_quic.rs`
+- `core/src/app/socks_out.rs`
+- `core/src/app/stats.rs`
+- `core/src/app/subscription.rs`
+- `core/src/app/trojan_out.rs`
+- `core/src/app/tun/mod.rs`
+- `core/src/app/tun/route.rs`
+- `core/src/app/tun/udp.rs`
+- `core/src/app/tun/wfp.rs`
+- `core/src/app/vless_out.rs`
+- `core/src/connection_owner.rs`
+- `core/src/error.rs`
+- `core/src/fingerprint/capture.rs`
+- `core/src/fingerprint/chrome_profile.rs`
+- `core/src/fingerprint/client_hello.rs`
+- `core/src/fingerprint/ja3.rs`
+- `core/src/fingerprint/ja4.rs`
+- `core/src/fingerprint/mod.rs`
+- `core/src/fingerprint/profiles.rs`
+- `core/src/fsutil.rs`
+- `core/src/hostname.rs`
+- `core/src/http1.rs`
+- `core/src/lib.rs`
+- `core/src/net_protect.rs`
+- `core/src/reality/auth.rs`
+- `core/src/reality/hook.rs`
+- `core/src/reality/mod.rs`
+- `core/src/reality/verifier.rs`
+- `core/src/redact.rs`
+- `core/src/relay.rs`
+- `core/src/socks5/mod.rs`
+- `core/src/socks5/udp.rs`
+- `core/src/transport/browser_headers.rs`
+- `core/src/transport/browser_mimic.rs`
+- `core/src/transport/fragment.rs`
+- `core/src/transport/grpc.rs`
+- `core/src/transport/h2pool.rs`
+- `core/src/transport/httpupgrade.rs`
+- `core/src/transport/mod.rs`
+- `core/src/transport/noise.rs`
+- `core/src/transport/quic.rs`
+- `core/src/transport/raw.rs`
+- `core/src/transport/tcp_tls.rs`
+- `core/src/transport/ws.rs`
+- `core/src/transport/xhttp.rs`
+- `core/src/trojan.rs`
+- `core/src/vless/mux.rs`
+- `core/src/vless/protocol.rs`
+- `core/src/vless/udp.rs`
+- `core/src/vless/uri.rs`
+- `core/src/vless/vision.rs`
+- `core/src/vless/xudp.rs`
+- `ffi/src/lib.rs`
+
+Это синтаксический поиск комментариев, а не аудит видимости API, полноты rustdoc или точности утверждений. Семантическую проверку выполнять по тематическим модулям и публичным элементам. Файлы без найденного doc-синтаксиса не означают отсутствие документации в Markdown.
+
 ## Проверка релизной истории после v0.1.0
 
 Сверено по GitHub Releases и merged PR на дату аудита (2026-11-04; время ниже UTC):
