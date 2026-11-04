@@ -27,6 +27,10 @@ class NativeStaticLinkArgs(unittest.TestCase):
     def test_accepts_empty_dependency_list(self):
         self.assertEqual(parse_native_static_libs("note: native-static-libs:\n"), [])
 
+    def test_strips_rustc_color_escape_from_final_argument(self):
+        output = "note: native-static-libs: -landroid -lc\x1b[0m\n"
+        self.assertEqual(parse_native_static_libs(output), ["-landroid", "-lc"])
+
 
 if __name__ == "__main__":
     unittest.main()

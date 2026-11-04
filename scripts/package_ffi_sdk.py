@@ -7,6 +7,7 @@ import argparse
 import hashlib
 import json
 import platform
+import re
 import shlex
 import shutil
 import subprocess
@@ -34,6 +35,7 @@ TARGETS = {
     "ios-arm64": "aarch64-apple-ios",
 }
 MINIMUM_OS = {"ios-arm64": "13.0"}
+ANSI_ESCAPE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 
 
 def library_kind(name: str) -> str:
@@ -54,6 +56,9 @@ def tool_version(command: str) -> str:
 
 def parse_native_static_libs(text: str) -> list[str]:
     """Extract rustc's machine-searchable native-static-libs diagnostic."""
+    # rustc colors the final diagnostic token on some targets, which otherwise
+    # leaves an escape sequence attached to a linker argument (for example -lc).
+    text = ANSI_ESCAPE.sub("", text)
     marker = "native-static-libs:"
     lines = [line.split(marker, 1)[1].strip() for line in text.splitlines() if marker in line]
     if len(lines) != 1:
