@@ -139,8 +139,10 @@ VPN: traffic goes through it only for programs that use this proxy.
   Windows paths in JSON (`"link_file": "C:\\Users\\me\\server.txt"`) or use
   forward slashes: `"C:/Users/me/server.txt"`. Check the file without
   starting anything: `--config config.json --check`.
-- **TUN — like a real VPN** (the `"type": "tun"` inbound, see [TUN.en.md](TUN.en.md)):
-  traffic from all programs goes through the client. Run as administrator
+- **TUN** (the `"type": "tun"` inbound, see [TUN.en.md](TUN.en.md)): system
+  routes send traffic into the virtual interface, but the core handles only
+  TCP and UDP. ICMP (including ping), broadcast, and multicast are not
+  supported. Run as administrator
   and put `wintun.dll` next to `reality-client.exe` (from
   [wintun.net](https://www.wintun.net/), the `amd64` folder).
   Without IPv6 on the computer, IPv6 is not routed into TUN (programs
@@ -153,11 +155,17 @@ VPN: traffic goes through it only for programs that use this proxy.
   on, site names may fail to resolve: Windows is still "identifying" the
   new interface; after a few seconds everything works through the tunnel.
 - Own DNS (the `dns` section and a DNS inbound in the config,
-  see [DNS.en.md](DNS.en.md)): if you set `127.0.0.1` in "Settings → Network & Internet →
-  Adapter properties → DNS", all programs' name lookups go through the
-  client — encrypted (DoH/DoT) and through the server, not in plain text over
-  Wi-Fi. Remember to set DNS back to "Automatic" when the client is not
-  running, otherwise names will stop resolving.
+  see [DNS.en.md](DNS.en.md)): configure the DNS inbound to listen on
+  `127.0.0.1:53`, then set `127.0.0.1` in "Settings → Network & Internet →
+  Adapter properties → DNS". Windows' standard DNS settings do not let you
+  set a custom port. Queries
+  that apps send to the system resolver then reach this inbound; apps with
+  their own DoH/DoT can bypass the system setting. Encryption and the route
+  for upstream DNS queries depend on the selected server and its `detour`:
+  use DoH/DoT/DoQ and a proxy outbound if you need to protect DNS from
+  observers on the local network and along the route. Setting `127.0.0.1`
+  alone does not enable encryption. Remember to set DNS back to "Automatic"
+  when the client is not running, otherwise names will stop resolving.
 - `--sniff` — if a program sends the proxy an IP address instead of a site
   name, recover the name from the first bytes of the connection (needed for
   domain rules).
