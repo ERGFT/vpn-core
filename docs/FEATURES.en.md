@@ -2,7 +2,7 @@
 
 [Русский](FEATURES.md) | **English**
 
-The full list: what `reality-client` can do and how each feature was tested. Short version — [README](../README.en.md#features-and-status).
+The full list of `vpn-core` engine and SDK/C ABI capabilities, plus the separate `reality-client` CLI, and how each capability was tested. Short version — [README](../README.en.md#features-and-status).
 
 ## Features
 
