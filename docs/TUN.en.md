@@ -1,12 +1,14 @@
-# TUN — all of the computer's traffic
+# TUN — the computer's TCP and UDP traffic
 
 [Русский](TUN.md) | **English**
 
-The `tun` inbound: the client works as a VPN for all programs. Set in the [config file](CONFIG.en.md), usually together with [DNS](DNS.en.md).
+The `tun` inbound routes IP traffic through a virtual interface; the core
+forwards TCP and UDP connections. Set it in the [config file](CONFIG.en.md),
+usually together with [DNS](DNS.en.md).
 
-The `tun` inbound creates a virtual network interface, and the traffic of all
-programs goes through the client, not only of those configured to use the
-proxy:
+The `tun` inbound creates a virtual network interface and, with `auto_route`,
+redirects system routes into it. Programs do not need separate proxy settings,
+but the core handles only TCP and UDP:
 
 ```json
 "inbounds": [
@@ -77,6 +79,8 @@ DNS is hijacked by an `inboundTag` rule → a `dns` outbound.
   (rule marks).
 - A system DNS server (`"type": "local"`) together with TUN is a config
   error: system DNS itself goes through TUN (a loop).
-- Limitations: ICMP (ping) does not pass through TUN; on Windows
-  `route_exclude_address` is IPv4 only, and with the local network
-  excluded Windows may query the router's DNS directly.
+- Limitations: the TUN stack drops ICMP (including ping), broadcast, and
+  multicast packets. The Windows kill switch separately lets NDP (ICMPv6)
+  pass over the physical interface through WFP. On Windows,
+  `route_exclude_address` supports IPv4 only; with the local network excluded,
+  Windows may query the router's DNS directly.
