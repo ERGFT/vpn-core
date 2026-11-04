@@ -54,6 +54,8 @@ def cmake_arguments(platform: str, sdk: Path, linkage: str) -> list[str]:
             "-DCMAKE_OSX_SYSROOT=iphoneos",
             "-DCMAKE_OSX_ARCHITECTURES=arm64",
             "-DCMAKE_OSX_DEPLOYMENT_TARGET=13.0",
+            "-DCMAKE_XCODE_ATTRIBUTE_PRODUCT_BUNDLE_IDENTIFIER=org.ergft.vpncore.sdkconsumer",
+            "-DCMAKE_XCODE_ATTRIBUTE_CODE_SIGNING_ALLOWED=NO",
         ))
     return arguments
 
