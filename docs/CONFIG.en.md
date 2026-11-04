@@ -183,7 +183,8 @@ strategy and `observatory` (check URL and interval).
 
 ## Anti-DPI: fragment and noises
 
-The following is a `direct` outbound object for the `outbounds` section, not a complete config file.
+The following is a `direct` outbound object for the `outbounds` section, not a
+complete config file.
 
 ```json
 { "type": "direct", "tag": "direct",
