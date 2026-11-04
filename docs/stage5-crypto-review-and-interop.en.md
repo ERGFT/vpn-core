@@ -90,8 +90,8 @@ finding, and a line in `CHANGELOG.md`.
 
 ## 2. Interop test against a live REALITY server
 
-> Done: `scripts/interop_xray.sh` (23 tests against real Xray-core,
-> including REALITY, Vision, ML-DSA-65) and `scripts/interop_go_reality.sh`
+> Done: `scripts/interop_xray.sh` (currently 26 tests against real Xray-core,
+> including REALITY, Vision, ML-DSA-65, Trojan, and XHTTP modes) and `scripts/interop_go_reality.sh`
 > (the `XTLS/REALITY` Go library) run in CI on every push. The steps below
 > are for checking against your own server.
 
