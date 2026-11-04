@@ -48,6 +48,21 @@ def library_kind(name: str) -> str:
     raise ValueError(f"unrecognized library artifact: {name}")
 
 
+def manifest_file_record(stage: Path, path: Path) -> dict[str, object]:
+    relative = path.relative_to(stage).as_posix()
+    data = path.read_bytes()
+    record: dict[str, object] = {
+        "path": relative,
+        "size_bytes": len(data),
+        "sha256": hashlib.sha256(data).hexdigest(),
+    }
+    # pkg-config metadata lives under lib/pkgconfig and is not a linkable
+    # library artifact; only direct children of lib/ receive a kind field.
+    if path.parent == stage / "lib":
+        record["kind"] = library_kind(path.name)
+    return record
+
+
 def tool_version(command: str) -> str:
     return subprocess.run(
         [command, "--version"], check=True, capture_output=True, text=True
@@ -137,16 +152,7 @@ def main() -> None:
         files = []
         for path in sorted(stage.rglob("*")):
             if path.is_file():
-                relative = path.relative_to(stage).as_posix()
-                data = path.read_bytes()
-                record = {
-                    "path": relative,
-                    "size_bytes": len(data),
-                    "sha256": hashlib.sha256(data).hexdigest(),
-                }
-                if relative.startswith("lib/"):
-                    record["kind"] = library_kind(path.name)
-                files.append(record)
+                files.append(manifest_file_record(stage, path))
 
         manifest = {
             "schema_version": 1,
