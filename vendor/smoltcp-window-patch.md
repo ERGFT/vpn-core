@@ -1,5 +1,7 @@
 # smoltcp 0.12.0 с бэкпортами TCP
 
+[Русский](smoltcp-window-patch.md) | [English](smoltcp-window-patch.en.md)
+
 Стек входа TUN — smoltcp через netstack-smoltcp 0.2.4, которому нужен
 smoltcp 0.12. В 0.12 сегмент TCP принимался, если помещался в весь буфер
 приёма, а не в объявленное собеседнику окно. Когда окно после
