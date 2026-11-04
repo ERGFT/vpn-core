@@ -117,8 +117,12 @@ else that can call C functions.
   `scripts/ffi_smoke.sh`).
 - No JNI/Kotlin or Swift wrappers are shipped; the host app calls the C ABI and
   provides its own platform bridge.
-- License — the same GPL-3.0-or-later: an app with the embedded core is
-  distributed under the GPL (including the app's source code).
+- The core is licensed under GPL-3.0-or-later. The FSF treats static or dynamic
+  linking of a GPL-covered program with other modules as creating a combined
+  work covered by the GPL. For a specific integration, architecture and the
+  way components communicate matter. Before distributing an app, review the
+  applicable requirements in the [GPLv3 text](https://www.gnu.org/licenses/gpl-3.0.html)
+  and the [FSF FAQ on linking](https://www.gnu.org/licenses/gpl-faq.en.html#GPLStaticVsDynamic).
 
 ## C ABI compatibility
 
