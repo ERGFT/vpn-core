@@ -39,8 +39,9 @@ In Xray: `"dns": {"servers": ["https://1.1.1.1/dns-query",
   `route.final`. DNS query visibility depends on the server type and outbound:
   unencrypted UDP/TCP queries are visible to on-path systems when the outbound
   does not encrypt them, such as `direct`; DoT/DoH/DoQ protect DNS contents
-  with TLS, and VLESS carries them inside its connection. The DNS server still
-  receives the name it resolves.
+  with TLS, and VLESS carries them inside its connection. VLESS encryption
+  depends on its security mode: REALITY/TLS encrypt the connection, while
+  `security=none` does not. The DNS server still receives the name it resolves.
 - Who uses the module: the DNS inbound (when its address is set in the host's
   ordinary system DNS setting, ordinary queries sent through that setting
   reach the inbound; apps with their own DNS client or DoH/DoT can bypass it);
