@@ -55,7 +55,7 @@ Rust **1.89 or newer** is required. On Windows, install [Visual Studio Build Too
 **Linux**
 
 ```sh
-sudo apt install build-essential git
+sudo apt install build-essential git curl
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 git clone https://github.com/ERGFT/vpn-core.git
 cd vpn-core
