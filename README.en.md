@@ -4,6 +4,11 @@
 
 Supports **REALITY** and **XTLS Vision**, and works with compatible Xray-core servers. This is an experimental project: check the status table and the full [feature matrix](docs/FEATURES.en.md) before relying on specific features or mobile integration.
 
+This repository provides an embeddable core library. It includes
+`reality-client` as a CLI client and usage example, but it is not a ready-made
+graphical VPN app. A host app supplies its own UI, OS permissions, and platform
+lifecycle integration; see the [C ABI guide](docs/LIBRARY.en.md).
+
 [Русский](README.md) | **English**
 
 [![CI](https://github.com/ERGFT/vpn-core/actions/workflows/ci.yml/badge.svg)](https://github.com/ERGFT/vpn-core/actions/workflows/ci.yml)
@@ -38,6 +43,10 @@ Supports **REALITY** and **XTLS Vision**, and works with compatible Xray-core se
 | iOS arm64 | No | Yes | Experimental integration; no ready-to-use client app |
 
 The release workflow builds SDK archives for these ABIs when a versioned tag is pushed. Each archive includes the library, `reality.h`, a minimal C example, and API documentation. Check [Releases](https://github.com/ERGFT/vpn-core/releases) for published packages; if none are available, build from source using the [library guide](docs/LIBRARY.en.md).
+
+The Releases page may contain prereleases for integration testing. Check the
+tag and **Pre-release** label before downloading: these packages are not stable
+releases and correspond to a specific commit, not the current `main` branch.
 
 ## Quick start
 
