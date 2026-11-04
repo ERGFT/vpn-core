@@ -11,6 +11,7 @@ Statuses:
 - **ready** — works and is covered by tests (where stated — against real Xray-core);
 - **experimental** — works, but has little testing or the result depends on the network;
 - **not supported** — not available and not planned soon;
+- **partially verified** — a specific part of the platform integration is checked, but not a full client or VPN scenario;
 - **not tested on this platform** — the code exists but has not been properly tested on this OS.
 
 | Feature | Status | How it was tested |
@@ -18,8 +19,8 @@ Statuses:
 | `security=none` / `tls` / `reality` | ready | all three tested against real Xray-core |
 | Transport `type=tcp` (a.k.a. `raw`) | ready | interop with Xray-core |
 | Transports `type=ws` (`path=`, `host=`), `type=grpc` (`serviceName=`, "gun" mode), `type=httpupgrade` | ready | tested against real Xray-core; request HTTP headers match Chrome (as Xray does) |
-| Transport `type=xhttp` (SplitHTTP): modes `packet-up`, `stream-up`, `stream-one`, HTTP/2, HTTP/1.1 and HTTP/3 (`alpn=h3`, QUIC), `extra=` | ready | all modes tested against Xray-core, including over REALITY (see below for what is not supported) |
-| XHTTP `downloadSettings`: separate download direction | ready | separate address/port and HTTP session are checked against Xray; HTTP/1.1, h2 and h3 are selected independently |
+| Transport `type=xhttp` (SplitHTTP): modes `packet-up`, `stream-up`, `stream-one`, HTTP/2, HTTP/1.1 and HTTP/3 (`alpn=h3`, QUIC), `extra=` | ready | HTTP/1.1 and h2 modes are tested against Xray-core with TLS and REALITY; all three HTTP/3 modes are tested with TLS. HTTP/3 requires `security=tls`; REALITY runs over TCP |
+| XHTTP `downloadSettings`: separate download direction | ready | separate address/port and HTTP sessions are tested against Xray; HTTP/3 and `downloadSettings` are tested together with TLS; HTTP/3 over REALITY is unsupported |
 | Dual-stack TCP dialer (Happy Eyeballs) | ready | IPv4/IPv6 candidates are interleaved; paused-clock tests cover fast fallback, immediate retry after failure, and attempt limits |
 | `flow=xtls-rprx-vision` (XTLS Vision) | ready | padding, inner TLS detection, direct copy in both directions; tested against Xray-core. As in Xray — only `type=tcp` with `tls`/`reality` |
 | REALITY: X25519MLKEM768, ShortId, `minClientVer`/`maxClientVer`, HMAC certificate | ready | the hybrid group is offered, but classical X25519 is also accepted, so post-quantum TLS is not guaranteed; no third-party crypto review |
@@ -46,9 +47,9 @@ Statuses:
 | Transport `kcp` | not supported | not supported (see below why); `quic`/`h2` have been removed from Xray-core itself — the error suggests `xhttp` |
 | Linux | ready | builds and tested |
 | Windows | ready | CI on real Windows: all tests, the `.exe` build, the service and TUN with real traffic; smoke test against Xray-core — under Wine ([`docs/WINDOWS.en.md`](WINDOWS.en.md)) |
-| Library mode (C ABI): Android, iOS, desktop — [LIBRARY.en.md](LIBRARY.en.md) | experimental | built in CI for Android and iOS; the C example runs on Linux; not tested on phones |
+| Library mode (C ABI): Android, iOS, desktop — [LIBRARY.en.md](LIBRARY.en.md) | experimental | the release workflow runs C/C++ SDK consumers on Linux, Windows, and macOS; Android/iOS consumers are cross-linked; no VPN app has been run on a device |
 | ICMP (ping) through TUN | not supported | — |
-| macOS | not tested on this platform | the library builds for iOS/macOS; the `reality-client` program has not been tested on macOS |
+| macOS | partially verified | the release workflow builds and runs the SDK C/C++ consumer on macOS arm64; `reality-client` and a full VPN/TUN scenario have not been tested on macOS |
 
 There has been no third-party crypto review of the REALITY implementation
 (details — `PLAN.md`, Stage 5).

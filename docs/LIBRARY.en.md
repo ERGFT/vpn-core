@@ -10,6 +10,11 @@ binaries are not interchangeable across operating systems or architectures. Each
 `include/reality.h`, libraries in `lib/`, a C example, and local copies of
 this guide and the API documentation.
 
+The published `v0.1.0` archive predates the manifest, CMake, and pkg-config
+metadata and does not contain them. The sections below describe the packaging
+produced by the current release workflow on `main`; it will be available in a
+subsequent release and is not retroactively added to `v0.1.0`.
+
 The versioned release workflow builds SDKs for Linux x86_64, Windows x86_64,
 macOS arm64, Android arm64-v8a, and iOS arm64. Each ZIP has a separate
 `.sha256` file. CI checks archive contents and checksums; it builds and runs
@@ -18,7 +23,8 @@ by cross-linking the example. These mobile checks do not replace an
 on-device run. Dependency license notices, SBOM, and build provenance are
 published as separate release files.
 
-Each SDK ZIP contains `manifest.json` with `schema_version: 1`. It records the
+SDK ZIPs produced by the current workflow on `main` contain `manifest.json`
+with `schema_version: 1`. It records the
 version/tag, platform and Rust target triple, `rustc`/Cargo versions, and build
 runner OS. Every file except the manifest itself has a relative path, size, and
 SHA-256; libraries also have a kind (`shared`, `static`, or `import`). The
@@ -43,8 +49,9 @@ ignore unknown fields. Incompatible schema changes require incrementing
 
 ## Connecting a C/C++ project
 
-Every archive contains a relocatable CMake package in `cmake/vpn-core/`. Library
-and header paths are computed relative to the config file, so the SDK can be
+Every archive produced by the current workflow contains a relocatable CMake
+package in `cmake/vpn-core/`. Library and header paths are computed relative to
+the config file, so the SDK can be
 moved or extracted into a directory containing spaces. Minimum CMake version:
 3.15.
 
@@ -55,7 +62,7 @@ find_package(vpn-core CONFIG REQUIRED
     NO_CMAKE_FIND_ROOT_PATH)
 
 add_executable(my_app main.c)
-target_link_libraries(my_app PRIVATE vpn-core::shared)
+target_link_libraries(my_app PRIVATE vpn-core::vpn-core)
 ```
 
 Pass the extracted archive path when configuring your project:
@@ -71,14 +78,19 @@ cmake --build build --config Release
 `vpn-core::shared` is available where the archive includes a dynamic library;
 `vpn-core::static` selects the static library. On Windows, the shared target
 uses the DLL and its import library. The generic `vpn-core::vpn-core` target
-chooses shared when available and otherwise static. The static target carries
-native dependencies from the same `rustc --print=native-static-libs` output
-recorded in the manifest. For Android and iOS, pass the SDK path to a project
-configured with the matching NDK/iOS CMake toolchain; cross-link checks do not
+chooses shared when available and otherwise static. Current packages for Linux,
+Windows, macOS, and Android contain both shared and static libraries; iOS
+contains only a static library. Thus `vpn-core::shared` is unavailable on iOS,
+and the generic target selects static there. The static target carries native
+dependencies from the same `rustc --print=native-static-libs` output recorded
+in the manifest. The iOS ZIP contains a plain `libreality.a`, not an XCFramework.
+For Android and iOS, pass the SDK path to a project configured with the
+matching NDK/iOS CMake toolchain; cross-link checks do not
 prove on-device execution. `NO_CMAKE_FIND_ROOT_PATH` keeps Android's NDK toolchain
 from redirecting this explicit SDK lookup into the Android sysroot.
 
-Linux and macOS archives also include `lib/pkgconfig/vpn-core.pc`:
+Linux and macOS archives produced by the current workflow also include
+`lib/pkgconfig/vpn-core.pc`:
 
 ```sh
 export PKG_CONFIG_PATH="$VPN_CORE_SDK/lib/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
@@ -103,6 +115,8 @@ else that can call C functions.
 - Code: [`ffi/src/lib.rs`](../ffi/src/lib.rs), a C example —
   [`ffi/examples/smoke.c`](../ffi/examples/smoke.c) (built and run by
   `scripts/ffi_smoke.sh`).
+- No JNI/Kotlin or Swift wrappers are shipped; the host app calls the C ABI and
+  provides its own platform bridge.
 - License — the same GPL-3.0-or-later: an app with the embedded core is
   distributed under the GPL (including the app's source code).
 
@@ -125,8 +139,8 @@ in the PR.
 
 ```sh
 cargo build --release -p reality-ffi
-# target/release/libreality.so (Linux, Android), libreality.dylib (macOS, iOS),
-# reality.dll (Windows) and the static libreality.a / reality.lib
+# Linux/Android: libreality.so and libreality.a; macOS: libreality.dylib and .a;
+# Windows: reality.dll + reality.dll.lib and reality.lib; iOS: libreality.a only.
 ```
 
 For Android — with [cargo-ndk](https://github.com/bbqsrc/cargo-ndk):
@@ -137,8 +151,9 @@ cargo ndk -t arm64-v8a -t armeabi-v7a -t x86_64 -o app/src/main/jniLibs \
 ```
 
 For iOS — `IPHONEOS_DEPLOYMENT_TARGET=13.0 cargo build --release -p
-reality-ffi --target aarch64-apple-ios` (the static `libreality.a` inside an
-XCFramework). Rust and aws-lc's C code need the same minimum iOS version:
+reality-ffi --target aarch64-apple-ios` (a static `libreality.a`; the workflow
+does not package it as an XCFramework). Rust and aws-lc's C code need the same
+minimum iOS version:
 without it aws-lc is built for the SDK's iOS while Rust links for 10.0 —
 a `___chkstk_darwin` error.
 

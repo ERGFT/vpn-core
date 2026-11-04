@@ -24,6 +24,7 @@ and first run. This is the detailed reference.
 | Page | About |
 |---|---|
 | [LIBRARY.en.md](LIBRARY.en.md) | the core as a library (C ABI): Android, iOS, desktop |
+| [APPLICATION_ROUTING.en.md](APPLICATION_ROUTING.en.md) | binding connections to apps and sites; platform limitations |
 | [ARCHITECTURE.en.md](ARCHITECTURE.en.md) | how the core works inside |
 | [REPOSITORY.en.md](REPOSITORY.en.md) | where things are in the repository |
 | [TESTING.en.md](TESTING.en.md) | how the project is tested, comparison with Xray-core, performance |
