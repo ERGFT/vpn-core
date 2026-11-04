@@ -225,8 +225,8 @@ Key types:
     names for TUN).
 - `build_inbounds` — inbounds: addresses, credentials, `allow_ip`, TUN
   settings. An inbound open to the network with a password shorter than 12
-  characters is an error.
-- API: the token must be at least 16 characters; listening on anything but
+  UTF-8 bytes is an error.
+- API: the token must be at least 16 UTF-8 bytes; listening on anything but
   loopback requires `allow_ip`.
 
 Nothing is opened or started yet; `--check` stops here.
@@ -1271,7 +1271,7 @@ PLAN.md):
 
 | Threat | Measure |
 |---|---|
-| Proxy open to the network | `allow_ip`; password ≥ 12 characters; block after 5 wrong attempts (60 s → an hour); `max_conns`; 10 s greeting timeout; UDP association only for its owner |
+| Proxy open to the network | `allow_ip`; password ≥ 12 UTF-8 bytes; block after 5 wrong attempts (60 s → an hour); `max_conns`; 10 s greeting timeout; UDP association only for its owner |
 | `direct` as a path to the computer's services | loopback and "any" addresses forbidden for network clients, checked on the actual address |
 | Unencrypted server | `security=none` only with `allow_insecure`; the same for subscriptions |
 | UDP DNS spoofing | ID, question and server address checks; DoH/DoT/DoQ with certificate verification |
