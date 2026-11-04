@@ -45,6 +45,10 @@ class MetadataGeneration(unittest.TestCase):
             self.assertIn("IMPORTED_LOCATION \"${_VPN_CORE_PREFIX}/lib/reality.dll\"", config)
             self.assertIn("reality.dll.lib", config)
             self.assertIn("reality.lib", config)
+            self.assertIn("INTERFACE_LINK_OPTIONS", config)
+            self.assertIn("/DEFAULTLIB:ws2_32", config)
+            self.assertIn("/defaultlib:msvcrt", config)
+            self.assertNotIn("_VPN_CORE_STATIC_LINK_LIBRARIES\n  [[/DEFAULTLIB:", config)
             self.assertNotIn("pkgconfig", config)
             self.assertFalse((stage / "lib/pkgconfig/vpn-core.pc").exists())
             self.assertIn('PACKAGE_VERSION "0.0.0"',

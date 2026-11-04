@@ -56,10 +56,19 @@ def _cmake_target(name: str, library: str, *, library_type: str,
     lines.append("  set_target_properties(vpn-core::" + name + " PROPERTIES\n  " +
                  "\n  ".join(properties) + "\n)")
     if static_link:
-        rendered = "\n".join(f"  {_cmake_quote(argument)}" for argument in static_link)
-        lines.extend((f"  set(_VPN_CORE_STATIC_LINK_ARGS\n{rendered}\n  )",
-                      "  set_property(TARGET vpn-core::static PROPERTY INTERFACE_LINK_LIBRARIES "
-                      '"${_VPN_CORE_STATIC_LINK_ARGS}")'))
+        link_options = [argument for argument in static_link
+                        if argument.upper().startswith("/DEFAULTLIB:")]
+        link_libraries = [argument for argument in static_link if argument not in link_options]
+        if link_libraries:
+            rendered = "\n".join(f"  {_cmake_quote(argument)}" for argument in link_libraries)
+            lines.extend((f"  set(_VPN_CORE_STATIC_LINK_LIBRARIES\n{rendered}\n  )",
+                          "  set_property(TARGET vpn-core::static PROPERTY INTERFACE_LINK_LIBRARIES "
+                          '"${_VPN_CORE_STATIC_LINK_LIBRARIES}")'))
+        if link_options:
+            rendered = "\n".join(f"  {_cmake_quote(argument)}" for argument in link_options)
+            lines.extend((f"  set(_VPN_CORE_STATIC_LINK_OPTIONS\n{rendered}\n  )",
+                          "  set_property(TARGET vpn-core::static PROPERTY INTERFACE_LINK_OPTIONS "
+                          '"${_VPN_CORE_STATIC_LINK_OPTIONS}")'))
     lines.append("endif()")
     return "\n".join(lines)
 
