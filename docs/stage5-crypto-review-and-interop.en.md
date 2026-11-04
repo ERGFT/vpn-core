@@ -83,7 +83,7 @@ all its findings are fixed or knowingly accepted. The report contains:
 - **who reviewed** and when;
 - **findings** — a table: number, file and line, description, severity,
   status (fixed — by which commit; accepted — why);
-- answers to the four questions above.
+- answers to all seven questions above.
 
 After the fixes — a note in the report on which commit closed each
 finding, and a line in `CHANGELOG.md`.
