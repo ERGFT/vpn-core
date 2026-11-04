@@ -34,7 +34,9 @@ class MetadataGeneration(unittest.TestCase):
             (stage / "lib").mkdir(parents=True)
             for name in ("reality.dll", "reality.dll.lib", "reality.lib"):
                 (stage / "lib" / name).touch()
-            generate_metadata(stage, "windows-x86_64", "68/merge", ["/DEFAULTLIB:ws2_32"])
+            generate_metadata(stage, "windows-x86_64", "68/merge", [
+                "/DEFAULTLIB:ws2_32", "/defaultlib:msvcrt",
+            ])
 
             config = (stage / "cmake/vpn-core/vpn-coreConfig.cmake").read_text()
             self.assertIn("IMPORTED_IMPLIB", config)
@@ -67,6 +69,8 @@ class MetadataGeneration(unittest.TestCase):
     def test_preserves_plain_windows_system_library_names(self):
         self.assertEqual(validate_link_arguments(["dnsapi.lib", "bcrypt.lib"]),
                          ["dnsapi.lib", "bcrypt.lib"])
+        self.assertEqual(validate_link_arguments(["/DEFAULTLIB:ws2_32", "/defaultlib:msvcrt"]),
+                         ["/DEFAULTLIB:ws2_32", "/defaultlib:msvcrt"])
 
 
 if __name__ == "__main__":
