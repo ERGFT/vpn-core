@@ -64,6 +64,12 @@ scripts/ci.sh           # все дополнительные проверки, 
   ограничения или инструкции в `README.md` или в `docs/*.md` — в том же
   pull request поправьте `*.en.md` (и наоборот) и перед отправкой сверьте,
   что в обеих версиях одинаковые разделы, команды, статусы и ссылки.
+- **Документация следует VCTWS 1.0.** Перед правкой выберите основной
+  документ-источник, проверьте [стандарт](docs/STYLE_GUIDE.md) и
+  [глоссарий](docs/GLOSSARY.md). В PR укажите источники фактов и выполненные
+  проверки. Для документационных изменений запустите `git diff --check` и
+  `python scripts/check_doc_links.py`; отдельно сверьте смысл RU/EN, команды,
+  конфигурационные примеры и ограничения.
 
 ## Уязвимости
 
@@ -135,6 +141,12 @@ same script: the Linux and Windows jobs cover different parts of the project.
   `*.en.md` file in the same pull request (and vice versa), and before
   sending check that both versions have the same sections, commands,
   statuses and links.
+- **Documentation follows VCTWS 1.0.** Before editing, identify the primary
+  source document and check the [standard](docs/STYLE_GUIDE.en.md) and
+  [glossary](docs/GLOSSARY.en.md). In the PR, list fact sources and completed
+  checks. For documentation changes, run `git diff --check` and
+  `python scripts/check_doc_links.py`; also compare RU/EN meaning, commands,
+  configuration examples, and limitations.
 
 ## Vulnerabilities
 

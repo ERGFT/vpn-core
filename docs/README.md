@@ -32,5 +32,12 @@
 | [stage5-crypto-review-and-interop.md](stage5-crypto-review-and-interop.md) | чек-лист для стороннего крипто-ревью REALITY |
 | [RELEASING.md](RELEASING.md) | предварительная сборка, проверка артефактов и публикация тега |
 
+## Правила документации
+
+| Страница | О чём |
+|---|---|
+| [STYLE_GUIDE.md](STYLE_GUIDE.md) | редакционные правила VCTWS 1.0 для технической документации |
+| [GLOSSARY.md](GLOSSARY.md) | согласованные русские и английские технические термины |
+
 История решений по этапам — [PLAN.md](../PLAN.md), что изменилось —
 [CHANGELOG.md](../CHANGELOG.md).
