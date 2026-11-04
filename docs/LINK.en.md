@@ -44,4 +44,7 @@ Additional parameters:
 | `alpn` | comma-separated ALPN list; default `h2,http/1.1` (like Chrome), `http/1.1` for ws and httpupgrade, always `h2` for gRPC; for xhttp `alpn=http/1.1` turns on HTTP/1.1, `alpn=h3` — HTTP/3 over QUIC (`security=tls` only) |
 | `encryption` | `none` only |
 | `headerType` | `none` only |
-| `fp` | `chrome` (default), `firefox`, `safari`, `ios` (= Safari 26), `edge`, `android` (= Chrome), `random` (one browser per run), `randomized` (per outbound); anything else (`360`, `qq`) — Chrome and a warning |
+| `fp` | `chrome` (default; `none` is an alias), `firefox`, `safari`, `ios` (= Safari 26), `edge`, `android` (= Chrome), `random` (one browser per run), `randomized`/`randomizednoalpn` (random profile per outbound); anything else (`360`, `qq`) — Chrome and a warning |
+
+`randomizednoalpn` is an accepted compatibility alias for `randomized`. It
+does not disable ALPN; use the separate `alpn` parameter to configure ALPN.

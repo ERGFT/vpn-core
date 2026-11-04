@@ -45,4 +45,7 @@
 | `alpn` | список ALPN через запятую; по умолчанию `h2,http/1.1` (как Chrome), для ws и httpupgrade — `http/1.1`, для gRPC — всегда `h2`; для xhttp `alpn=http/1.1` включает HTTP/1.1, `alpn=h3` — HTTP/3 поверх QUIC (только `security=tls`) |
 | `encryption` | только `none` |
 | `headerType` | только `none` |
-| `fp` | `chrome` (по умолчанию), `firefox`, `safari`, `ios` (= Safari 26), `edge`, `android` (= Chrome), `random` (один браузер на запуск), `randomized` (на каждый выход); прочее (`360`, `qq`) — Chrome и предупреждение |
+| `fp` | `chrome` (по умолчанию; также `none`), `firefox`, `safari`, `ios` (= Safari 26), `edge`, `android` (= Chrome), `random` (один браузер на запуск), `randomized`/`randomizednoalpn` (случайный профиль на выход); прочее (`360`, `qq`) — Chrome и предупреждение |
+
+`randomizednoalpn` — принимаемый совместимый псевдоним `randomized`. Он не
+отключает ALPN; для ALPN используйте отдельный параметр `alpn`.
