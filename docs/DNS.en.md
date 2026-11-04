@@ -50,7 +50,8 @@ In Xray: `"dns": {"servers": ["https://1.1.1.1/dns-query",
   through the system resolver);
   `route.domain_strategy` `ip_if_non_match` (IP rules for names).
 - Cache: by answer TTL (at most an hour; negative — at most a minute), up to
-  4096 answers (`cache_capacity`; `disable_cache` — no cache).
+  4096 entries keyed by name and query type (`cache_capacity`;
+  `disable_cache` — no cache).
 - Fake-IP (a `"type": "fakeip"` server): the program immediately gets an
   address from `198.18.0.0/15` (and `fc00::/18`), and when connecting to it
   through the proxy it reaches the real site — the server resolves the name.
