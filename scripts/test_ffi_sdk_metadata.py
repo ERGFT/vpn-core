@@ -39,7 +39,10 @@ class MetadataGeneration(unittest.TestCase):
             ])
 
             config = (stage / "cmake/vpn-core/vpn-coreConfig.cmake").read_text()
+            self.assertIn("add_library(vpn-core::shared SHARED IMPORTED GLOBAL)", config)
+            self.assertIn("add_library(vpn-core::static STATIC IMPORTED GLOBAL)", config)
             self.assertIn("IMPORTED_IMPLIB", config)
+            self.assertIn("IMPORTED_LOCATION \"${_VPN_CORE_PREFIX}/lib/reality.dll\"", config)
             self.assertIn("reality.dll.lib", config)
             self.assertIn("reality.lib", config)
             self.assertNotIn("pkgconfig", config)
