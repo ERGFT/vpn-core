@@ -23,7 +23,8 @@ reality-client --server-file server.txt --listen 127.0.0.1:1080
   serves both SOCKS5 and HTTP proxy (detected by the first byte).
 - `--auth user:password` — require a SOCKS5 username and password. The client
   refuses to listen on anything other than `127.0.0.1` without a password.
-  Without the command line: `--auth-file file` or `REALITY_SOCKS_AUTH`.
+  Without the command line: `--auth-file file` or `REALITY_SOCKS_AUTH`. When
+  listening on the network, the password must be at least 12 UTF-8 bytes.
 - `--allow-ip addresses` — who on the network may use the proxy (addresses
   or subnets, comma-separated: `192.168.1.23,192.168.1.40`). This computer is
   always allowed. After 5 wrong passwords in a row an address is blocked for

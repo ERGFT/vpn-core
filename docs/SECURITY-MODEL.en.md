@@ -62,7 +62,7 @@ What they **can** do, and how it is mitigated:
 | What | Protection |
 |---|---|
 | A link with `security=none`: the UUID and traffic are visible to everyone on the network, anyone can use the server | the client does not start such a link without `--allow-insecure` |
-| The proxy is open to the network (`--listen 0.0.0.0`): password guessing | password of at least 12 characters, address blocked after 5 failures, `--allow-ip` |
+| The proxy is open to the network (`--listen 0.0.0.0`): password guessing | password of at least 12 UTF-8 bytes, address blocked after 5 failures, `--allow-ip` |
 | The proxy is open to the network: SOCKS5 and HTTP proxy are **not encrypted** — the password, site addresses and data between the phone and the computer are visible on shared Wi-Fi | that is how these protocols work, the client cannot fix it; it warns at startup. Open the proxy to the network only at home, for your own devices, with `--allow-ip` |
 | The proxy is open to the network and there is a rule with the `direct` outbound: a device on the network acts "on behalf of" this computer — including on networks it cannot reach itself (work VPN, Docker, WSL) | `direct` does not let network clients reach the computer's own services (`127.0.0.1`, `localhost`); otherwise — let only your own devices use the proxy (password, `--allow-ip`) and do not route subnets they do not need to `direct` |
 | Sees the very fact of a connection to the server's IP, and the volume and timing of traffic | no VPN hides this; REALITY only disguises it as a visit to an ordinary site |

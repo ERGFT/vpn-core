@@ -8,7 +8,7 @@
 //! "experimental": {
 //!   "clash_api": {
 //!     "external_controller": "127.0.0.1:9090",
-//!     "secret_file": "api-token.txt",            // или "secret": "…" (не короче 16 символов)
+//!     "secret_file": "api-token.txt",            // или "secret": "…" (не короче 16 байт в UTF-8)
 //!     "external_ui": "ui",                       // папка с панелью → http://127.0.0.1:9090/ui/
 //!     "access_control_allow_origin": ["https://yacd.haishan.me"],
 //!     "default_mode": "rule"
