@@ -51,10 +51,11 @@ program on top of it.
 
 Rules that run through the whole code base:
 
-- **Compatibility is checked against real Xray-core.** Protocols,
-  transports and fingerprints are ports of Xray's logic, with links to its
-  sources in the comments. Every feature is tested against a live Xray
-  (`core/tests/interop_xray.rs`, `scripts/smoke_xray.sh`).
+- **Compatibility is checked against real Xray-core where claimed.**
+  Protocols, transports, and fingerprints port selected parts of Xray's logic;
+  interop tests cover selected scenarios, while other checks use unit,
+  loopback, platform, and SDK consumer tests. [FEATURES.en.md](FEATURES.en.md)
+  lists the check for each capability.
 - **An error instead of silence.** An unknown config key, an unsupported
   link parameter, a rule that can never match — each is an error at
   startup with the path to the offending place, not a silently dropped
@@ -91,24 +92,32 @@ Inside `core/src/`:
 
 | Module | What it does |
 |---|---|
-| `app/` | the application: inbounds → router → outbounds (including SOCKS5 TCP CONNECT), config, DNS, TUN, groups, subscriptions, API |
+| `app/` | the application: inbounds → router → outbounds (including SOCKS5 and HTTP CONNECT), config, DNS, TUN, groups, subscriptions, API |
+| `connection_owner.rs` | trusted connection-owner metadata supplied by the host app |
 | `vless/` | `vless://` links (`uri.rs`), VLESS headers (`protocol.rs`), Vision, UDP, XUDP, Mux.Cool |
 | `trojan.rs` | Trojan header and UDP packets |
-| `transport/` | TCP/TLS/REALITY (`tcp_tls.rs`, `raw.rs`), ws, grpc, httpupgrade, xhttp, shared HTTP/2 pool, QUIC, fragment, noises, browser headers |
+| `transport/` | TCP/TLS/REALITY, ws, grpc, httpupgrade, xhttp, shared HTTP/2 pool, QUIC, fragment/noises, browser imitation and headers |
 | `reality/` | REALITY: keys and SessionId (`auth.rs`), rustls hook (`hook.rs`), certificate verification (`verifier.rs`) |
-| `fingerprint/` | browser ClientHellos (Chrome 133, Firefox 148, Safari 26.3), ClientHello parsing, JA3/JA4 |
-| `socks5/` | SOCKS5 inbound: greeting, username/password, UDP headers; `app/socks_out.rs` — outbound TCP CONNECT |
+| `fingerprint/` | browser ClientHello profiles and parsing, capture, JA3/JA4 |
+| `socks5/` | SOCKS5 framing, greeting, username/password, and UDP headers |
 | `relay.rs` | bidirectional copy with idle timeouts |
 | `net_protect.rs` | marking the client's own sockets (bypassing TUN) |
 | `http1.rs` | HTTP/1.1 response parsing (xhttp, group checks, subscriptions) |
-| `error.rs` | the core error type |
+| `error.rs`, `redact.rs`, `fsutil.rs`, `hostname.rs` | errors and shared helpers for files, host names, and secrets |
 
-Also:
+Other parts of the repository:
 
-- `examples/` — example configs (sing-box, Xray, systemd);
-- `scripts/` — checks and interop (see [section 21](#21-tests-and-verification));
-- `docs/` — documentation;
-- `.github/` — CI and templates.
+- `ffi/` — C header, Rust C ABI, minimal C samples, and ABI baseline;
+- `scripts/` — CI, SDK packaging/consumer checks, interop, smoke tests,
+  licensing, builds, and performance comparisons (see
+  [section 21](#21-tests-and-verification));
+- `examples/` — sing-box/Xray configs and a systemd unit;
+- `fuzz/` — fuzz targets for protocol parsers and subscriptions;
+- `interop/go-reality-server/` — Go REALITY test server;
+- `vendor/` — pinned rustls patch and explanations of project-owned patches;
+- `docs/` — technical guides indexed in the [bilingual catalog](README.en.md);
+- `.github/workflows/` — CI, release, fuzz, and benchmark workflows; other
+  `.github/` files contain repository templates and settings.
 
 ## 3. Overall picture
 

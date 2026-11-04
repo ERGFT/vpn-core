@@ -2,48 +2,62 @@
 
 **Русский** | [English](REPOSITORY.en.md)
 
-Где что лежит в репозитории. Как устроено ядро изнутри — [ARCHITECTURE.md](ARCHITECTURE.md).
+Где искать код, проверки и материалы для встраивания. Архитектура описана в
+[ARCHITECTURE.md](ARCHITECTURE.md), полный каталог руководств — в
+[README.md](README.md).
 
-```
-bin/client/            reality-client: CLI (ключи или --config), sysproxy.rs,
-                       winservice.rs (служба и автозапуск Windows)
-core/src/
-  app/                 приложение: входы -> маршрутизатор -> выходы;
-                       config/ (sing-box, Xray → одна модель), proxy_in.rs + http_in.rs (входы
-                       socks/http/mixed), sniff.rs + sniff_quic.rs, router.rs + rules.rs +
-                       geo.rs (правила, geosite/geoip), ruleset.rs
-                       (наборы sing-box .srs/.json), outbound.rs
-                       (direct, block, dns), vless_out.rs, access.rs,
-                       dns/ (upstream.rs: UDP/TCP/DoT/DoH/DoQ, cache.rs,
-                       fakeip.rs), dns_in.rs (вход DNS), tun/ (вход TUN
-                       на smoltcp + tun-rs, udp.rs: потоки UDP,
-                       route.rs: auto_route)
-  net_protect.rs       метка исходящих сокетов (мимо TUN)
-  vless/               разбор vless:// (uri.rs), протокол VLESS (protocol.rs),
-                       XTLS Vision (vision.rs), UDP-пакеты (udp.rs), XUDP (xudp.rs)
-  transport/           tcp_tls.rs (TCP, TLS, REALITY), raw.rs (сокет с выдачей
-                       по одному TLS-рекорду для Vision), ws.rs, grpc.rs,
-                       httpupgrade.rs, xhttp.rs, quic.rs (quinn: DoQ, HTTP/3),
-                       browser_headers.rs (заголовки Chrome)
-  reality/             REALITY: ключи и SessionId (auth.rs), хук в ClientHello
-                       (hook.rs), проверка сертификата: HMAC и ML-DSA-65 (verifier.rs)
-  fingerprint/         ClientHello как у Chrome (chrome_profile.rs), разбор, JA3/JA4
-  socks5/              протокол SOCKS5: приветствие, логин/пароль, UDP-заголовки
-  relay.rs             двусторонний релей, один буфер на направление
-core/tests/            интеграционные тесты (loopback) + interop_xray.rs, interop_go_reality.rs
-vendor/rustls-reality-patch/
-                       rustls 0.23.46 с патчем: REALITY, GREASE, профиль ClientHello
-                       Chrome (подключён через [patch.crates-io])
-interop/go-reality-server/
-                       тестовый REALITY-сервер на библиотеке XTLS/REALITY
-bin/fpcheck/           снятие JA3/JA4
-ffi/                   ядро как библиотека: C ABI (reality.h), пример на C
-bench/                 бенчмарки (criterion) и замер памяти (memwatch, Linux)
-scripts/               ci, интероп, smoke, сборка Xray, сверка отпечатка,
-                       сборка под Windows, инструкции для Этапов 2 и 8
-docs/                  ARCHITECTURE.md (как устроено ядро), LIBRARY.md
-                       (ядро в приложении), WINDOWS.md,
-                       чек-лист крипто-ревью (Этап 5)
-examples/              примеры настроек: sing-box.json, xray.json, systemd
-PLAN.md                план по этапам, история решений, открытые риски
-```
+## Основные компоненты
+
+| Путь | Назначение |
+|---|---|
+| `core/` | Rust-библиотека `reality-core`: входы, маршрутизация, DNS, TUN, прокси-выходы, VLESS/Trojan, транспорты и REALITY |
+| `bin/client/` | `reality-client`: CLI, запуск ядра, службы Windows и системный прокси |
+| `bin/fpcheck/` | инструмент для захвата и анализа JA3/JA4 ClientHello |
+| `ffi/` | `reality-ffi`: C ABI, `reality.h`, примеры и эталон ABI для интеграции приложений |
+| `bench/` | Criterion-замеры и утилиты `memwatch`/`warmup_probe` |
+| `fuzz/` | fuzz targets для разборщиков, сетевых заголовков и подписок |
+| `interop/go-reality-server/` | Go-сервер REALITY для межоперационных проверок |
+| `vendor/rustls-reality-patch/` | патченная копия rustls; область изменений и перенос патчей описаны в [RUSTLS_PATCH.md](RUSTLS_PATCH.md) |
+| `vendor/smoltcp-window-patch.md`, `vendor/smoltcp-window-patch/` | пояснения проекта к патчу окна smoltcp; исходники и лицензии upstream сохраняются отдельно |
+
+## Внутри `core/src/`
+
+| Каталог/файл | Назначение |
+|---|---|
+| `app/` | жизненный цикл ядра, конфигурация, входы SOCKS5/HTTP/mixed/DNS/TUN, правила и маршрутизатор, DNS, группы, подписки и локальное API |
+| `app/socks_out.rs`, `app/http_connect_out.rs` | TCP-выходы SOCKS5 и HTTP CONNECT, включая `detour`-цепочки |
+| `app/vless_out.rs`, `app/trojan_out.rs`, `app/outbound.rs` | создание прокси-выходов и общие интерфейсы TCP/UDP |
+| `app/tun/` | TUN-потоки, маршруты, UDP и платформенная реализация WFP |
+| `connection_owner.rs` | доверенные метаданные владельца соединения от приложения-хоста |
+| `vless/`, `trojan.rs` | форматы ссылок и протоколов VLESS/Trojan, Vision, UDP, XUDP и Mux.Cool |
+| `transport/` | TCP/TLS/REALITY, WebSocket, gRPC, HTTPUpgrade, XHTTP, QUIC/DoQ/HTTP/3, пулы HTTP/2, фрагментация и имитация браузера |
+| `reality/`, `fingerprint/` | рукопожатие и проверка REALITY; профили ClientHello, захват, JA3/JA4 |
+| `socks5/`, `relay.rs`, `http1.rs` | протокольный framing, двусторонний relay и разбор ответов HTTP/1.1 |
+| `net_protect.rs`, `hostname.rs`, `fsutil.rs`, `redact.rs` | обход TUN для собственных сокетов и общие сетевые/файловые помощники с очисткой секретов |
+
+## Проверки и интеграция
+
+| Путь | Назначение |
+|---|---|
+| `core/tests/` | интеграционные тесты ядра, включая interop с Xray-core и Go REALITY-сервером |
+| `scripts/ci.sh`, `.github/workflows/ci.yml` | локальные и GitHub CI-проверки; workflow включает Linux, настоящую Windows, MSRV, покрытие, аудит зависимостей и advisory mobile cross-build |
+| `scripts/package_ffi_sdk.py`, `scripts/ffi_sdk_metadata.py`, `scripts/check_ffi_sdk.py` | упаковка SDK-архивов, CMake/pkg-config metadata и проверка содержимого/manifest |
+| `scripts/sdk-consumer/`, `scripts/test_ffi_sdk_consumer.py` | независимые C/C++ consumers из распакованного SDK; выполняются на поддерживаемых desktop runners, Android/iOS только компонуются |
+| `.github/workflows/release.yml` | предварительная сборка по ручному запуску и публикация при отправке version tag |
+| `.github/workflows/fuzz.yml`, `benchmark-xray-rust.yml` | fuzz-прогоны и сравнительные benchmark workflow |
+| `scripts/interop_*.sh`, `smoke_*.sh`, `tun_netns.sh` | интероп, CLI smoke и TUN-проверки; точное покрытие перечислено в [TESTING.md](TESTING.md) |
+| `examples/` | примеры конфигураций sing-box/Xray и unit-файл systemd |
+
+## Публичные материалы
+
+- `docs/` — технические руководства на русском и английском, собранные в
+  [каталоге документации](README.md).
+- `README.md`, `README.en.md`, `CHANGELOG.md` — обзор проекта и история
+  опубликованных и будущих изменений.
+- `CONTRIBUTING.md`, `SECURITY.md`, `SUPPORT.md`, `CODE_OF_CONDUCT.md` — правила
+  участия, сообщения об уязвимостях, поддержка и нормы сообщества.
+- `.github/ISSUE_TEMPLATE/`, `.github/pull_request_template.md` — шаблоны
+  обращений и pull request.
+- `PLAN.md` — исторический журнал решений на русском; он не является
+  источником текущего состояния. Фактические возможности и ограничения
+  описаны в `docs/FEATURES.md`.
