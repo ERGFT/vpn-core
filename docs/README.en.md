@@ -13,7 +13,7 @@ and first run. This is the detailed reference.
 | [CLI.en.md](CLI.en.md) | command-line options, autostart (Windows service, systemd) |
 | [CONFIG.en.md](CONFIG.en.md) | sing-box/Xray config file: inbounds, outbounds, rules, rule sets, server groups, subscriptions, `fragment` and `noises` |
 | [DNS.en.md](DNS.en.md) | own DNS: DoH/DoT/DoQ servers, rules, cache, fake-IP |
-| [TUN.en.md](TUN.en.md) | redirecting system traffic into TUN; the core handles TCP/UDP; kill switch on Linux/Windows; ICMP (including ping) is not supported |
+| [TUN.en.md](TUN.en.md) | system routing for TCP/UDP through a virtual interface, kill switch, and protocol limits |
 | [API.en.md](API.en.md) | local API (Clash API), web dashboards, config reload |
 | [LINK.en.md](LINK.en.md) | `vless://` link parameters |
 | [WINDOWS.en.md](WINDOWS.en.md) | building and running on Windows |
