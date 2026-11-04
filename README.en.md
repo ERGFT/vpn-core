@@ -88,7 +88,9 @@ The SDK is for apps that need an embedded VLESS client. Its public interface is 
 | `rc_is_alive` | Check the instance state and detect a terminal error |
 | Callbacks | Receive events/logs and provide platform functions such as socket protection or UID lookup |
 
-The [library guide](docs/LIBRARY.en.md) has a minimal example and lists each SDK archive's contents. Public headers and examples are in [`ffi/`](ffi/).
+The [library guide](docs/LIBRARY.en.md) covers CMake and pkg-config, platform
+shared/static linking, checksum/manifest verification, and connecting an SDK
+from an extracted ZIP. Public headers and examples are in [`ffi/`](ffi/).
 
 ## Features and status
 

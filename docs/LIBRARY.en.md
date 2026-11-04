@@ -25,7 +25,17 @@ SHA-256; libraries also have a kind (`shared`, `static`, or `import`). The
 `static_link.arguments` field records native linker arguments reported by
 `rustc` for the static library built for that target. Verify the
 external `.sha256` for the ZIP, then verify the manifest against the extracted
-files. `minimum_os` contains a minimum version explicitly set by the build
+files. Before integration, verify the ZIP and manifest using a repository checkout
+(Linux example; choose the platform name matching the archive):
+
+```sh
+python scripts/check_ffi_sdk.py linux-x86_64 vpn-core-sdk-linux-x86_64.zip
+```
+
+The checker reads the adjacent `.sha256`, validates the ZIP, and compares the
+manifest's file list, sizes, and SHA-256 values. Supported platform names are
+`linux-x86_64`, `windows-x86_64`, `macos-arm64`, `android-arm64-v8a`, and
+`ios-arm64`. `minimum_os` contains a minimum version explicitly set by the build
 (currently iOS 13.0); `null` means the project does not declare one separately
 and is not a compatibility guarantee for every OS version. Consumers should
 ignore unknown fields. Incompatible schema changes require incrementing
@@ -40,11 +50,23 @@ moved or extracted into a directory containing spaces. Minimum CMake version:
 
 ```cmake
 find_package(vpn-core CONFIG REQUIRED
-    PATHS "${VPN_CORE_SDK}/cmake/vpn-core" NO_DEFAULT_PATH)
+    PATHS "${VPN_CORE_SDK}/cmake/vpn-core"
+    NO_DEFAULT_PATH
+    NO_CMAKE_FIND_ROOT_PATH)
 
 add_executable(my_app main.c)
 target_link_libraries(my_app PRIVATE vpn-core::shared)
 ```
+
+Pass the extracted archive path when configuring your project:
+
+```sh
+cmake -S . -B build -DVPN_CORE_SDK="/path/to/vpn-core-sdk"
+cmake --build build --config Release
+```
+
+`VPN_CORE_SDK` must point to the directory containing `include/`, `lib/`, and
+`cmake/`, not to the ZIP file itself.
 
 `vpn-core::shared` is available where the archive includes a dynamic library;
 `vpn-core::static` selects the static library. On Windows, the shared target
@@ -53,7 +75,8 @@ chooses shared when available and otherwise static. The static target carries
 native dependencies from the same `rustc --print=native-static-libs` output
 recorded in the manifest. For Android and iOS, pass the SDK path to a project
 configured with the matching NDK/iOS CMake toolchain; cross-link checks do not
-prove on-device execution.
+prove on-device execution. `NO_CMAKE_FIND_ROOT_PATH` keeps Android's NDK toolchain
+from redirecting this explicit SDK lookup into the Android sysroot.
 
 Linux and macOS archives also include `lib/pkgconfig/vpn-core.pc`:
 
