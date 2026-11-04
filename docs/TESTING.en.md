@@ -78,8 +78,18 @@ server, the load comes from the same code). Three runs, 8 connections x
 |---|---|---|
 | idle memory | **6.3 MiB** | 30.4 MiB |
 | peak memory under load | **8.9 MiB** | 35.3 MiB |
-| time to first data byte | 25.4 ms | 35.8 ms (a tie — spread is comparable) |
-| throughput | 625 MiB/s | 572 MiB/s (a tie — spread is comparable) |
+| time to first data byte | 25.4 ms | 35.8 ms |
+| throughput | 625 MiB/s | 572 MiB/s |
+
+This is a historical summary recorded in the [project plan](../PLAN.en.md)
+for the 2026-09-26 remeasurement. The repository does not contain the raw
+JSON/CSV for the three runs, the machine model, or the run-to-run spread. The
+table therefore does not document how those runs were aggregated or support
+a conclusion about a meaningful performance difference; the earlier “tie”
+labels cannot be confirmed from the available raw data. One invocation of the
+current script performs one measurement per client and writes JSON/CSV under
+`target/stage8/`; it does not repeat the measurement three times. For a new
+comparison, retain each run's data, environment, and script SHA separately.
 
 Xray-core covers a broader range of protocols and routing scenarios. `vpn-core`
 also includes DNS, TUN, rules, server groups, subscriptions, a local API, and a
