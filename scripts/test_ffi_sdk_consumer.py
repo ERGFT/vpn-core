@@ -58,8 +58,14 @@ def cmake_arguments(platform: str, sdk: Path, linkage: str) -> list[str]:
     return arguments
 
 
-def executable_path(build: Path) -> Path:
-    return build / ("vpn-core-sdk-consumer.exe" if os.name == "nt" else "vpn-core-sdk-consumer")
+def executable_path(build: Path, target: str) -> Path:
+    filename = target + (".exe" if os.name == "nt" else "")
+    for configuration in ("Release", "RelWithDebInfo", "Debug", None):
+        directory = build if configuration is None else build / configuration
+        candidate = directory / filename
+        if candidate.is_file():
+            return candidate
+    raise FileNotFoundError(f"CMake did not produce {filename} under {build}")
 
 
 def runtime_environment(sdk: Path) -> dict[str, str]:
@@ -116,12 +122,8 @@ def verify_archive(platform: str, archive: Path) -> None:
             ])
             run(["cmake", "--build", str(build), "--config", "Release"])
             if platform not in {"android-arm64-v8a", "ios-arm64"}:
-                run([str(executable_path(build))], env=runtime_environment(sdk))
-                cpp_executable = build / (
-                    "vpn-core-sdk-consumer-cpp.exe" if os.name == "nt"
-                    else "vpn-core-sdk-consumer-cpp"
-                )
-                run([str(cpp_executable)], env=runtime_environment(sdk))
+                run([str(executable_path(build, "vpn-core-sdk-consumer"))], env=runtime_environment(sdk))
+                run([str(executable_path(build, "vpn-core-sdk-consumer-cpp"))], env=runtime_environment(sdk))
 
         if platform in {"linux-x86_64", "macos-arm64"}:
             verify_pkg_config(sdk, sdk / "examples" / "minimal.c", root / "pkg config build")
