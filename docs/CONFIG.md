@@ -81,6 +81,8 @@ reality-client --config config.json
 [sing-geoip](https://github.com/SagerNet/sing-geoip/tree/rule-set) или
 MetaCubeX/meta-rules-dat) и исходный `.json`, только `type: local`:
 
+Ниже — частичный фрагмент раздела `route`, а не полный файл настроек.
+
 ```json
 "route": {
   "rule_set": [{ "type": "local", "tag": "ru", "format": "binary", "path": "geosite-category-ru.srs" }],
@@ -120,6 +122,9 @@ MetaCubeX/meta-rules-dat) и исходный `.json`, только `type: local
 использует указанный TCP outbound для соединения с сервером proxy. Несколько
 SOCKS5/HTTP CONNECT звеньев можно вложить; базовым выходом может быть `direct`,
 VLESS или Trojan:
+
+Ниже показаны связанные разделы `outbounds` и `route`; это частичный фрагмент
+конфигурации, а не полный файл.
 
 ```json
 "outbounds": [
@@ -177,6 +182,8 @@ VLESS или Trojan:
   сохранённого списка загружается до включения маршрутов.
 
 ## Против DPI: fragment и noises
+
+Ниже — объект выхода `direct` для раздела `outbounds`, а не полный файл настроек.
 
 ```json
 { "type": "direct", "tag": "direct",

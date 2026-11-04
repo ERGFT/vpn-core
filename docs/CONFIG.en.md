@@ -80,6 +80,8 @@ sing-box rule sets — `.srs` (e.g. from
 [sing-geoip](https://github.com/SagerNet/sing-geoip/tree/rule-set) or
 MetaCubeX/meta-rules-dat) and source `.json`, `type: local` only:
 
+The following is a partial `route` section, not a complete config file.
+
 ```json
 "route": {
   "rule_set": [{ "type": "local", "tag": "ru", "format": "binary", "path": "geosite-category-ru.srs" }],
@@ -118,6 +120,9 @@ SOCKS5 code 0x02 or HTTP 403.
 The sing-box `detour` field can be set on `socks` or `http` outbounds. It uses
 the specified TCP outbound to connect to the proxy server. Multiple SOCKS5/HTTP
 CONNECT hops can be nested; `direct`, VLESS, or Trojan can be the base outbound:
+
+The following shows related `outbounds` and `route` sections; it is a partial
+config fragment, not a complete file.
 
 ```json
 "outbounds": [
@@ -177,6 +182,8 @@ strategy and `observatory` (check URL and interval).
   downloaded before routes are enabled.
 
 ## Anti-DPI: fragment and noises
+
+The following is a `direct` outbound object for the `outbounds` section, not a complete config file.
 
 ```json
 { "type": "direct", "tag": "direct",
