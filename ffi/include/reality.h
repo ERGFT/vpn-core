@@ -163,12 +163,16 @@ int rc_is_alive(RcCore *core);
 int rc_last_error_code(RcCore *core);
 char *rc_last_error_message(RcCore *core);
 
-/* Остановить ядро: входы закрываются, маршруты возвращаются. Функция ждёт
- * возврата уже выполняющихся event/log callbacks и запрещает новые; после
+/* Остановить ядро: входы закрываются, маршруты auto_route, которые установило
+ * ядро, снимаются. При внешнем TUN маршрутами управляет встраивающее
+ * приложение. Функция ждёт завершения выполняющихся event/log callbacks и
+ * запрещает новые; после
  * возврата callback-функцию и user можно освободить. Не вызывайте rc_stop из
  * callback этого core. После этого core недействителен. NULL — ничего. */
-/* Stop the core: inbounds are closed and routes restored. Waits for running
- * event/log callbacks and prevents new ones from starting. After return, the
+/* Stop the core: inbounds are closed and core-managed auto_route routes are
+ * removed. With an external TUN, the host application controls the routes.
+ * The function waits for running event/log callbacks and prevents new ones
+ * from starting. After return, the
  * callback and user data may be freed. Do not call rc_stop from a callback for
  * this core. The core handle becomes invalid. NULL is a no-op. */
 void rc_stop(RcCore *core);

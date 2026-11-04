@@ -202,9 +202,10 @@ Key types:
      window and logoff.
 
    SIGHUP (Unix) reloads the config.
-6. Stop: `Running` is dropped. Inbounds stop, TUN routes are restored, and
-   the system proxy (if it was enabled) is set back. The runtime gets at
-   most 2 s to shut down.
+6. Stop: `Running` is dropped. Inbounds stop and TUN routes installed by the
+   core through `auto_route` are removed. The host application controls routes
+   for an external TUN. The system proxy (if enabled) is restored. The runtime
+   gets at most 2 s to shut down.
 
 ### 4.2. `App::build` — everything that can be checked before starting
 
