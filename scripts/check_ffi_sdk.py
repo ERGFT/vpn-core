@@ -77,6 +77,13 @@ def main():
             for key in ("rustc", "cargo", "build_host")
         ):
             raise SystemExit("SDK manifest toolchain metadata is incomplete")
+        static_link = manifest.get("static_link")
+        if (not isinstance(static_link, dict)
+                or static_link.get("source") != "rustc --print=native-static-libs"
+                or not isinstance(static_link.get("arguments"), list)
+                or any(not isinstance(argument, str) or not argument
+                       for argument in static_link["arguments"])):
+            raise SystemExit("SDK manifest static_link metadata is incomplete or invalid")
         records = manifest.get("files")
         if not isinstance(records, list):
             raise SystemExit("SDK manifest files must be an array")

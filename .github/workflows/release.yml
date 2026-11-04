@@ -32,6 +32,7 @@ on:
       - scripts/package_ffi_sdk.py
       - scripts/check_ffi_sdk.py
       - scripts/test_check_ffi_sdk.py
+      - scripts/test_package_ffi_sdk.py
       - Cargo.lock
       - Cargo.toml
 
@@ -155,6 +156,25 @@ jobs:
       - name: Собрать FFI для Linux и Windows
         if: matrix.platform == 'linux-x86_64' || matrix.platform == 'windows-x86_64'
         run: cargo build --locked --release -p reality-ffi
+      - name: Получить native link args для static SDK
+        shell: bash
+        env:
+          PLATFORM: ${{ matrix.platform }}
+          TARGET: ${{ matrix.target }}
+        run: |
+          mkdir -p dist
+          case "$PLATFORM" in
+            android-arm64-v8a)
+              cargo ndk -t arm64-v8a rustc --locked --release -p reality-ffi -- --print=native-static-libs 2> dist/native-static-libs.log
+              ;;
+            ios-arm64)
+              IPHONEOS_DEPLOYMENT_TARGET=13.0 cargo rustc --locked --release -p reality-ffi --target "$TARGET" -- --print=native-static-libs 2> dist/native-static-libs.log
+              ;;
+            *)
+              cargo rustc --locked --release -p reality-ffi --target "$TARGET" -- --print=native-static-libs 2> dist/native-static-libs.log
+              ;;
+          esac
+          grep -q 'native-static-libs:' dist/native-static-libs.log
       - uses: taiki-e/install-action@86f7a0ffb25f40114606501a311ebcfaf882ea32 # v2
         if: matrix.platform == 'linux-x86_64'
         with:
@@ -176,26 +196,30 @@ jobs:
           mkdir -p dist
           case "$PLATFORM" in
             linux-x86_64)
-              python scripts/package_ffi_sdk.py --platform "$PLATFORM" --target "$TARGET" --version "$VERSION" --output dist --library target/release/libreality.so --library target/release/libreality.a
+              python scripts/package_ffi_sdk.py --platform "$PLATFORM" --target "$TARGET" --version "$VERSION" --output dist --native-static-libs dist/native-static-libs.log --library target/release/libreality.so --library target/release/libreality.a
               ;;
             windows-x86_64)
-              python scripts/package_ffi_sdk.py --platform "$PLATFORM" --target "$TARGET" --version "$VERSION" --output dist --library target/release/reality.dll --library target/release/reality.dll.lib --library target/release/reality.lib
+              python scripts/package_ffi_sdk.py --platform "$PLATFORM" --target "$TARGET" --version "$VERSION" --output dist --native-static-libs dist/native-static-libs.log --library target/release/reality.dll --library target/release/reality.dll.lib --library target/release/reality.lib
               ;;
             android-arm64-v8a)
-              python scripts/package_ffi_sdk.py --platform "$PLATFORM" --target "$TARGET" --version "$VERSION" --output dist --library target/aarch64-linux-android/release/libreality.so --library target/aarch64-linux-android/release/libreality.a
+              python scripts/package_ffi_sdk.py --platform "$PLATFORM" --target "$TARGET" --version "$VERSION" --output dist --native-static-libs dist/native-static-libs.log --library target/aarch64-linux-android/release/libreality.so --library target/aarch64-linux-android/release/libreality.a
               ;;
             ios-arm64)
-              python scripts/package_ffi_sdk.py --platform "$PLATFORM" --target "$TARGET" --version "$VERSION" --output dist --library target/aarch64-apple-ios/release/libreality.a
+              python scripts/package_ffi_sdk.py --platform "$PLATFORM" --target "$TARGET" --version "$VERSION" --output dist --native-static-libs dist/native-static-libs.log --library target/aarch64-apple-ios/release/libreality.a
               ;;
             macos-arm64)
-              python scripts/package_ffi_sdk.py --platform "$PLATFORM" --target "$TARGET" --version "$VERSION" --output dist --library target/aarch64-apple-darwin/release/libreality.dylib --library target/aarch64-apple-darwin/release/libreality.a
+              python scripts/package_ffi_sdk.py --platform "$PLATFORM" --target "$TARGET" --version "$VERSION" --output dist --native-static-libs dist/native-static-libs.log --library target/aarch64-apple-darwin/release/libreality.dylib --library target/aarch64-apple-darwin/release/libreality.a
               ;;
           esac
+          rm dist/native-static-libs.log
       - name: Проверить состав SDK и checksum
         run: python scripts/check_ffi_sdk.py ${{ matrix.platform }} dist/vpn-core-sdk-${{ matrix.platform }}.zip
       - name: Проверить обнаружение повреждённых архивов
         if: matrix.platform == 'linux-x86_64'
         run: python scripts/test_check_ffi_sdk.py
+      - name: Проверить parser native static link args
+        if: matrix.platform == 'linux-x86_64'
+        run: python scripts/test_package_ffi_sdk.py
       - name: Проверить использование распакованного SDK на Linux
         if: matrix.platform == 'linux-x86_64'
         shell: bash

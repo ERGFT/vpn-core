@@ -21,7 +21,9 @@ published as separate release files.
 Each SDK ZIP contains `manifest.json` with `schema_version: 1`. It records the
 version/tag, platform and Rust target triple, `rustc`/Cargo versions, and build
 runner OS. Every file except the manifest itself has a relative path, size, and
-SHA-256; libraries also have a kind (`shared`, `static`, or `import`). Verify the
+SHA-256; libraries also have a kind (`shared`, `static`, or `import`). The
+`static_link.arguments` field records native linker arguments reported by
+`rustc` for the static library built for that target. Verify the
 external `.sha256` for the ZIP, then verify the manifest against the extracted
 files. `minimum_os` contains a minimum version explicitly set by the build
 (currently iOS 13.0); `null` means the project does not declare one separately
