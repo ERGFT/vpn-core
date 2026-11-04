@@ -232,6 +232,39 @@ healthy; NULL returns `Invalid core handle`. Detailed source errors are not
 exposed because they may contain addresses or config values. Free the returned
 string with `rc_free_string`.
 
+### C ABI quick reference: NULL, results, and ownership
+
+| Function | NULL and result | Memory and lifetime |
+| --- | --- | --- |
+| `rc_version` | No arguments; returns the version | Pointer to a static string; do not free it |
+| `rc_validate` | `config` is required; `base_dir` may be NULL; `1` means accepted, `0` means error | No allocated string; detailed errors are not returned |
+| `rc_start` | `config` is required; `base_dir` and `error` may be NULL; a NULL handle means failure | Only on failure, `error` receives a string; free it with `rc_free_string`. The host frees the handle with `rc_stop`; on Unix, the FD transfers to the core on call, including when startup fails |
+| `rc_request` | `method` and `path` are required; `body` and `status` may be NULL; argument errors are returned as JSON | The host always frees the returned string with `rc_free_string`; `status` is written only when non-NULL |
+| `rc_reload` | `config` is required; `error` may be NULL; a NULL result means failure | The host frees the successful JSON string or `error` string with `rc_free_string`; `error` is written only on failure |
+| `rc_is_alive` / `rc_last_error_code` | A NULL handle returns `0` / `RC_ERROR_INVALID_HANDLE` | Scalar result only; use only with a live handle |
+| `rc_last_error_message` | A NULL handle returns `Invalid core handle`; no error returns an empty string | The host always frees the returned string with `rc_free_string` |
+| `rc_network_changed` | A NULL handle returns `-1`; `0` means the signal was handled | Scalar result only; use only with a live handle |
+| `rc_stop` | NULL is a safe no-op | Frees the handle; call once, then never use that pointer again |
+| `rc_set_event_callback` / `rc_set_log_callback` | A NULL callback unsubscribes; a NULL handle or invalid log level returns `-1` | After replacement/removal returns, the previous callback and `user` may be freed; a NULL log `level` means `info` |
+| `rc_set_protect` / `rc_set_connection_owner` | Process-wide setting; a NULL callback removes it; no status is returned | The old `user` may be freed after removal/replacement returns |
+| `rc_set_lock_dir` | NULL or non-UTF-8 path returns `-1`; a valid path returns `0` | The path string is borrowed for the call only |
+| `rc_free_string` | NULL is a safe no-op | Accepts only a string returned by this library that has not already been freed |
+
+NULL is accepted only where explicitly documented. Every non-NULL pointer must
+refer to accessible memory of the required size; input C strings must be
+correctly NUL-terminated. The C ABI cannot safely validate an arbitrary or
+freed pointer. A handle must not be used after `rc_stop`; the host serializes
+all operations on one live handle.
+
+### Panic boundary
+
+Only functions that explicitly map a panic to their documented error result can
+return that fallback, and only when built with `panic = "unwind"`. This is not
+process isolation or a promise that every exported function recovers from an
+arbitrary panic. With `panic = "abort"`, the host process terminates; invalid
+pointers are not made safe by `catch_unwind`. A panic, C++ exception, or
+`longjmp` from a callback must not cross the C ABI.
+
 Call `rc_network_changed` only after a platform host API reports a transition
 (for example, Wi-Fi/cellular or default-route changes). The core does not poll
 the OS or determine Internet availability. A duplicate notification also
