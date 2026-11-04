@@ -58,10 +58,11 @@ scripts/ci.sh           # все дополнительные проверки, 
 - Меняется решение или открывается риск — `PLAN.md` / `PLAN.en.md`; меняется устройство
   ядра (новый модуль, путь соединения, предел) — `docs/ARCHITECTURE.md` и
   `docs/ARCHITECTURE.en.md`. С него же удобно начинать знакомство с кодом.
-- Комментарии в исходниках, исходный `PLAN.md` и сообщения коммитов — на русском,
-  как в остальном проекте; публичные комментарии C ABI в `ffi/include/reality.h`
-  приведены также на английском для интеграторов SDK. У плана есть перевод
-  `PLAN.en.md`; документация для пользователя — на двух языках
+- Комментарии в исходниках и исходный `PLAN.md` — на русском; публичные
+  комментарии C ABI в `ffi/include/reality.h` приведены также на английском
+  для интеграторов SDK. История коммитов содержит заголовки на обоих языках;
+  пишите их кратко и ясно. У плана есть перевод `PLAN.en.md`; документация
+  для пользователя — на двух языках
   (`*.md` и `*.en.md`); issue и pull request — на русском или английском.
 - **Две языковые версии меняются вместе.** Правите возможности,
   ограничения или инструкции в `README.md` или в `docs/*.md` — в том же
@@ -136,12 +137,12 @@ same script: the Linux and Windows jobs cover different parts of the project.
   structure changes (a new module, connection path, limit) —
   `docs/ARCHITECTURE.md` and `docs/ARCHITECTURE.en.md`. It is also the best
   place to start reading the code.
-- Source-code comments, the original `PLAN.md` and commit messages are in
-  Russian, like the rest of the project; public C ABI comments in
-  `ffi/include/reality.h` are also provided in English for SDK integrators.
-  The plan has an English translation in `PLAN.en.md`; user documentation is
-  in two languages (`*.md` and `*.en.md`); issues and pull requests may be in
-  English or Russian.
+- Source-code comments and the original `PLAN.md` are in Russian; public C ABI
+  comments in `ffi/include/reality.h` are also provided in English for SDK
+  integrators. Commit history contains subjects in both languages; keep them
+  clear and concise. The plan has an English translation in `PLAN.en.md`; user
+  documentation is in two languages (`*.md` and `*.en.md`); issues and pull
+  requests may be in English or Russian.
 - **Both language versions change together.** If you change features,
   limitations or instructions in `README.md` or `docs/*.md`, update the
   `*.en.md` file in the same pull request (and vice versa), and before
