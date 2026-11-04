@@ -160,10 +160,11 @@ VPN: traffic goes through it only for programs that use this proxy.
   Adapter properties → DNS". Windows' standard DNS settings do not let you
   set a custom port. Queries
   that apps send to the system resolver then reach this inbound; apps with
-  their own DoH/DoT can bypass the system setting. Encryption and the route
-  for upstream DNS queries depend on the selected server and its `detour`:
-  use DoH/DoT/DoQ and a proxy outbound if you need to protect DNS from
-  observers on the local network and along the route. Setting `127.0.0.1`
+  their own DoH/DoT can bypass the system setting. The upstream type controls
+  DNS content protection: DoH/DoT/DoQ encrypt queries to the server; UDP/TCP
+  do not. The upstream server address may remain visible to on-path observers.
+  To hide it, configure `detour` through an outbound that encrypts the
+  connection; a proxy alone does not guarantee that. Setting `127.0.0.1`
   alone does not enable encryption. Remember to set DNS back to "Automatic"
   when the client is not running, otherwise names will stop resolving.
 - `--sniff` — if a program sends the proxy an IP address instead of a site
