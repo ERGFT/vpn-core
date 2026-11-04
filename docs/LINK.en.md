@@ -14,7 +14,7 @@ Which parameters of a `vless://…` link the client understands. The link is usu
 | `flow` | empty or `xtls-rprx-vision` (`-udp443` too); anything else is an error |
 | `path`, `host` | path and Host header for ws, httpupgrade, xhttp (`?ed=` in the path is dropped) |
 | `mode` | for xhttp: `auto` (default: REALITY — `stream-one`, otherwise `packet-up`; with `downloadSettings` and REALITY — `stream-up`), `packet-up`, `stream-up`, `stream-one` (`stream-one` cannot split directions) |
-| `extra` | for xhttp: JSON as in Xray — `headers`, `xPaddingBytes`, `noGRPCHeader`, `scMaxEachPostBytes`, `scMinPostsIntervalMs`, `uplinkHTTPMethod`; `downloadSettings` supports a separate address/port and XHTTP connection; see the [feature matrix](FEATURES.en.md). Unsupported fields are rejected |
+| `extra` | for xhttp: JSON as in Xray — `headers`, `xPaddingBytes`, `noGRPCHeader`, `scMaxEachPostBytes`, `scMinPostsIntervalMs`, `uplinkHTTPMethod`; `downloadSettings` supports a separate address/port and XHTTP connection; see the [feature matrix](FEATURES.en.md). Known incompatible settings are rejected; unknown keys are logged as warnings and ignored |
 
 Minimal split-download example (the full JSON is the value of `extra=`):
 
@@ -32,7 +32,9 @@ Minimal split-download example (the full JSON is the value of `extra=`):
 ```
 
 The path must match `path=` on the main channel. Only the documented nested
-fields are supported; `stream-one` and unknown fields are rejected.
+fields are supported in `downloadSettings`; `stream-one` and unknown fields
+there are rejected. Other unknown `extra` keys are ignored with a log warning,
+so they do not enable features the client has not implemented.
 
 Additional parameters:
 
