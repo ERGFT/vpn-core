@@ -70,9 +70,12 @@ Rules that run through the whole code base:
 - **Proven libraries where mistakes are expensive**: tokio, rustls, h2,
   quinn, async-tungstenite, smoltcp, hickory-proto. Our own code only
   where nothing ready exists or where Xray must be matched byte for byte.
-- **No cost on the hot path.** One buffer per direction, allocated once;
-  tracking and events are atomics; everything optional (sniffing, events,
-  API log) is switched off entirely when not needed.
+- **Bound hot-path overhead.** Relay allocates one buffer for each direction
+  of a connection, not on every read iteration. Connection tracking always
+  runs: it stores metadata in mutex-protected maps and updates byte counters
+  atomically. Event objects are created only when a listener is active;
+  sniffing is controlled by configuration, and logs are forwarded to the API
+  only when a listener is active.
 
 ## 2. Repository map
 
