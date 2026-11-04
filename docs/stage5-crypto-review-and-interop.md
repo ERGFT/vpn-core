@@ -88,8 +88,8 @@ TLS-подмены, в порядке возрастания риска:
 
 ## 2. Interop-тест против живого REALITY-сервера
 
-> Выполнено: `scripts/interop_xray.sh` (23 теста против настоящего
-> Xray-core, в том числе REALITY, Vision, ML-DSA-65) и
+> Выполнено: `scripts/interop_xray.sh` (сейчас 26 тестов против настоящего
+> Xray-core, включая REALITY, Vision, ML-DSA-65, Trojan и XHTTP-режимы) и
 > `scripts/interop_go_reality.sh` (Go-библиотека `XTLS/REALITY`) идут в
 > CI на каждый push. Шаги ниже — для проверки с собственным сервером.
 
