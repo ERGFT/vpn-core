@@ -117,9 +117,13 @@ curl -N -H "$T" "http://127.0.0.1:9090/logs?level=warning"
 |---|---|
 | `/events` | own events: `connection_open` (fields as in `/connections`), `connection_close` (traffic totals, duration), `group_switch` (a group changed its member: by itself or manually), `group_check` (delays after a check), `subscription_update` (server count or error), `reload`, `mode_change`; `lagged` — the client was too slow and some events were skipped (re-read `/connections`) |
 | `/traffic` | every second: `up`, `down` — bytes per second, `upTotal`, `downTotal` — totals |
-| `/memory` | every second: `inuse` — process memory, bytes |
+| `/memory` | every second: `inuse` — process memory, bytes; `oslimit` is always `0` |
 | `/logs?level=info` | the log: `{"type": "warning", "payload": "…"}`; `level` — `debug`, `info`, `warning`, `error`; never more detailed than what is logged (`RUST_LOG`) |
 | `/connections` (WebSocket only) | every `interval` ms (1000 by default) — the same as `GET /connections` |
+
+`inuse` is the process RSS on Linux and the process working set on Windows.
+On other platforms, or if the measurement fails, its value is `0`. `oslimit`
+does not currently report an operating-system limit; it is always `0`.
 
 While nobody listens to a stream, events are not even assembled. Up to 16
 streams at a time.
