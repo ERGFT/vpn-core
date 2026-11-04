@@ -10,9 +10,55 @@
 - Вне `vendor/` — 48 файлов, которые входят в область стандартизации.
 - В `docs/` есть 19 пар RU/EN (38 файлов). На исходной проверке число заголовков и строк таблиц в парах совпадает. Это структурный сигнал, не доказательство эквивалентности перевода.
 - В `vendor/` находятся 2 авторских пояснения smoltcp-патча (RU/EN) и 3 Markdown-файла поставщика. Поставщикские документы исключены из редактирования; лицензии и исходники не менять.
-- `docs/STYLE_GUIDE*.md` и `docs/GLOSSARY*.md` пока отсутствуют.
+- На базовом SHA `51712a8` `docs/STYLE_GUIDE*.md` и `docs/GLOSSARY*.md` отсутствовали; PR-02 подготовит их для отдельного согласования.
 - `python scripts/check_doc_links.py` прошёл: 48 Markdown-файлов. Скрипт не проверяет внешние URL и пропускает `vendor/`.
 - Рабочее дерево на базовом SHA было чистым; `git diff --check` не обнаружил проблем.
+
+## Расширение охвата за пределами Markdown
+
+Число 53 в исходной таблице относится только к Markdown на базовом SHA PR-01. Оно не является полным перечнем публичных текстовых материалов проекта. В актуальный охват входят и следующие группы:
+
+| Материал | Подтверждённые пути/охват | Что проверять |
+|---|---|---|
+| C ABI и FFI | `ffi/include/reality.h`, `ffi/src/lib.rs`, `ffi/abi-baseline.json`, `ffi/tests/`, `ffi/examples/`, `scripts/sdk-consumer/` | Сигнатуры, комментарии заголовка, типы и ownership, callback-и, ошибки, примеры, consumer и соответствие ABI baseline. |
+| Rust API и документационные комментарии | 85 Rust-файлов в `core/src/`, `bin/` и `ffi/src/`; `///`, `//!` или `#[doc]` есть в 84 из них | Комментарии к публичным типам/функциям и crate/module docs; актуальность по реализации и тестам. Перечень файлов фиксировать вместе с тематическим аудитом соответствующего модуля; наличие комментария не означает, что каждый элемент публичен. |
+| Пользовательские примеры | `examples/reality-client.service`, `examples/sing-box.json`, `examples/xray.json`, `ffi/examples/minimal.c`, `ffi/examples/smoke.c` | Валидность формата, безопасные значения, команды запуска и соответствие примера текущим интерфейсам. |
+| SDK consumer и сборка | `scripts/sdk-consumer/CMakeLists.txt`, `scripts/sdk-consumer/cpp_consumer.cpp`, `scripts/package_ffi_sdk.py`, `scripts/check_ffi_sdk.py`, `scripts/ffi_sdk_metadata.py`, `scripts/check_ffi_abi.py` | Реальные входы/выходы packaging/checker, извлекаемые ZIP, build metadata и проверки независимого потребителя. |
+| Сборка, CI и выпуск | `.github/workflows/*.yml`, `scripts/ci.sh`, `scripts/build_windows.ps1`, `scripts/interop_xray.sh`, `scripts/interop_go_reality.sh` и другие документированные команды `scripts/` | Условия запуска, команды, целевые платформы, gating, публикуемые и непубликуемые результаты. |
+| GitHub формы | `.github/ISSUE_TEMPLATE/bug_report.yml`, `config.yml`, `feature_request.yml`, `.github/pull_request_template.md` | Ясность вопросов, актуальность ссылок, шаблонные инструкции; не менять YAML-семантику при редактуре. |
+| Собственные заметки vendor | `vendor/smoltcp-window-patch.md`, `.en.md`; `docs/RUSTLS_PATCH*` | Отличать авторское описание проекта от upstream-кода и поставщикских README/changelog. |
+
+`python scripts/check_doc_links.py` не проверяет все эти группы: он проверяет отслеживаемые Markdown-файлы документации, пропускает `vendor/`, не доказывает актуальность текста и не исполняет примеры.
+
+## Проверка релизной истории после v0.1.0
+
+Сверено по GitHub Releases и merged PR на дату аудита (2026-11-04; время ниже UTC):
+
+| Факт | Доказательство | Вывод для документации |
+|---|---|---|
+| Тег `v0.1.0` указывает на commit `27f25ab95460162609060cb1f4b0a500d34e5ccb`, создан 2026-11-03 20:47 UTC; релиз опубликован в 21:19 UTC. На странице также есть `v0.1.0-dev.1` и `dev-7907015b…` с prerelease-меткой. | [Annotated tag](https://api.github.com/repos/ERGFT/vpn-core/git/tags/a62dae08e4a51c0d628ef02405cc01004e2969fa), [Releases](https://github.com/ERGFT/vpn-core/releases) | В `v0.1.0` включён main до PR #64. Документы должны различать стабильный релиз, prerelease и состояние текущего `main`. |
+| Последний merged PR перед tag — #63; его merge commit `27f25ab…` совпадает с target тега. PR #64–#91 были объединены после тега. | GitHub PR metadata: #63 merge `27f25ab…`; #64 base `27f25ab…`, merged 22:19 UTC; далее PR #65–#91. | Все изменения после PR #63 нельзя приписывать `v0.1.0`; это проверяется отдельно от названия и текущего содержимого Releases. |
+| После тега PR #64–#71 добавили/доработали ABI baseline, SDK consumers, callbacks, machine-readable manifests, native link arguments, relocatable CMake metadata и SDK-документацию. | [#64](https://github.com/ERGFT/vpn-core/pull/64), [#65](https://github.com/ERGFT/vpn-core/pull/65), [#66](https://github.com/ERGFT/vpn-core/pull/66), [#67](https://github.com/ERGFT/vpn-core/pull/67), [#68](https://github.com/ERGFT/vpn-core/pull/68), [#69](https://github.com/ERGFT/vpn-core/pull/69), [#70](https://github.com/ERGFT/vpn-core/pull/70), [#71](https://github.com/ERGFT/vpn-core/pull/71) | `docs/LIBRARY*` сейчас прямо говорит, что текущие manifest/CMake/pkg-config metadata отсутствуют в `v0.1.0`; это утверждение подтверждается датой тега. Точный состав проверить по архиву/manifest перед будущим выпуском. |
+| После релиза PR #72–#76 уточнили callback ABI, C++ adapter, ожидание активных callback, TUN descriptor validation, ownership и panic boundary. | [#72](https://github.com/ERGFT/vpn-core/pull/72), [#73](https://github.com/ERGFT/vpn-core/pull/73), [#74](https://github.com/ERGFT/vpn-core/pull/74), [#75](https://github.com/ERGFT/vpn-core/pull/75), [#76](https://github.com/ERGFT/vpn-core/pull/76) | Сверять текущий C ABI guide с точным head, исходниками, baseline и consumer/FFI тестами; не считать эти изменения частью `v0.1.0`. |
+| После релиза PR #77–#78 исправили release/testing и SDK packaging/platform docs; PR #91 обновил число Xray interop-сценариев с 23 до 26. | [#77](https://github.com/ERGFT/vpn-core/pull/77), [#78](https://github.com/ERGFT/vpn-core/pull/78), [#91](https://github.com/ERGFT/vpn-core/pull/91) | Проверить, что текущие инструкции сохраняют эти поправки и EN совпадает по фактам. Число тестов привязать к текущим скриптам/тестам, а не только к старому PR. |
+
+Эта хронология закрывает только указанные релизные утверждения. Она не заменяет просмотр всех PR после тега и не доказывает, что остальные документы уже прошли source audit.
+
+## Проверенные утверждения, уже согласованные с исходниками
+
+Следующие спорные места были проверены в `main` на SHA `49a34132a90c87c7b81dbe1b3c2988758e43bfc6` (после PR #92). Они зафиксированы как результаты сверки, а не как обещание, что документация в целом уже завершена.
+
+| Тема | Факт в текущем дереве | Проверяемый источник | Статус / дальнейшее действие |
+|---|---|---|---|
+| `CHANGELOG` и `Unreleased` | В RU- и EN-секциях есть отдельные записи о manifest, build metadata, relocatable CMake/pkg-config, статических link arguments и C/C++ SDK consumers; `v0.1.0` остаётся отдельным историческим разделом. | `CHANGELOG.md` — обе секции `Unreleased`; merged PR #64–#78 и `release.yml`. | Ранее отмеченное утверждение «после v0.1.0 изменений нет» к текущему `main` уже не относится. Проверить все строки Unreleased на предмет точного соответствия PR в PR-06/07. |
+| Состав опубликованного SDK `v0.1.0` | Обе версии `docs/LIBRARY` явно говорят, что опубликованный архив предшествует manifest, CMake и pkg-config metadata и не содержит этих компонентов. | `docs/LIBRARY.md:13–14`, `docs/LIBRARY.en.md:13–14`; дата tag target перед PR #64. | Утверждение согласовано с историей PR; для точного содержимого каждого опубликованного файла при будущей правке перепроверить сам релизный архив. |
+| Повторная публикация тега | RU/EN `docs/TESTING` требуют нового ранее не опубликованного тега/версии и отдельно предупреждают, что `v0.1.0` уже существует; `docs/RELEASING` говорит то же. | `docs/TESTING*.md`, `docs/RELEASING*.md`; `.github/workflows/release.yml`. | Старую инструкцию повторно создать `v0.1.0` в текущих руководствах не обнаружил. Перед PR-06 сверить все shell-команды с workflow целиком. |
+| Сравнение с Xray-core | README описывает Xray как более широкую платформу и сравнивает область сценариев; утверждения, будто Xray умеет лишь одну вещь, в проверенных README/TESTING/FEATURES не найдено. | `README.md:127–130`, `README.en.md:124–127`, `docs/TESTING*`; поиск формулировок про «одну вещь» по этим файлам. | Устаревшее сравнение в проверенных точках уже исправлено; численные benchmark-утверждения всё ещё требуют проверки методики, версии и данных в PR-06. |
+| Статус SDK consumer-проверок | `FEATURES` RU/EN различают исполняемые C/C++ consumers на Linux/Windows/macOS, cross-link для Android/iOS и отсутствие запуска VPN-приложения на мобильном устройстве. | `docs/FEATURES*.md`; `.github/workflows/release.yml:103–235`, включая отдельный consumer job для каждой платформы. | Граница заявлена явно. Проверить формулировку по точному matrix и итогам CI в PR-05/06; cross-link не считать runtime-тестом. |
+| Библиотека iOS | Обе версии руководства указывают только статическую `libreality.a` и явно говорят, что XCFramework не предоставляется. | `docs/LIBRARY.md:79–83, 139–151`, английская пара `:83–86, 142–154`; `release.yml` для `ios-arm64` упаковывает `libreality.a`. | Текущее утверждение подтверждается workflow; проверить package manifest и архив при будущих изменениях SDK. |
+| Количество Xray interop-тестов | В `core/tests/interop_xray.rs` 26 отдельных `#[tokio::test]` сценариев; инструкция запускает именно этот integration test target с `--ignored`. | Подсчёт атрибутов тестов в `core/tests/interop_xray.rs`; `scripts/interop_xray.sh`; обе версии `docs/TESTING`. | Число 26 подтверждено статически. Оно само по себе не говорит, что тесты были запущены в конкретном CI run; указывать результат только вместе с фактическим запуском. |
+
+Пути и строки выше — anchor points для аудита, они могут сместиться при редактировании. Перед публикацией каждого тематического PR доказательства нужно получить заново на его base SHA.
 
 ## Предварительные выводы и проверяемые риски
 
