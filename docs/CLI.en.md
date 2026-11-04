@@ -4,6 +4,17 @@
 
 All `reality-client` options for running with a single link, and autostart setup. For several servers and rules — the [config file](CONFIG.en.md).
 
+## Config file
+
+Start normally with a config file, or check that it loads:
+
+```sh
+reality-client --config config.json
+reality-client --config config.json --check
+```
+
+`--check` loads the config and builds the application, then exits with the result. It does not start the proxy or test server reachability or real VPN traffic. See the [CONFIG guide](CONFIG.en.md) for config fields and limits.
+
 ## Running
 
 ```sh
@@ -21,13 +32,18 @@ reality-client --server-file server.txt --listen 127.0.0.1:1080
   warning.
 - `--listen` — local proxy address, `127.0.0.1:1080` by default. The port
   serves both SOCKS5 and HTTP proxy (detected by the first byte).
-- `--auth user:password` — require a SOCKS5 username and password. The client
+- `--auth user:password` — require credentials for SOCKS5 and HTTP proxy
+  (Basic). The same credentials are used by both protocols on this `mixed`
+  inbound. Proxy protocols do not encrypt credentials by themselves; HTTP
+  Basic also does not encrypt them without TLS. The client
   refuses to listen on anything other than `127.0.0.1` without a password.
   Without the command line: `--auth-file file` or `REALITY_SOCKS_AUTH`. When
   listening on the network, the password must be at least 12 UTF-8 bytes.
 - `--allow-ip addresses` — who on the network may use the proxy (addresses
-  or subnets, comma-separated: `192.168.1.23,192.168.1.40`). This computer is
-  always allowed. After 5 wrong passwords in a row an address is blocked for
+  or subnets, comma-separated: `192.168.1.23,192.168.1.40`). If the list is
+  set, loopback addresses are allowed automatically; add a LAN client address
+  explicitly. An empty list does not restrict client addresses. After 5 wrong
+  passwords in a row an address is blocked for
   a minute (then twice as long each time, up to an hour).
 - `--allow-insecure` — allow a link with `security=none`. Without this flag
   the client will not start such a link: the UUID and all traffic would go in
@@ -83,6 +99,15 @@ Starts without a window; the log is `reality-client.log` next to the config.
 **Linux** — systemd: [`examples/reality-client.service`](../examples/reality-client.service)
 (config in `/etc/reality-client`, the only root capability is `CAP_NET_ADMIN`
 for TUN, `systemctl reload` rereads the config without dropping connections).
+
+## Recovery after an unclean exit
+
+`--tun-cleanup` removes leftover routing rules and the `strict_route` block on
+Linux, or the WFP kill switch on Windows, then exits. Use it if an unclean
+shutdown left TUN protection enabled. On Linux, it removes only marked rules
+and routes; if the core is still running, the command refuses to clean up. The
+command changes system network state and may require elevated privileges. This
+mode is not supported on other platforms.
 
 Checking that everything works:
 
