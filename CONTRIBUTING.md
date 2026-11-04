@@ -26,9 +26,8 @@ git commit -s -m "…"
 ## Перед pull request
 
 ```sh
-scripts/ci.sh --quick   # fmt, SPDX-метки, ссылки в документации, clippy без предупреждений, тесты
-scripts/ci.sh           # плюс release-сборка, интероп с Xray-core и Go-стендом,
-                        # режим библиотеки (C-программа через C ABI)
+scripts/ci.sh --quick   # fmt, SPDX, ссылки, синтаксис скриптов, clippy без предупреждений, тесты
+scripts/ci.sh           # все дополнительные проверки, доступные на машине
 ```
 
 В GitHub Actions Linux запускает полный `scripts/ci.sh`. На настоящей Windows
@@ -98,9 +97,8 @@ keep changes there minimal, regenerate `vendor/rustls-reality-patch.diff`
 ## Before a pull request
 
 ```sh
-scripts/ci.sh --quick   # fmt, SPDX headers, links in the docs, clippy with no warnings, tests
-scripts/ci.sh           # plus release build, interop with Xray-core and the Go test server,
-                        # library mode (a C program over the C ABI)
+scripts/ci.sh --quick   # fmt, SPDX, doc links, script syntax, clippy with no warnings, tests
+scripts/ci.sh           # all additional checks available on the machine
 ```
 
 In GitHub Actions, Linux runs the full `scripts/ci.sh`. A separate job on real
