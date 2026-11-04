@@ -1362,7 +1362,9 @@ PLAN.md):
   - the core's sockets are "protected" by an app callback
     (`net_protect::set_callback` → `VpnService.protect`);
   - one tokio runtime per core (2 worker threads);
-  - a panic never crosses the C boundary.
+  - a panic is mapped to an error only where the FFI explicitly wraps a call in
+    `catch_unwind`, and only with `panic = "unwind"`; this does not protect
+    against `abort` or invalid pointers (see the [C ABI guide](LIBRARY.en.md)).
 
 ## 21. Tests and verification
 
