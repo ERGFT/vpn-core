@@ -7,12 +7,15 @@ import argparse
 import hashlib
 import json
 import platform
+import re
 import shlex
 import shutil
 import subprocess
 import tempfile
 import zipfile
 from pathlib import Path
+
+from ffi_sdk_metadata import generate_metadata
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -32,6 +35,7 @@ TARGETS = {
     "ios-arm64": "aarch64-apple-ios",
 }
 MINIMUM_OS = {"ios-arm64": "13.0"}
+ANSI_ESCAPE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 
 
 def library_kind(name: str) -> str:
@@ -44,6 +48,21 @@ def library_kind(name: str) -> str:
     raise ValueError(f"unrecognized library artifact: {name}")
 
 
+def manifest_file_record(stage: Path, path: Path) -> dict[str, object]:
+    relative = path.relative_to(stage).as_posix()
+    data = path.read_bytes()
+    record: dict[str, object] = {
+        "path": relative,
+        "size_bytes": len(data),
+        "sha256": hashlib.sha256(data).hexdigest(),
+    }
+    # pkg-config metadata lives under lib/pkgconfig and is not a linkable
+    # library artifact; only direct children of lib/ receive a kind field.
+    if path.parent == stage / "lib":
+        record["kind"] = library_kind(path.name)
+    return record
+
+
 def tool_version(command: str) -> str:
     return subprocess.run(
         [command, "--version"], check=True, capture_output=True, text=True
@@ -52,6 +71,9 @@ def tool_version(command: str) -> str:
 
 def parse_native_static_libs(text: str) -> list[str]:
     """Extract rustc's machine-searchable native-static-libs diagnostic."""
+    # rustc colors the final diagnostic token on some targets, which otherwise
+    # leaves an escape sequence attached to a linker argument (for example -lc).
+    text = ANSI_ESCAPE.sub("", text)
     marker = "native-static-libs:"
     lines = [line.split(marker, 1)[1].strip() for line in text.splitlines() if marker in line]
     if len(lines) != 1:
@@ -105,6 +127,8 @@ def main() -> None:
         for library in args.library:
             shutil.copy2(library, stage / "lib" / library.name)
 
+        generate_metadata(stage, args.platform, args.version.removeprefix("v"), native_static_libs)
+
         (stage / "README.md").write_text(
             f"# vpn-core C ABI SDK {args.version}\n\n"
             f"Platform: `{args.platform}`. See `manifest.json` for the target, "
@@ -112,6 +136,9 @@ def main() -> None:
             "This package contains the compiled "
             "vpn-core library, its C ABI header, a minimal C integration "
             "example, and the API/integration guides in `docs/`.\n\n"
+            "CMake metadata is in `cmake/vpn-core/`; pkg-config metadata, where "
+            "supported, is in `lib/pkgconfig/vpn-core.pc`. Both use paths "
+            "relative to the extracted SDK directory.\n\n"
             "Start with `docs/LIBRARY.md` or `docs/LIBRARY.en.md`. The API can "
             "be called directly through `rc_request`; event and log streams "
             "are available through callbacks. Android and iOS VPN host APIs "
@@ -125,16 +152,7 @@ def main() -> None:
         files = []
         for path in sorted(stage.rglob("*")):
             if path.is_file():
-                relative = path.relative_to(stage).as_posix()
-                data = path.read_bytes()
-                record = {
-                    "path": relative,
-                    "size_bytes": len(data),
-                    "sha256": hashlib.sha256(data).hexdigest(),
-                }
-                if relative.startswith("lib/"):
-                    record["kind"] = library_kind(path.name)
-                files.append(record)
+                files.append(manifest_file_record(stage, path))
 
         manifest = {
             "schema_version": 1,

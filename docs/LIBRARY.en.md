@@ -31,6 +31,41 @@ and is not a compatibility guarantee for every OS version. Consumers should
 ignore unknown fields. Incompatible schema changes require incrementing
 `schema_version`.
 
+## Connecting a C/C++ project
+
+Every archive contains a relocatable CMake package in `cmake/vpn-core/`. Library
+and header paths are computed relative to the config file, so the SDK can be
+moved or extracted into a directory containing spaces. Minimum CMake version:
+3.15.
+
+```cmake
+find_package(vpn-core CONFIG REQUIRED
+    PATHS "${VPN_CORE_SDK}/cmake/vpn-core" NO_DEFAULT_PATH)
+
+add_executable(my_app main.c)
+target_link_libraries(my_app PRIVATE vpn-core::shared)
+```
+
+`vpn-core::shared` is available where the archive includes a dynamic library;
+`vpn-core::static` selects the static library. On Windows, the shared target
+uses the DLL and its import library. The generic `vpn-core::vpn-core` target
+chooses shared when available and otherwise static. The static target carries
+native dependencies from the same `rustc --print=native-static-libs` output
+recorded in the manifest. For Android and iOS, pass the SDK path to a project
+configured with the matching NDK/iOS CMake toolchain; cross-link checks do not
+prove on-device execution.
+
+Linux and macOS archives also include `lib/pkgconfig/vpn-core.pc`:
+
+```sh
+export PKG_CONFIG_PATH="$VPN_CORE_SDK/lib/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
+pkg-config --cflags --libs vpn-core
+pkg-config --static --libs vpn-core  # includes static-library dependencies
+```
+
+The `.pc` paths are computed from `${pcfiledir}`, so metadata keeps working
+after the SDK is moved. Use CMake on Windows and mobile platforms.
+
 Combined app/site rules use the added `rc_set_connection_owner` API:
 [contract, fail-closed behavior and Android integration](APPLICATION_ROUTING.en.md).
 
