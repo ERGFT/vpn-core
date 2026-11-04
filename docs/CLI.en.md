@@ -104,9 +104,9 @@ for TUN, `systemctl reload` rereads the config without dropping connections).
 
 `--tun-cleanup` removes leftover routing rules and the `strict_route` block on
 Linux, or the WFP kill switch on Windows, then exits. Use it if an unclean
-shutdown left TUN protection enabled. On Linux, it removes only marked rules
-and routes; if the core is still running, the command refuses to clean up. The
-command changes system network state and may require elevated privileges. This
+shutdown left TUN protection enabled. On Linux, it removes only marked rules and routes. Cleanup is refused on
+either platform while a running client holds the `auto_route` lock. The command
+changes system network state and may require elevated privileges. This
 mode is not supported on other platforms.
 
 Checking that everything works:
