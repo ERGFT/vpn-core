@@ -44,9 +44,8 @@ Do not block a core thread, make network requests or unwind exceptions through
 the C ABI. For the C ABI, replacing or removing the callback waits for active
 calls, so the callback must not call `rc_set_connection_owner` itself; the
 previous callback and `user` can be released after replacement or removal
-returns. The
-Rust API stores the callback in an `Arc`, and each active resolver call keeps
-its own clone: replacing the registered callback does not wait for calls that
+returns. The Rust API stores the callback in an `Arc`; each active resolver call
+keeps its own clone. Replacing the registered callback does not wait for calls that
 have already started. With the Rust API, remove the callback after all cores in
 the process have stopped and keep captured resources valid while those calls
 may still use them. Public C ABI signatures are unchanged; this adds a symbol.
