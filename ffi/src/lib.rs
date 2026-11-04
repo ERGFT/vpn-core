@@ -308,8 +308,9 @@ fn parse_config(
 ///
 /// - `config` — настройки текстом (JSON sing-box или Xray-core);
 /// - `base_dir` — папка для относительных путей в них (NULL — текущая);
-/// - `tun_fd` — дескриптор TUN от системы или -1 (тогда вход tun, если он
-///   есть, создаёт интерфейс сам — нужны права);
+/// - `tun_fd` — дескриптор TUN от системы на Unix или -1 (тогда вход tun,
+///   если он есть, создаёт интерфейс сам — нужны права); другие отрицательные
+///   значения отклоняются, а на не-Unix системах принимается только -1;
 /// - `error` — сюда при ошибке пишется её текст (освободить
 ///   [`rc_free_string`]), может быть NULL.
 ///
@@ -324,6 +325,21 @@ pub unsafe extern "C" fn rc_start(
     tun_fd: c_int,
     error: *mut *mut c_char,
 ) -> *mut RcCore {
+    if tun_fd < -1 {
+        set_error(
+            error,
+            "tun_fd должен быть -1 или неотрицательным дескриптором",
+        );
+        return std::ptr::null_mut();
+    }
+    #[cfg(not(unix))]
+    if tun_fd >= 0 {
+        set_error(
+            error,
+            "готовый дескриптор TUN поддерживается только на Unix",
+        );
+        return std::ptr::null_mut();
+    }
     // Владение переходит сразу: охранник закроет дескриптор на любом пути ошибки.
     #[cfg(unix)]
     let fd = (tun_fd >= 0).then(|| Arc::new(unsafe { OwnedFd::from_raw_fd(tun_fd) }));
