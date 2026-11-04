@@ -186,8 +186,10 @@ rc_stop(core);
 
   On a config error it returns NULL and puts the text in `err`.
 - **`rc_request(core, method, path, body, &status)`** — synchronous requests
-  to the local API ([API.en.md](API.en.md)), with the same path and response,
-  but without networking or a token. Streaming paths (`/events`, `/traffic`,
+  to the local API ([API.en.md](API.en.md)), with the same path and response.
+  The call invokes the API directly, bypassing the HTTP server and its token
+  check. A route may still initiate network operations. Streaming paths
+  (`/events`, `/traffic`,
   `/memory`, `/logs`) and the WebSocket `/connections` stream are not available
   through this function: events and logs use callbacks, while streaming
   traffic/memory data is not exposed in library mode. A regular

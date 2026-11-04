@@ -186,8 +186,10 @@ void rc_stop(RcCore *core);
 int rc_network_changed(RcCore *core);
 
 /*
- * Синхронный запрос к локальному API ядра (Clash API и собственные маршруты),
- * без сети и токена. Потоки /events, /traffic, /memory, /logs и WebSocket-поток
+ * Синхронный запрос к локальному API ядра (Clash API и собственные маршруты).
+ * Вызов обращается к API напрямую, минуя HTTP-сервер и проверку его токена;
+ * маршрут может инициировать сетевые операции. Потоки /events, /traffic,
+ * /memory, /logs и WebSocket-поток
  * /connections через эту функцию недоступны: события и журнал передаются
  * callback-ам, потоковые данные трафика и памяти в режиме библиотеки не
  * предоставляются. GET /connections возвращает один снимок.
@@ -199,7 +201,9 @@ int rc_network_changed(RcCore *core);
  * Возвращает тело ответа (JSON; "" у 204) — освободить rc_free_string.
  */
 /* Synchronous requests to the core local API (Clash API and project-specific
- * endpoints) without networking or a token. Streaming /events, /traffic,
+ * endpoints) by calling the API directly, bypassing the HTTP server and its
+ * token check. A route may still initiate network operations.
+ * Streaming /events, /traffic,
  * /memory, /logs, and the WebSocket /connections stream are not available
  * through this function: events and logs use callbacks; streaming traffic
  * and memory data are not exposed in library mode. A regular GET /connections
