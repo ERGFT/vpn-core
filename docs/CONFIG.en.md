@@ -2,7 +2,7 @@
 
 [Русский](CONFIG.md) | **English**
 
-The config file in sing-box or Xray-core format: inbounds, outbounds, routing, server groups, subscriptions, `fragment` and `noises`. See also: [DNS](DNS.en.md), [TUN](TUN.en.md), [API](API.en.md), [link parameters](LINK.en.md).
+The config file in sing-box or Xray-core format: inbounds, outbounds, routing, server groups, subscriptions, `fragment` and `noises`. See also: [DNS](DNS.en.md), [TUN](TUN.en.md), [application routing](APPLICATION_ROUTING.en.md), [API](API.en.md), [link parameters](LINK.en.md).
 
 For multiple inbounds and outbounds, use a config file instead of flags, in
 the **sing-box** or **Xray-core** format (JSON, comments allowed); the format
@@ -54,11 +54,15 @@ What each format supports:
 | | sing-box | Xray-core |
 |---|---|---|
 | Inbounds | `socks`, `http`, `mixed`, `tun`; `direct` + a `hijack-dns` rule — DNS server | `socks`, `http`, `mixed`, `tun`; `dokodemo-door` routed to a `dns` outbound — DNS server |
-| Outbounds | `vless`, `trojan`, `direct`, `block`, `dns`, `selector`, `urltest` | `vless`, `trojan`, `freedom` (with `fragment`, `noises`), `blackhole`, `dns`; `balancers` with `leastPing`/`leastLoad` — a `urltest` group (checks from `observatory`) |
+| Outbounds | `vless`, `trojan`, TCP `socks` and `http` (HTTP CONNECT), `direct`, `block`, `dns`, `selector`, `urltest`; `fallback` is a vpn-core extension | `vless`, `trojan`, `freedom` (with `fragment`, `noises`), `blackhole`, `dns`; `balancers` with `leastPing`/`leastLoad` are converted to `urltest` (checks from `observatory`) |
 | Transport and TLS | `tls` (`reality`, `utls`, `alpn`, `certificate_path`), `transport`: `ws`, `grpc`, `httpupgrade` | `streamSettings`: `raw`/`tcp`, `ws`, `grpc`, `httpupgrade`, `xhttp`; `tls`/`reality`; `mux` (Mux.Cool) |
-| Rules | `domain`, `domain_suffix`, `domain_keyword`, `domain_regex`, `geosite`, `geoip`, `ip_cidr`, `ip_is_private`, `port`, `port_range`, `network`, `inbound`, `rule_set`, `protocol: dns`; actions `route`, `reject`, `sniff`, `hijack-dns` | `domain` (`geosite:`, `domain:`, `full:`, `regexp:`, `keyword:`, plain substring), `ip` (`geoip:`, addresses), `port`, `network`, `inboundTag`, `outboundTag`/`balancerTag`; `domainStrategy` `AsIs`/`IPIfNonMatch` |
+| Rules | `domain`, `domain_suffix`, `domain_keyword`, `domain_regex`, `geosite`, `geoip`, `ip_cidr`, `ip_is_private`, `port`, `port_range`, `network`, `inbound`, `rule_set`, `user_id`, `invert`, `protocol: dns`; actions `route`, `reject`, `sniff`, `hijack-dns` | `domain` (`geosite:`, `domain:`, `full:`, `regexp:`, `keyword:`, plain substring), `ip` (`geoip:`, addresses), `port`, `network`, `inboundTag`, `outboundTag`/`balancerTag`; `domainStrategy` `AsIs`/`IPIfNonMatch` |
 | DNS | `servers` (with `type`, and the legacy form with `address`), `rules`, `final`, `strategy`, `fakeip` | `servers` (strings and objects with `domains`; `+local` — direct), `queryStrategy`, `fakedns` |
 | API | `experimental.clash_api`: `external_controller`, `secret` | the same `experimental.clash_api` extension |
+
+Xray `leastLoad` does not retain its original semantics: both balancer types
+are converted to the same latency-based `urltest` group, and
+`strategy.settings` is ignored. Do not assume full Xray routing compatibility.
 
 Rules are checked in order; the first match wins. Within one rule the
 "where" conditions (domains, `geosite`, addresses, `geoip`) are combined with
