@@ -24,7 +24,8 @@ tests, connections, rules, logs, mode.
 ```
 
 - `secret` — the token right in the config, `secret_file` (extension) — in
-  a separate file; at least 16 characters.
+  a separate file; at least 16 UTF-8 bytes. Use an ASCII token to make its
+  length unambiguous.
 - `external_ui` — a folder with dashboard files (e.g. metacubexd's unpacked
   `compressed-dist.tgz`); it opens at `http://127.0.0.1:9090/ui/`. The client
   does not download dashboards itself (`external_ui_download_url` is an
