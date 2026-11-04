@@ -52,7 +52,7 @@ Statuses:
 | macOS | partially verified | the release workflow builds and runs the SDK C/C++ consumer on macOS arm64; `reality-client` and a full VPN/TUN scenario have not been tested on macOS |
 
 There has been no third-party crypto review of the REALITY implementation
-(details — `PLAN.md`, Stage 5).
+(details — `PLAN.en.md`, Stage 5).
 
 ## Known gaps
 

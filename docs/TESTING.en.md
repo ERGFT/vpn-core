@@ -86,7 +86,7 @@ completeness.
 ⚠️ Time to the **first data byte**, not to the SOCKS5 CONNECT reply: Xray
 answers CONNECT in advance, without waiting for the server connection (it
 replies "success" even if there is no server), so its CONNECT reply cannot be
-compared with ours. Details — `PLAN.md`, Stage 8.
+compared with ours. Details — `PLAN.en.md`, Stage 8.
 
 ## Comparison with xray-rust
 
@@ -149,7 +149,7 @@ recovery time.
 
 ## Performance and memory
 
-Benchmarks and the allocator choice — `PLAN.md`, Stages 0 and 7. In short:
+Benchmarks and the allocator choice — `PLAN.en.md`, Stages 0 and 7. In short:
 one buffer (17 KiB — so that a whole TLS record fits, which matters for
 Vision) per connection direction, no global pool; the system allocator by
 default (`--features mimalloc` is optional, and gave a larger idle RSS in
