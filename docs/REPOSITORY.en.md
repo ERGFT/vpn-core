@@ -25,6 +25,14 @@ in [README.en.md](README.en.md).
 | Directory/file | Purpose |
 |---|---|
 | `app/` | core lifecycle, config, SOCKS5/HTTP/mixed/DNS/TUN inbounds, rules and router, DNS, groups, subscriptions, and local API |
+| `app/config/` | configuration model and parsers for native files, links, and supported subsets of sing-box/Xray formats |
+| `app/access.rs` | allowed IP/network lists and temporary blocks after authentication failures |
+| `app/dns_in.rs`, `app/dns/` | UDP/TCP DNS inbound, upstream servers, cache, and fake-IP |
+| `app/rules.rs`, `app/ruleset.rs`, `app/geo.rs` | routing predicates, local rule sets, and geosite/geoip databases |
+| `app/sniff.rs`, `app/sniff_quic.rs` | domain detection from supported TCP protocols and QUIC Initial packets |
+| `app/group.rs`, `app/subscription.rs`, `app/http_client.rs` | outbound groups, subscription updates, and HTTP requests for subscriptions/node checks |
+| `app/stats.rs`, `app/events.rs` | connection and traffic tracking, plus the API event bus |
+| `app/api.rs`, `app/clash.rs` | local control/observation API and selected Clash-compatible API responses |
 | `app/socks_out.rs`, `app/http_connect_out.rs` | SOCKS5 and HTTP CONNECT TCP outbounds, including `detour` chains |
 | `app/vless_out.rs`, `app/trojan_out.rs`, `app/outbound.rs` | proxy outbound construction and shared TCP/UDP interfaces |
 | `app/tun/` | TUN flows, routes, UDP, and the platform WFP implementation |

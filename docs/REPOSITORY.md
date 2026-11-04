@@ -25,6 +25,14 @@
 | Каталог/файл | Назначение |
 |---|---|
 | `app/` | жизненный цикл ядра, конфигурация, входы SOCKS5/HTTP/mixed/DNS/TUN, правила и маршрутизатор, DNS, группы, подписки и локальное API |
+| `app/config/` | модель конфигурации и разбор собственных файлов, ссылок и поддерживаемых подмножеств форматов sing-box/Xray |
+| `app/access.rs` | списки разрешённых IP/подсетей и временная блокировка после ошибок авторизации |
+| `app/dns_in.rs`, `app/dns/` | DNS-вход UDP/TCP, upstream-серверы, кеш и fake-IP |
+| `app/rules.rs`, `app/ruleset.rs`, `app/geo.rs` | предикаты маршрутизации, локальные наборы правил и geosite/geoip-базы |
+| `app/sniff.rs`, `app/sniff_quic.rs` | определение домена из поддерживаемых TCP-протоколов и пакетов QUIC Initial |
+| `app/group.rs`, `app/subscription.rs`, `app/http_client.rs` | группы выходов, обновление подписок и HTTP-запросы для подписок/проверки узлов |
+| `app/stats.rs`, `app/events.rs` | учёт соединений и трафика, шина событий для API |
+| `app/api.rs`, `app/clash.rs` | локальный API управления и наблюдения; отдельные ответы, совместимые с Clash API |
 | `app/socks_out.rs`, `app/http_connect_out.rs` | TCP-выходы SOCKS5 и HTTP CONNECT, включая `detour`-цепочки |
 | `app/vless_out.rs`, `app/trojan_out.rs`, `app/outbound.rs` | создание прокси-выходов и общие интерфейсы TCP/UDP |
 | `app/tun/` | TUN-потоки, маршруты, UDP и платформенная реализация WFP |
