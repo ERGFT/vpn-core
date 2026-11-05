@@ -28,7 +28,7 @@ The terms below define editorial usage in project documentation. Definitions set
 | Проверка подлинности | Authentication | Checking that a peer or credentials match an expected identity [API](API.en.md), [architecture](ARCHITECTURE.en.md). |
 | Отпечаток TLS | TLS fingerprint | A set of observable TLS-client parameters used to describe or select a ClientHello profile [Features](FEATURES.en.md), [architecture](ARCHITECTURE.en.md). |
 | Внутреннее ревью | Internal review | A scoped check performed by project participants or automatically within the repository [REALITY reviews](reviews/2026-11-04-reality-internal-review.en.md). |
-| Независимый аудит | Independent audit | A separate external assessment with a named assessor, scope, and method [REALITY reviews](reviews/2026-11-04-reality-internal-review.en.md). |
+| Независимый аудит | Independent audit | A separate external assessment with a named assessor, scope, and method; the internal REALITY report is not such an audit [internal report](reviews/2026-11-04-reality-internal-review.en.md). |
 | Стабильный релиз | Stable release | A project release without a prerelease status, identified by a specific tag and artifact set [Releasing](RELEASING.en.md), [Releases](https://github.com/ERGFT/vpn-core/releases). |
 
 ## Term and synonym boundaries
