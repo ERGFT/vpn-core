@@ -53,7 +53,7 @@ What each format supports:
 
 | | sing-box | Xray-core |
 |---|---|---|
-| Inbounds | `socks`, `http`, `mixed`, `tun`; `direct` + a `hijack-dns` rule — DNS server | `socks`, `http`, `mixed`, `tun`; `dokodemo-door` routed to a `dns` outbound — DNS server |
+| Inbounds | `socks`, `http`, `mixed`, `tun`; `direct` + a `hijack-dns` rule — DNS server | `socks`, `http`, `mixed`, `tun`; `dokodemo-door` (or `tunnel`, only in the DNS-server role) routed to a `dns` outbound |
 | Outbounds | `vless`, `trojan`, TCP `socks` and `http` (HTTP CONNECT), `direct`, `block`, `dns`, `selector`, `urltest`; `fallback` is a vpn-core extension | `vless`, `trojan`, `freedom` (with `fragment`, `noises`), `blackhole`, `dns`; `balancers` with `leastPing`/`leastLoad` are converted to `urltest` (checks from `observatory`) |
 | Transport and TLS | `tls` (`reality`, `utls`, `alpn`, `certificate_path`), `transport`: `ws`, `grpc`, `httpupgrade`; core extension `type: xhttp` | `streamSettings`: `raw`/`tcp`, `ws`, `grpc`, `httpupgrade`, `xhttp` (also the legacy alias `splithttp`); `tls`/`reality`; `mux` (Mux.Cool) |
 | Rules | `domain`, `domain_suffix`, `domain_keyword`, `domain_regex`, `geosite`, `geoip`, `ip_cidr`, `ip_is_private`, `port`, `port_range`, `network`, `inbound`, `rule_set`, `user_id`, `invert`, `protocol: dns`; actions `route`, `reject`, `sniff`, `hijack-dns` | `domain` (`geosite:`, `domain:`, `full:`, `regexp:`, `keyword:`, plain substring), `ip` (`geoip:`, addresses), `port`, `network`, `inboundTag`, `outboundTag`/`balancerTag`; `domainStrategy` `AsIs`/`IPIfNonMatch` |
