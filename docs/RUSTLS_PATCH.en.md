@@ -30,12 +30,19 @@ The full extent of the changes is in `vendor/rustls-reality-patch.diff`
 | `server/hs.rs`, `server/server_conn.rs`, `server/test.rs` | The server certificate resolver gets `ClientHello.random` and the X25519 part of the client's share — only the test REALITY server in the core's tests needs this. |
 | `Cargo.toml` | An empty `[workspace]` so the crate builds on its own. |
 
-Not everything is gated on `reality` / `chrome_hello`: GREASE
-(RFC 8701) — in cipher suites, groups, key shares, versions and
-extensions — is added by the patch to **every** ClientHello of this
-rustls (except with a `no_grease` profile), i.e. to the core's other TLS
-connections too (DoH/DoT, subscription downloads). Servers must ignore
-GREASE, but it is a change in rustls behaviour for the whole process.
+The patch adds GREASE (RFC 8701) to cipher suites, groups, key shares,
+versions and extensions in every ClientHello built by this rustls unless
+the profile sets `no_grease`. The core sets `no_grease` for the Firefox
+profile. This switch does not control ECH GREASE, which is configured
+separately through `EchMode`: the core enables it for Chrome and Firefox
+profiles and clears it for Safari. GREASE fields therefore vary by profile
+and setting; it would be inaccurate to say that every form of GREASE is
+present in every TLS connection. Since the patch replaces rustls across
+the dependency graph, the changed ClientHello logic also applies to the
+core's other TLS connections, including DoH/DoT and subscription
+downloads; the selected profile determines which GREASE fields are sent.
+Servers must ignore standard GREASE values, but this still changes rustls
+behaviour process-wide.
 
 ## Updating rustls
 
