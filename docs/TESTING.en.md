@@ -42,13 +42,20 @@ after a refusal, the address-attempt limit, a maximum of two concurrent
 attempts, and an overall connection deadline without external DNS or network
 dependencies.
 
-On GitHub the platform does the same (`.github/workflows/ci.yml`) on every
-push to `main` and every pull request: on Linux — all of `scripts/ci.sh`
-(including interop with the Go REALITY server and Xray-core), TUN in a netns
-and the dependency license list; on **real Windows** — tests, the `.exe`
-build (downloadable from the run page, "Artifacts") and
-`scripts/windows_live_test.ps1`: the service, its folder permissions and TUN
-with real traffic. See the [release guide](RELEASING.en.md). For a new release,
+The GitHub workflow `.github/workflows/ci.yml` runs on pushes to `main` and
+pull requests. The `linux` job runs `scripts/ci.sh`, checks the C ABI and
+dependency license list, and runs TUN in a network namespace; the TUN step is
+skipped for pull requests from forks. The `windows` job runs on **real
+Windows** and performs tests, builds the `.exe` (downloadable from the run
+page under "Artifacts"), and runs `scripts/windows_live_test.ps1` to check the
+service, its folder permissions, and TUN with real traffic.
+
+Separate jobs run as well: `audit` checks advisories and dependency sources,
+including the patched rustls; `msrv` checks the workspace with Rust 1.89;
+`coverage` uploads an lcov report without a coverage threshold; and `secrets`
+scans the full Git history. The weekly scheduled workflow runs only `audit`.
+The `mobile` job is described below. See the [release guide](RELEASING.en.md).
+For a new release,
 use a version and tag that have not been published before; `v0.1.0` already
 exists. First run the non-publishing preflight on the exact `main` SHA, then
 push the new tag at that checked SHA. Preflight does not create a release; the
