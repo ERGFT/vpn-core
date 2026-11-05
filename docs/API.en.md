@@ -80,7 +80,7 @@ curl -H "$T" "http://127.0.0.1:9090/dns/query?name=example.com&type=A"
 
 `GET /proxies/{name}/delay` and `GET /group/{name}/delay` require the `url`
 parameter. `timeout` is in milliseconds, defaults to 5000, and is capped at
-30000. A single outbound returns a `delay` field in milliseconds; if it does
+30000. An invalid `timeout` or missing `url` returns `400`. An unknown outbound or group returns `404`. A single outbound returns a `delay` field in milliseconds; if it does
 not respond before the timeout, the API returns `504`. A group response
 contains only the members that responded.
 
