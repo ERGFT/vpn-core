@@ -103,9 +103,9 @@ int rc_validate(const char *config, const char *base_dir);
 
 /*
  * Запустить ядро.
- *   config   — обязательная UTF-8 строка с нулём в конце: JSON sing-box
- *              или Xray-core (формат определяется сам), как файл для
- *              `reality-client --config`;
+ *   config   — обязательная UTF-8 строка с нулём в конце: JSON в поддерживаемой
+ *              ядром части форматов sing-box или Xray-core (см. docs/CONFIG.md),
+ *              как для `reality-client --config`;
  *   base_dir — папка для относительных путей в настройках (NULL — текущая);
  *   tun_fd   — дескриптор TUN от системы на Unix (Android:
  *              ParcelFileDescriptor.detachFd(); владение переходит ядру при
@@ -119,8 +119,9 @@ int rc_validate(const char *config, const char *base_dir);
  * Возвращает ядро или NULL.
  */
 /* Start the core.
- *   config   — required NUL-terminated UTF-8 string: sing-box or Xray-core JSON
- *              (auto-detected), in the same format as `reality-client --config`;
+ *   config   — required NUL-terminated UTF-8 string: JSON in the subset of
+ *              sing-box or Xray-core supported by the core (see docs/CONFIG.md),
+ *              in the same format as `reality-client --config`;
  *   base_dir — base directory for relative paths (NULL means current dir);
  *   tun_fd   — system-provided TUN descriptor on Unix (Android:
  *              ParcelFileDescriptor.detachFd()). Ownership transfers to the
