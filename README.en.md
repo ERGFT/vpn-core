@@ -86,7 +86,7 @@ The executable is in `target/release/` on Linux and `target\release\` on Windows
 
 ## For developers
 
-The SDK is for apps that need an embedded VLESS client. Its public interface is a C ABI. The [library guide](docs/LIBRARY.en.md) and [`reality.h`](ffi/include/reality.h) describe memory ownership, threads, callbacks, and platform integration.
+The SDK lets an application embed `vpn-core` as its networking core. It can connect to VLESS and Trojan servers; its public interface is a C ABI. The [library guide](docs/LIBRARY.en.md) and [`reality.h`](ffi/include/reality.h) describe memory ownership, threads, callbacks, and platform integration.
 
 | API | Purpose |
 |---|---|
@@ -94,6 +94,7 @@ The SDK is for apps that need an embedded VLESS client. Its public interface is 
 | `rc_start` / `rc_stop` | Create, start, and cleanly stop a core instance |
 | `rc_request` | Call the core API directly, without a network HTTP server or token |
 | `rc_reload` | Apply a new configuration without recreating the whole app |
+| `rc_network_changed` | Notify the core of a network change detected by the host application |
 | `rc_is_alive` | Check the instance state and detect a terminal error |
 | Callbacks | Receive events/logs and provide platform functions such as socket protection or UID lookup |
 
@@ -103,16 +104,9 @@ from an extracted ZIP. Public headers and examples are in [`ffi/`](ffi/).
 
 ## Features and status
 
-| Area | Support |
-|---|---|
-| Protocol | VLESS, REALITY, TLS, XTLS Vision; TCP, WebSocket, gRPC, HTTPUpgrade, and XHTTP |
-| Network | SOCKS5/HTTP/mixed inbounds; sing-box SOCKS5 and HTTP CONNECT TCP outbounds with `detour` chains; fast IPv4/IPv6 address selection (Happy Eyeballs); UDP/XUDP, DNS (DoH/DoT/DoQ), TUN, kill switch |
-| Configuration | Xray-core format and part of sing-box format; rules, server groups, subscriptions |
-| Management | Local Clash API, metacubexd and yacd dashboards, systemd and Windows service |
-| Experimental | Android/iOS through C ABI; `fragment` and `noises`; application routing integration |
-| Not supported | KCP transport; ICMP/ping through TUN |
+The core implements VLESS and Trojan, TLS and REALITY security, several TCP transports, local proxies, and TUN for TCP/UDP. It also includes routing, DNS, server groups, subscriptions, and a local Clash API. Support varies by format and platform; importing a sing-box config does not imply compatibility with every option.
 
-Importing a sing-box config **does not mean full compatibility** with all of its options. See the [full matrix](docs/FEATURES.en.md) for each feature's status and test coverage.
+The [feature matrix](docs/FEATURES.en.md) lists capabilities, maturity, and specific checks. Scenarios and test results are documented in the [testing guide](docs/TESTING.en.md).
 
 ## Choosing a core
 
@@ -135,16 +129,15 @@ The [test results](docs/TESTING.en.md) describe the local Xray-core comparison a
 | Development | [core as a library](docs/LIBRARY.en.md) · [API](docs/API.en.md) · [internals](docs/README.en.md) |
 | Reliability and security | [features and tests](docs/FEATURES.en.md) · [comparison and methodology](docs/TESTING.en.md) · [security model](docs/SECURITY-MODEL.en.md) |
 
+The internal [REALITY review](docs/reviews/2026-11-04-reality-internal-review.en.md)
+describes its scope and limitations. It is an internal report, not an
+independent external audit.
+
 ## Security and limitations
 
-This is an educational and research project. It has not had a third-party security audit or cryptographic review of REALITY. A listed feature is not a security guarantee for every configuration.
+This is an educational and research project with no independent external security audit. REALITY has received an internal review; its scope is described in the [report](docs/stage5-crypto-review-and-interop.en.md). The [security model](docs/SECURITY-MODEL.en.md) explains threats, DNS behavior, and failure handling in detail.
 
-- With `security=none`, traffic is not encrypted; this mode requires the explicit `--allow-insecure` option.
-- With REALITY, the UUID is sent only after REALITY verification. With TLS, the server must present a valid certificate.
-- By default, the local proxy listens only on `127.0.0.1`. DNS behavior depends on traffic type and configuration; see the [security model](docs/SECURITY-MODEL.en.md).
-- The project is licensed under [GPL-3.0-or-later](LICENSE). Check how the license applies to your app and distribution before embedding the core.
-
-Report vulnerabilities privately using [SECURITY.md](SECURITY.md), not in a public issue.
+With `security=none`, traffic is not encrypted; the CLI requires the explicit `--allow-insecure` option. The sing-box `allow_insecure` setting is documented in the [configuration guide](docs/CONFIG.en.md). By default, the local proxy listens only on `127.0.0.1`. Report vulnerabilities privately using [SECURITY.md](SECURITY.md). The project is licensed under [GPL-3.0-or-later](LICENSE); check how the license applies to your app and distribution before embedding the core.
 
 ## Contributing and license
 

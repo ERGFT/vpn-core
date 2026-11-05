@@ -13,11 +13,12 @@
 | [CLI.md](CLI.md) | ключи командной строки, автозапуск (служба Windows, systemd) |
 | [CONFIG.md](CONFIG.md) | файл настроек sing-box/Xray: входы, выходы, правила, наборы правил, группы серверов, подписки, `fragment` и `noises` |
 | [DNS.md](DNS.md) | свой DNS: серверы DoH/DoT/DoQ, правила, кеш, fake-IP |
-| [TUN.md](TUN.md) | весь трафик компьютера через клиент (как VPN), kill switch |
+| [TUN.md](TUN.md) | перенаправление системного трафика в TUN; ядро обрабатывает TCP/UDP; kill switch на Linux/Windows; ICMP и ping не поддерживаются |
 | [API.md](API.md) | локальное API (Clash API), веб-панели, перечитывание настроек |
 | [LINK.md](LINK.md) | параметры ссылки `vless://` |
 | [WINDOWS.md](WINDOWS.md) | сборка и запуск на Windows |
-| [SECURITY-MODEL.md](SECURITY-MODEL.md) | что клиент гарантирует, угрозы в общей Wi-Fi сети |
+| [SECURITY-MODEL.md](SECURITY-MODEL.md) | предпосылки, границы защиты и угрозы в общей Wi-Fi сети |
+| [Внутреннее ревью REALITY](reviews/2026-11-04-reality-internal-review.md) | объём и результаты внутренней проверки; это не независимый внешний аудит |
 
 ## Встраивать и разрабатывать
 
@@ -29,8 +30,15 @@
 | [REPOSITORY.md](REPOSITORY.md) | где что лежит в репозитории |
 | [TESTING.md](TESTING.md) | как проверяется проект, сравнение с Xray-core, производительность |
 | [RUSTLS_PATCH.md](RUSTLS_PATCH.md) | что изменено в rustls и почему |
-| [stage5-crypto-review-and-interop.md](stage5-crypto-review-and-interop.md) | чек-лист для стороннего крипто-ревью REALITY |
+| [stage5-crypto-review-and-interop.md](stage5-crypto-review-and-interop.md) | чек-лист для будущего независимого крипто-ревью REALITY |
 | [RELEASING.md](RELEASING.md) | предварительная сборка, проверка артефактов и публикация тега |
+
+## Правила документации
+
+| Страница | О чём |
+|---|---|
+| [STYLE_GUIDE.md](STYLE_GUIDE.md) | редакционные правила VCTWS 1.0 для технической документации |
+| [GLOSSARY.md](GLOSSARY.md) | согласованные русские и английские технические термины |
 
 История решений по этапам — [PLAN.md](../PLAN.md), что изменилось —
 [CHANGELOG.md](../CHANGELOG.md).
