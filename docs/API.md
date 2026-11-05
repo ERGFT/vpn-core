@@ -27,6 +27,9 @@
 "route": { "presets": ["block-ads", "private-direct", "ru-direct"] }
 ```
 
+Это частичный фрагмент настроек, а не полный JSON-файл. Добавьте показанные поля
+в соответствующие разделы своей конфигурации.
+
 - `secret` — токен прямо в файле, `secret_file` (расширение) — в отдельном
   файле; не короче 16 байт в UTF-8. Чтобы длина была очевидна, используйте
   ASCII-токен.
@@ -63,7 +66,8 @@ curl -H "$T" "http://127.0.0.1:9090/dns/query?name=example.com&type=A"
 
 | Запрос | Что делает |
 |---|---|
-| `GET /version` | версия ядра и поля версии для клиентов Clash API |
+| `GET /` | приветствие без токена; если настроена панель, браузер перенаправляется в `/ui/` |
+| `GET /version` | версия ядра и флаги совместимости клиентов Clash (`premium`, `meta`) |
 | `GET /configs`, `PATCH /configs` | порты входов и режим; сменить режим (`mode`; порты и прочее — только в файле настроек) |
 | `PUT /configs` | перечитать файл настроек; с `payload` — применить новые настройки (без записи в файл, как у Clash) |
 | `GET /proxies[/{имя}]`, `PUT /proxies/{группа}` | выходы, группы (`now`, `all`), серверы подписок; выбрать участника selector |
@@ -72,7 +76,7 @@ curl -H "$T" "http://127.0.0.1:9090/dns/query?name=example.com&type=A"
 | `GET /connections`, `DELETE /connections[/{id}]` | открытые соединения (выход, цепочка, правило, трафик); закрыть |
 | `GET /rules` | правила по порядку и `route.final` |
 | `GET /providers/proxies[/{имя}]`, `PUT …/{имя}`, `GET …/{имя}/healthcheck` | подписки: серверы, обновить, проверить |
-| `GET /providers/rules` | пустой список rule providers (`{"providers": {}}`) |
+| `GET /providers/rules` | пустая карта rule providers (`providers: {}`) |
 | `GET /dns/query?name=&type=` | спросить DNS клиента |
 
 Для `GET /proxies/{имя}/delay` и `GET /group/{имя}/delay` обязателен

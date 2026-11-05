@@ -6,6 +6,8 @@ All `reality-client` options for running with a single link, and autostart setup
 
 ## Configuration and validation
 
+Use `-c` as the short form of `--config` when specifying a configuration file.
+
 Start normally with a config file, or check that it loads:
 
 ```sh

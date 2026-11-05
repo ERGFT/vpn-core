@@ -23,7 +23,7 @@ reality-client --config config.json
 поддерживается`, а не молча пропущенная настройка. Опечатка в имени
 ключа — тоже ошибка.
 
-```json
+```jsonc
 {
   "inbounds": [
     { "type": "mixed", "tag": "local", "listen": "127.0.0.1", "listen_port": 1080 }
@@ -81,6 +81,8 @@ reality-client --config config.json
 [sing-geoip](https://github.com/SagerNet/sing-geoip/tree/rule-set) или
 MetaCubeX/meta-rules-dat) и исходный `.json`, только `type: local`:
 
+Ниже — частичный фрагмент раздела `route`, а не полный файл настроек.
+
 ```json
 "route": {
   "rule_set": [{ "type": "local", "tag": "ru", "format": "binary", "path": "geosite-category-ru.srs" }],
@@ -124,6 +126,9 @@ MetaCubeX/meta-rules-dat) и исходный `.json`, только `type: local
 SOCKS5/HTTP CONNECT звеньев можно вложить; базовым выходом может быть `direct`,
 VLESS или Trojan:
 
+Ниже показаны связанные разделы `outbounds` и `route`; это частичный фрагмент
+конфигурации, а не полный файл.
+
 ```json
 "outbounds": [
   { "type": "socks", "tag": "entry", "server": "entry.example", "server_port": 1080, "network": "tcp" },
@@ -141,8 +146,8 @@ VLESS или Trojan:
 В sing-box-выходах `socks` и `http` учётные данные задаются парой
 `username`/`password`. Для SOCKS5 это аутентификация RFC 1929; каждое поле
 должно занимать 1–255 байт. Для HTTP CONNECT используется Basic auth;
-имя не может содержать двоеточие. Обе строки обязательны вместе, не должны
-быть пустыми и могут занимать до 4096 байт; управляющие символы запрещены.
+имя не может содержать двоеточие. Оба поля обязательны вместе, не должны быть
+пустыми и могут занимать до 4096 байт; управляющие символы запрещены.
 Расширение ядра `password_file` задаёт пароль вместо `password`: берётся первая
 непустая строка файла без пробелов по краям. Укажите только один из двух
 источников пароля.
@@ -161,7 +166,10 @@ SOCKS5 outbound поддерживает только TCP и не поддерж
 Несколько серверов — группа; группа сама выход, её tag пишут в правила и
 `route.final`:
 
-```json
+Следующий JSONC-фрагмент показывает только группу и подписку, а не полный файл
+настроек.
+
+```jsonc
 "outbounds": [
   { "type": "urltest", "tag": "auto",            // самый быстрый; "fallback" — первый работающий;
     "outbounds": ["proxy"],                      // "selector" — выбранный (default или первый)
@@ -197,6 +205,8 @@ SOCKS5 outbound поддерживает только TCP и не поддерж
   сохранённого списка загружается до включения маршрутов.
 
 ## Против DPI: fragment и noises
+
+Ниже — объект выхода `direct` для раздела `outbounds`, а не полный файл настроек.
 
 ```json
 { "type": "direct", "tag": "direct",

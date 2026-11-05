@@ -186,25 +186,35 @@ void rc_stop(RcCore *core);
 int rc_network_changed(RcCore *core);
 
 /*
- * Запрос к API ядра — те же пути и ответы, что у HTTP API (Clash API и
- * свои), без сети и токена:
+ * Синхронный запрос к локальному API ядра (Clash API и собственные маршруты).
+ * Вызов обращается к API напрямую, минуя HTTP-сервер и проверку его токена;
+ * маршрут может инициировать сетевые операции. Потоки /events, /traffic,
+ * /memory, /logs и WebSocket-поток
+ * /connections через эту функцию недоступны: события и журнал передаются
+ * callback-ам, потоковые данные трафика и памяти в режиме библиотеки не
+ * предоставляются. GET /connections возвращает один снимок.
  *   rc_request(core, "GET", "/proxies", NULL, &status);
  *   rc_request(core, "PUT", "/proxies/proxy", "{\"name\":\"auto\"}", &status);
  *   rc_request(core, "PATCH", "/configs", "{\"mode\":\"global\"}", &status);
  *   rc_request(core, "GET", "/connections", NULL, &status);
  * body — NULL или JSON. В status (если не NULL) — код ответа HTTP.
  * Возвращает тело ответа (JSON; "" у 204) — освободить rc_free_string.
- * Потоки (/events, /logs…) — через rc_set_event_callback, rc_set_log_callback.
  */
-/* Request the core API using the same paths and responses as the HTTP API
- * (Clash API and project-specific endpoints), without networking or a token:
+/* Synchronous requests to the core local API (Clash API and project-specific
+ * endpoints) by calling the API directly, bypassing the HTTP server and its
+ * token check. A route may still initiate network operations.
+ * Streaming /events, /traffic,
+ * /memory, /logs, and the WebSocket /connections stream are not available
+ * through this function: events and logs use callbacks; streaming traffic
+ * and memory data are not exposed in library mode. A regular GET /connections
+ * returns one snapshot.
  *   rc_request(core, "GET", "/proxies", NULL, &status);
  *   rc_request(core, "PUT", "/proxies/proxy", "{\"name\":\"auto\"}", &status);
  *   rc_request(core, "PATCH", "/configs", "{\"mode\":\"global\"}", &status);
  *   rc_request(core, "GET", "/connections", NULL, &status);
  * body may be NULL or JSON. If status is non-NULL, it receives the HTTP
  * response code. Returns the response body (JSON; empty for 204); free it with
- * rc_free_string. Streams (/events, /logs, etc.) use the callback functions.
+ * rc_free_string.
  */
 char *rc_request(RcCore *core, const char *method, const char *path, const char *body,
                  int *status);

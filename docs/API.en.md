@@ -28,6 +28,9 @@ example, is not claimed as tested here.
 "route": { "presets": ["block-ads", "private-direct", "ru-direct"] }
 ```
 
+This is a partial config fragment, not a complete JSON file. Add the shown fields
+to the corresponding sections of your configuration.
+
 - `secret` — the token right in the config, `secret_file` (extension) — in
   a separate file; at least 16 UTF-8 bytes. Use an ASCII token to make its
   length unambiguous.
@@ -66,7 +69,8 @@ curl -H "$T" "http://127.0.0.1:9090/dns/query?name=example.com&type=A"
 
 | Request | What it does |
 |---|---|
-| `GET /version` | core version and version fields for Clash API clients |
+| `GET /` | greeting without a token; browsers are redirected to `/ui/` when a dashboard is configured |
+| `GET /version` | core version and Clash client compatibility flags (`premium`, `meta`) |
 | `GET /configs`, `PATCH /configs` | inbound ports and the mode; change the mode (`mode`; ports and the rest — only in the config file) |
 | `PUT /configs` | reread the config file; with `payload` — apply a new config (without writing the file, as in Clash) |
 | `GET /proxies[/{name}]`, `PUT /proxies/{group}` | outbounds, groups (`now`, `all`), subscription servers; select a selector member |
@@ -75,7 +79,7 @@ curl -H "$T" "http://127.0.0.1:9090/dns/query?name=example.com&type=A"
 | `GET /connections`, `DELETE /connections[/{id}]` | open connections (outbound, chain, rule, traffic); close |
 | `GET /rules` | rules in order and `route.final` |
 | `GET /providers/proxies[/{name}]`, `PUT …/{name}`, `GET …/{name}/healthcheck` | subscriptions: servers, update, check |
-| `GET /providers/rules` | empty rule-provider list (`{"providers": {}}`) |
+| `GET /providers/rules` | empty rule-provider map (`{"providers": {}}`) |
 | `GET /dns/query?name=&type=` | ask the client's DNS |
 
 `GET /proxies/{name}/delay` and `GET /group/{name}/delay` require the `url`

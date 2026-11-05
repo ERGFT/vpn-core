@@ -10,7 +10,11 @@ The `tun` inbound creates a virtual network interface and, with `auto_route`,
 redirects system routes into it. Programs do not need separate proxy settings,
 but the core handles only TCP and UDP:
 
-```json
+The following JSONC fragment is partial, not a complete config file: it shows
+TUN fields and related rules. For complete configuration examples, see the
+[config guide](CONFIG.en.md).
+
+```jsonc
 "inbounds": [
   { "type": "tun", "tag": "tun",
     "address": ["172.19.0.1/30"],               // default, plus fdfe:dcba:9876::1/126
@@ -53,9 +57,11 @@ DNS is hijacked by an `inboundTag` rule → a `dns` outbound.
   or `reality-client --tun-cleanup` is run. On Linux, networks excluded
   with `route_exclude_address` remain reachable after a crash; the
   `unreachable` rule blocks other routes. While the client is running, its
-  marked connections bypass TUN. On Windows, WFP allows destinations in
-  `route_exclude_address`. It also allows DHCP when IPv4 is routed, and NDP
-  (ICMPv6), DHCPv6, and link-local when IPv6 is routed. Persistent WFP filters
+  marked connections bypass TUN. On Windows, exclusion routes support IPv4
+  only: an IPv6 `route_exclude_address` entry does not bypass TUN and triggers
+  a warning. WFP allows IPv4 destinations in `route_exclude_address`. It also
+  allows DHCP when IPv4 is routed, and NDP (ICMPv6), DHCPv6, and link-local
+  when IPv6 is routed. Persistent WFP filters
   (which survive a reboot) block other connections; the Windows service
   restarts itself after a crash. The system DNS is closed too: the server
   name resolves on restart
