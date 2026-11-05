@@ -20,8 +20,11 @@ The history and scope of the internal review are documented in [PLAN.en.md, “S
     the built-in root set or `--ca`): the same protection as HTTPS, the
     UUID goes to anyone holding a valid certificate for that name.
   - `none` — in plain text: the UUID and traffic are visible to anyone on
-    the path to the server. That is why such a link does not run without
-    `--allow-insecure`.
+    the path to the server. The CLI requires `--allow-insecure`; in a
+    sing-box config, set the core extension `allow_insecure: true` on the
+    VLESS/Trojan outbound (see the [configuration guide](CONFIG.en.md)). The
+    C ABI receives config from the host app, not CLI arguments (see the
+    [SDK guide](LIBRARY.en.md)).
 - **If a real site responds instead of the REALITY server:** after validating
   its certificate as ordinary TLS, the client starts one background `GET /`
   request with the selected browser profile's headers. The client returns the
@@ -70,7 +73,7 @@ What they **can** do, and how it is mitigated:
 
 | What | Protection |
 |---|---|
-| A link with `security=none`: the UUID and traffic are visible to everyone on the network, anyone can use the server | the client does not start such a link without `--allow-insecure` |
+| A link with `security=none`: the UUID and traffic are visible to everyone on the network, anyone can use the server | the CLI requires `--allow-insecure`; for sing-box/SDK config, see [`allow_insecure`](CONFIG.en.md) and the [SDK contract](LIBRARY.en.md) |
 | The proxy is open to the network (`--listen 0.0.0.0`): password guessing | password of at least 12 UTF-8 bytes; after 5 wrong attempts an address is blocked for 60 seconds, and later blocks double up to 1 hour. IPv6 attempts are tracked by `/64` subnet; successful authentication clears the failure history. `--allow-ip` further restricts clients |
 | The control API is reachable from the network: a token holder can change settings and control the client; `GET /config` exposes UUIDs and passwords | keep the API on loopback. Network access requires a token of at least 16 bytes and `allow_ip`; `Host` and browser `Origin` are checked. Do not enable `allow_query_token` unless needed: a URL containing the token may end up in proxy logs and browser history. Dashboard files and `GET /` are available without a token, but do not grant access to protected API routes |
 | The proxy is open to the network: SOCKS5 and HTTP proxy are **not encrypted** — the password, site addresses and data between the phone and the computer are visible on shared Wi-Fi | that is how these protocols work, the client cannot fix it; it warns at startup. Open the proxy to the network only at home, for your own devices, with `--allow-ip` |
