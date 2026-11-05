@@ -105,7 +105,9 @@
 - CLI для Linux x86_64 и Windows x86_64.
 - SDK ZIP для Linux x86_64, Windows x86_64, macOS arm64,
   Android arm64-v8a и iOS arm64; для каждого ZIP приложен SHA-256.
-- Лицензии зависимостей, CycloneDX SBOM и GitHub build provenance.
+- Лицензии зависимостей и CycloneDX SBOM опубликованы как файлы релиза;
+  GitHub build provenance опубликовано как GitHub-hosted attestation, а не как
+  скачиваемый asset.
 
 ### Протокол и транспорты
 - VLESS с `security=none`/`tls`/`reality`; REALITY с X25519MLKEM768
@@ -316,7 +318,9 @@ Release `v0.1.0` includes the CLI and C ABI SDKs for embedding the core.
 - CLI binaries for Linux x86_64 and Windows x86_64.
 - SDK ZIPs for Linux x86_64, Windows x86_64, macOS arm64,
   Android arm64-v8a, and iOS arm64; each ZIP has a SHA-256 checksum.
-- Dependency licenses, a CycloneDX SBOM, and GitHub build provenance.
+- Dependency licenses and a CycloneDX SBOM are published as release files;
+  GitHub build provenance is published as a GitHub-hosted attestation, not a
+  downloadable asset.
 
 ### Protocol and transports
 - VLESS with `security=none`/`tls`/`reality`; REALITY with X25519MLKEM768
