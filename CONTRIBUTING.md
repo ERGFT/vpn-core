@@ -52,8 +52,8 @@ scripts/ci.sh           # все дополнительные проверки, 
   изменений в разделе «Не выпущено» и опубликованных версиях;
   `PLAN.md` и `PLAN.en.md` — история решений и этапов. Запланированные
   работы не следует описывать как уже внесённые изменения. Статусы
-  возможностей — одними словами: «готово»,
-  «экспериментально», «не поддерживается», «не проверено на этой
+  возможностей — одними словами: «готово», «экспериментально»,
+  «проверено частично», «не поддерживается», «не проверено на этой
   платформе».
 - Меняется решение или открывается риск — `PLAN.md` / `PLAN.en.md`; меняется устройство
   ядра (новый модуль, путь соединения, предел) — `docs/ARCHITECTURE.md` и
@@ -132,7 +132,8 @@ same script: the Linux and Windows jobs cover different parts of the project.
   history under "Unreleased" and published versions; `PLAN.md` / `PLAN.en.md`
   — the historical decisions and stages. Do not describe planned work as a
   change already made. Feature statuses use the same words everywhere:
-  "ready", "experimental", "not supported", "not tested on this platform".
+  "ready", "experimental", "partially verified", "not supported",
+  "not tested on this platform".
 - If a decision changes or a risk appears — `PLAN.md` / `PLAN.en.md`; if the core's
   structure changes (a new module, connection path, limit) —
   `docs/ARCHITECTURE.md` and `docs/ARCHITECTURE.en.md`. It is also the best

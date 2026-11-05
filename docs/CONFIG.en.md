@@ -143,9 +143,9 @@ to `direct`. Only TCP chains are supported.
 
 In sing-box `socks` and `http` outbounds, set credentials as a pair:
 `username` and `password`. SOCKS5 uses RFC 1929 authentication; each field
-must be 1–255 bytes. HTTP CONNECT uses Basic authentication; both fields must
-be supplied together and non-empty, the username cannot contain a colon, and
-each field can be up to 4096 bytes. Control characters are rejected. The
+must be 1–255 bytes. HTTP CONNECT uses Basic authentication. Both fields are
+required together, must be non-empty, and can be up to 4096 bytes; the username
+cannot contain a colon, and control characters are rejected. The
 `password_file` core extension supplies the password instead of `password`:
 the first non-empty line is used with surrounding whitespace trimmed. Choose
 only one password source.

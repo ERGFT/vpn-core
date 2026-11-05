@@ -104,7 +104,19 @@ from an extracted ZIP. Public headers and examples are in [`ffi/`](ffi/).
 
 ## Features and status
 
-The core implements VLESS and Trojan, TLS and REALITY security, several TCP transports, local proxies, and TUN for TCP/UDP. It also includes routing, DNS, server groups, subscriptions, and a local Clash API. Support varies by format and platform; importing a sing-box config does not imply compatibility with every option.
+| Layer | Capabilities |
+|---|---|
+| Protocols and flow | VLESS, Trojan, and XTLS Vision |
+| Connection security | REALITY and TLS |
+| Transports | TCP, WebSocket, gRPC, HTTPUpgrade, and XHTTP |
+| Inbounds | SOCKS5, HTTP, and mixed |
+| Outbounds | Include VLESS, Trojan, direct, block, DNS, and server groups. SOCKS5 and HTTP CONNECT are supported only for TCP and only in sing-box format; `detour` chains are also available there |
+| Configuration | Xray-core format and part of sing-box format; rules, server groups, and subscriptions |
+| Networking and routing | UDP over VLESS through XUDP, DNS (DoH/DoT/DoQ), TUN, kill switch, and IPv4/IPv6 selection (Happy Eyeballs) |
+| Management and platform integration | Local Clash API, metacubexd and yacd dashboards, systemd, and Windows service; Android/iOS through C ABI remain experimental |
+| Experimental | `fragment`, `noises`, and application routing integration |
+| Not supported | KCP transport; ICMP/ping through TUN |
+Importing a sing-box config does not imply support for every option.
 
 The [feature matrix](docs/FEATURES.en.md) lists capabilities, maturity, and specific checks. Scenarios and test results are documented in the [testing guide](docs/TESTING.en.md).
 
@@ -135,9 +147,13 @@ independent external audit.
 
 ## Security and limitations
 
-This is an educational and research project with no independent external security audit. REALITY has received an internal review; its scope is described in the [report](docs/stage5-crypto-review-and-interop.en.md). The [security model](docs/SECURITY-MODEL.en.md) explains threats, DNS behavior, and failure handling in detail.
+This is an educational and research project with no independent external security audit. REALITY has received only an internal review; its scope is described in the [report](docs/stage5-crypto-review-and-interop.en.md). The [security model](docs/SECURITY-MODEL.en.md) explains threats, DNS behavior, and failure handling in detail. A listed feature does not guarantee security for every configuration.
 
-With `security=none`, traffic is not encrypted; the CLI requires the explicit `--allow-insecure` option. The sing-box `allow_insecure` setting is documented in the [configuration guide](docs/CONFIG.en.md). By default, the local proxy listens only on `127.0.0.1`. Report vulnerabilities privately using [SECURITY.md](SECURITY.md). The project is licensed under [GPL-3.0-or-later](LICENSE); check how the license applies to your app and distribution before embedding the core.
+- With `security=none`, traffic is not encrypted; the CLI requires the explicit `--allow-insecure` option. The sing-box `allow_insecure` setting is documented in the [configuration guide](docs/CONFIG.en.md).
+- With REALITY, the UUID is sent only after REALITY verification. With TLS, the server must present a valid certificate.
+- By default, the local proxy listens only on `127.0.0.1`. DNS behavior depends on traffic type and configuration; see the [security model](docs/SECURITY-MODEL.en.md).
+- Report vulnerabilities privately using [SECURITY.md](SECURITY.md).
+- The project is licensed under [GPL-3.0-or-later](LICENSE); check how the license applies to your app and distribution before embedding the core.
 
 ## Contributing and license
 

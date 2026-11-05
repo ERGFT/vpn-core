@@ -193,7 +193,7 @@ rc_stop(core);
 - **`rc_request(core, method, path, body, &status)`** — synchronous requests
   to the local API ([API.en.md](API.en.md)), with the same path and response.
   The call invokes the API directly, bypassing the HTTP server and its token
-  check. A route may still initiate network operations. Streaming paths
+  check; a route may still initiate network operations. Streaming paths
   (`/events`, `/traffic`,
   `/memory`, `/logs`) and the WebSocket `/connections` stream are not available
   through this function: events and logs use callbacks, while streaming
@@ -220,11 +220,11 @@ rc_stop(core);
   policy. Returns `0` when handled, or `-1` for a NULL handle or an internal
   error.
 - **`rc_set_protect(cb, user)` and `rc_set_connection_owner(cb, user)`** —
-  process-wide callbacks for socket protection and UID lookup. They must be
-  thread-safe and return quickly. Replacing or removing one waits for active
-  calls, so a callback must not call its own setter: it would wait for itself
-  to finish. After the setter returns, the previous callback and `user` may be
-  freed.
+  process-wide callbacks for socket protection and UID lookup. Register them
+  before `rc_start`. They must be thread-safe and return quickly. Replacing or
+  removing one waits for active calls, so a callback must not call its own
+  setter: it would wait for itself to finish. After the setter returns, you may
+  free the previous callback and `user` data.
 - **`rc_set_event_callback(core, cb, user)`** — events (like the
   `GET /events` stream): connections opening and closing, group switches,
   subscription updates, reloads, mode changes. The callback receives a
