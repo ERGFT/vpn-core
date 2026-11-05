@@ -295,17 +295,19 @@ void rc_set_protect(rc_protect cb, void *user);
 void rc_set_connection_owner(rc_connection_owner cb, void *user);
 
 /* Windows: dir — обязательная UTF-8 строка с нулём в конце; NULL или
- * некорректный UTF-8 даёт -1. Корректный путь даёт 0. На Windows каталог
- * для файла блокировки auto_route должен быть доступен для записи только
- * у SYSTEM и администраторов. Без него вход TUN с auto_route на Windows не
- * запускается (с готовым дескриптором TUN не нужен). Вызывать до rc_start,
- * один раз; на других системах настройка не действует. Строка пути нужна
- * только на время вызова. */
+ * некорректный UTF-8 даёт -1, принятие строки — 0. Функция не проверяет
+ * существование каталога и его права; каталог для файла блокировки
+ * auto_route приложение должно защитить так, чтобы писать могли только
+ * SYSTEM и администраторы. Ошибка открытия обнаружится при запуске TUN с
+ * auto_route. Путь задаётся до rc_start один раз; повторный вызов не заменит
+ * уже заданный путь. На других системах настройка не действует. Строка пути
+ * нужна только на время вызова. */
 /* dir must be a NUL-terminated UTF-8 string; NULL or invalid UTF-8 returns
- * -1, and a valid path returns 0. On Windows, the directory for the
- * auto_route lock file must be writable only by SYSTEM and administrators.
- * On Windows, TUN with auto_route cannot start without this directory (it is
- * not needed when a TUN FD is supplied). Call once before rc_start; the
+ * -1, and accepting the string returns 0. The function does not check whether
+ * the directory exists or its permissions. On Windows, the host app must
+ * protect the auto_route lock directory so only SYSTEM and administrators
+ * can write to it; an open error is reported when TUN with auto_route starts.
+ * Set the path once before rc_start; a later call does not replace it. The
  * setting has no effect on other systems. The path string is borrowed only
  * for the duration of the call. */
 int rc_set_lock_dir(const char *dir);
