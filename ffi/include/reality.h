@@ -103,8 +103,11 @@ int rc_validate(const char *config, const char *base_dir);
 
 /*
  * Запустить ядро.
- *   config   — настройки текстом: JSON sing-box или Xray-core (формат
- *              определяется сам), как файл для `reality-client --config`;
+ *   config   — настройки текстом: поддерживаемое подмножество JSON sing-box
+ *              или Xray (формат определяется сам), как для `reality-client
+ *              --config`. Полная совместимость с upstream не обещается;
+ *              поля и
+ *              ограничения: https://github.com/ERGFT/vpn-core/blob/main/docs/CONFIG.md
  *   base_dir — папка для относительных путей в настройках (NULL — текущая);
  *   tun_fd   — дескриптор TUN от системы на Unix (Android:
  *              ParcelFileDescriptor.detachFd(); владение переходит ядру при
@@ -118,8 +121,10 @@ int rc_validate(const char *config, const char *base_dir);
  * Возвращает ядро или NULL.
  */
 /* Start the core.
- *   config   — configuration text: sing-box or Xray-core JSON (auto-detected),
- *              in the same format as `reality-client --config`;
+ *   config   — configuration text: the supported subset of sing-box or Xray
+ *              JSON (auto-detected), as for `reality-client --config`. Full
+ *              upstream compatibility is not claimed. See
+ *              https://github.com/ERGFT/vpn-core/blob/main/docs/CONFIG.en.md
  *   base_dir — base directory for relative paths (NULL means current dir);
  *   tun_fd   — system-provided TUN descriptor on Unix (Android:
  *              ParcelFileDescriptor.detachFd()). Ownership transfers to the
@@ -285,15 +290,20 @@ void rc_set_protect(rc_protect cb, void *user);
  * app, not the core, maps package names and shared UIDs. */
 void rc_set_connection_owner(rc_connection_owner cb, void *user);
 
-/* Windows: каталог для файла блокировки auto_route — запись в него только
- * у SYSTEM и администраторов. Без него вход TUN с auto_route на Windows не
- * запускается (с готовым дескриптором TUN не нужен). Вызывать до rc_start,
- * один раз; на других системах ничего не делает. 0 — успех, -1 — ошибка. */
-/* Windows: directory for the auto_route lock file; only SYSTEM and
- * administrators may write to it. On Windows, TUN with auto_route cannot
- * start without this directory (it is not needed when a TUN FD is supplied).
- * Call once before rc_start. No effect on other systems. 0 means success;
- * -1 means error. */
+/* Windows: задаёт каталог файла блокировки auto_route; запись должна быть
+ * разрешена только SYSTEM и администраторам. Для TUN с auto_route вызвать до
+ * rc_start; в процессе используется путь из первого успешного вызова. Каталог
+ * и его ACL здесь не
+ * проверяются: ошибка открытия проявится при запуске TUN с auto_route.
+ * 0 означает, что dir был ненулевой UTF-8 строкой, а не что каталог пригоден;
+ * -1 означает NULL или не-UTF-8. На других системах настройка не действует. */
+/* Windows: sets the directory for the auto_route lock file; only SYSTEM and
+ * administrators should be able to write to it. Call before rc_start when
+ * using TUN with auto_route. Only the path from the first successful call in
+ * a process is used. This call does not check that the directory exists or
+ * has a suitable ACL; an open failure appears when TUN with auto_route starts.
+ * 0 means dir was a non-NULL UTF-8 string, not that the path is usable; -1
+ * means NULL or non-UTF-8. No effect on other systems. */
 int rc_set_lock_dir(const char *dir);
 
 /* Освободить строку, которую вернула библиотека. NULL — ничего.

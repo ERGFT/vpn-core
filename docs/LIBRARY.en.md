@@ -180,8 +180,8 @@ rc_stop(core);
 ```
 
 - **`rc_start(config, base_dir, tun_fd, &err)`**:
-  - `config` — the config as text (sing-box or Xray-core JSON, as for
-    `reality-client --config`);
+  - `config` — the supported subset of sing-box or Xray JSON, as for
+    `reality-client --config` ([format guide](https://github.com/ERGFT/vpn-core/blob/main/docs/CONFIG.en.md)); full upstream compatibility is not claimed;
   - `base_dir` — the folder for relative paths in it (geosite/geoip
     databases, rule sets, subscription caches);
   - `tun_fd` — a TUN descriptor on Unix, or -1. Windows does not accept an
@@ -279,7 +279,7 @@ string with `rc_free_string`.
 | `rc_stop` | NULL is a safe no-op | Frees the handle; call once, then never use that pointer again |
 | `rc_set_event_callback` / `rc_set_log_callback` | A NULL callback unsubscribes; a NULL handle or invalid log level returns `-1` | After replacement/removal returns, the previous callback and `user` may be freed; a NULL log `level` means `info` |
 | `rc_set_protect` / `rc_set_connection_owner` | Process-wide setting; a NULL callback removes it; no status is returned | The old `user` may be freed after removal/replacement returns |
-| `rc_set_lock_dir` | NULL or non-UTF-8 path returns `-1`; a valid path returns `0` | The path string is borrowed for the call only |
+| `rc_set_lock_dir` | NULL or non-UTF-8 path returns `-1`; a non-NULL UTF-8 string returns `0` | The path from the first successful call in a process is used; `0` does not check directory existence or ACLs. The file is opened when Windows TUN `auto_route` starts |
 | `rc_free_string` | NULL is a safe no-op | Accepts only a string returned by this library that has not already been freed |
 
 NULL is accepted only where explicitly documented. Every non-NULL pointer must
@@ -466,11 +466,14 @@ The simplest option is `rc_start(config, dir, -1, …)` with a config as for
 - `mixed` is the proxy;
 - control goes through `rc_request`, without HTTP.
 
-On Windows call `rc_set_lock_dir(dir)` before `rc_start`: the folder for
-the `auto_route` lock file, writable only by SYSTEM and administrators
-(like `%ProgramData%\RealityClient` for `reality-client`). Without it a
-`tun` inbound with `auto_route` will not start: in a shared folder any
-user could take the lock first.
+On Windows, call `rc_set_lock_dir(dir)` before `rc_start` when using a TUN
+inbound with `auto_route`. The core uses the first path set in the process for
+its lock file. Create the directory first and restrict write access to SYSTEM
+and administrators (for example, `%ProgramData%\RealityClient` for
+`reality-client`). The function checks only NULL and UTF-8; it returns `0` even
+if the directory is missing, its ACL is unsuitable, or a prior call already
+set another path. The file is opened when `auto_route` starts, and any error
+is reported during core startup.
 
 ## Verification
 
