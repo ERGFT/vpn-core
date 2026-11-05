@@ -101,9 +101,8 @@ pkg-config --static --libs vpn-core  # включает зависимости �
 Для совместных правил приложений/сайтов добавлен `rc_set_connection_owner`:
 [контракт, fail-closed и интеграция Android](APPLICATION_ROUTING.md).
 
-Ядро можно встроить прямо в приложение — Android (`VpnService`), iOS
-(Network Extension), десктопный клиент — вместо того чтобы запускать
-`reality-client` отдельным процессом. Интерфейс — C ABI: подходит для
+Ядро можно встроить прямо в приложение Android, iOS или десктопа вместо того,
+чтобы запускать `reality-client` отдельным процессом. Интерфейс — C ABI: подходит для
 Kotlin/Java (JNI), Swift, C/C++, Go (cgo), C# (P/Invoke), Python (ctypes) и
 всего, что умеет вызывать функции C.
 
@@ -233,11 +232,13 @@ rc_stop(core);
   внутри callback. Event/log callback не должны вызывать функции для того же
   `RcCore`; их JSON и адресные строки действуют только до возврата callback,
   а контекст `user` должен жить до снятия callback или возврата `rc_stop`.
-- **`rc_stop(core)`** — остановить: входы закрываются, маршруты
-  возвращаются. Перед возвратом функция дожидается завершения обратных
-  вызовов; после возврата новые вызовы callback не начнутся. Данные `user`
-  и связанные с callback ресурсы можно освобождать после `rc_stop`. `NULL`
-  допустим и ничего не делает.
+- **`rc_stop(core)`** — остановить: входы закрываются, ядро снимает только
+  маршруты, которые само установило для TUN с `auto_route`. Если передан
+  дескриптор TUN от системы, маршрутами и kill switch управляет приложение-
+  хост. Перед возвратом функция дожидается завершения обратных вызовов; после
+  возврата новые вызовы callback не начнутся. Данные `user` и связанные с
+  callback ресурсы можно освобождать после `rc_stop`. `NULL` допустим и ничего
+  не делает.
 - **`rc_free_string(s)`** — освободить строку, которую вернула библиотека.
 
 После `rc_is_alive(core) == 0` причину можно получить через
@@ -441,12 +442,24 @@ C-часть обёртки (`jni.c`) вызывает `rc_start`/`rc_request`/`
 `rc_set_protect` — с обратным вызовом, который через `JNIEnv` (поток —
 `AttachCurrentThread`) вызывает `VpnService.protect(int)`.
 
-## iOS, macOS
+## iOS и macOS
 
-В `NEPacketTunnelProvider` дескриптор utun можно найти среди открытых
-дескрипторов процесса (так делают WireGuard и sing-box) и передать в
-`rc_start`. Сокеты ядра в Network Extension идут мимо туннеля и без
-`rc_set_protect`.
+Release SDK содержит статическую библиотеку для iOS; это подтверждает сборку
+артефакта, но не работу VPN на устройстве. C ABI принимает Unix-дескриптор, но
+не предоставляет callback-и чтения/записи пакетов. В iOS
+`NEPacketTunnelProvider` использует `NEPacketTunnelFlow.readPackets` и
+`writePackets`; этот объект нельзя передать как `tun_fd`. Apple указывает, что
+поддерживаемого способа получить файловый дескриптор из
+`NEPacketTunnelFlow` нет ([документация API](https://developer.apple.com/documentation/networkextension/nepackettunnelflow),
+[разъяснение Apple Developer Technical Support](https://developer.apple.com/forums/thread/756852)).
+Текущий C ABI не реализует адаптер для этого packet-flow API, поэтому
+интеграция с iOS Network Extension как полноценный VPN-клиент не подтверждена.
+
+Для macOS SDK consumer проверяется на runner, но это не подтверждает работу
+системного VPN/TUN. Host может передать только совместимый Unix-дескриптор;
+готового адаптера Network Extension и испытания на устройстве проект не
+предоставляет. На Linux и Windows ядро само создаёт и маршрутизирует TUN;
+на Apple-платформах этот режим не заявлен.
 
 ## Десктоп
 

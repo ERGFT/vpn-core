@@ -1376,9 +1376,10 @@ PLAN.en.md):
   - `rc_request` is the same API as over HTTP (`Api::embedded` +
     `Api::local`: path parsing and responses are shared, without the
     network, a token or browser checks);
-  - on Android and iOS the app hands over a ready TUN descriptor
-    (`InboundConfig::tun_fd` → `AsyncDevice::from_fd`; the system then sets
-    routes and the kill switch);
+  - on Android the app can pass the TUN descriptor from `VpnService`
+    (`InboundConfig::tun_fd` → `AsyncDevice::from_fd`); the system then sets
+    routes and the kill switch. iOS `NEPacketTunnelFlow` is not a descriptor,
+    and the C ABI has no packet-flow adapter (see `LIBRARY.en.md`);
   - the core's sockets are "protected" by an app callback
     (`net_protect::set_callback` → `VpnService.protect`);
   - one tokio runtime per core (2 worker threads);

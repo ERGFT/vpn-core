@@ -48,7 +48,7 @@ Statuses:
 | Transport `kcp` | not supported | not supported (see below why); `quic`/`h2` have been removed from Xray-core itself — the error suggests `xhttp` |
 | Linux | ready | builds and tested |
 | Windows | ready | CI on real Windows: all tests, the `.exe` build, the service and TUN with real traffic; smoke test against Xray-core — under Wine ([`docs/WINDOWS.en.md`](WINDOWS.en.md)) |
-| Library mode (C ABI): Android, iOS, desktop — [LIBRARY.en.md](LIBRARY.en.md) | experimental | the release workflow runs C/C++ SDK consumers on Linux, Windows, and macOS; Android/iOS consumers are cross-linked; no VPN app has been run on a device |
+| Library mode (C ABI): Android, iOS, desktop — [LIBRARY.en.md](LIBRARY.en.md) | experimental | the release workflow runs C/C++ SDK consumers on Linux, Windows, and macOS; Android/iOS consumers are cross-linked; no VPN app has been run on a device; there is no iOS `NEPacketTunnelFlow` adapter |
 | ICMP (ping) through TUN | not supported | — |
 | macOS | partially verified | the release workflow builds and runs the SDK C/C++ consumer on macOS arm64; `reality-client` and a full VPN/TUN scenario have not been tested on macOS |
 

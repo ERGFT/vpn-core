@@ -1,7 +1,8 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 /*
- * reality-core как библиотека: C ABI для приложений — Android (VpnService),
- * iOS (Network Extension), десктопных клиентов. Подробно — docs/LIBRARY.md.
+ * reality-core как библиотека: C ABI для приложений Android, iOS и десктопа.
+ * Android VpnService передаёт FD; текущий C ABI не содержит адаптера для
+ * iOS NEPacketTunnelFlow. Подробно — docs/LIBRARY.md.
  *
  * Библиотека: libreality.so / libreality.dylib / reality.dll (и статическая
  * libreality.a) — `cargo build --release -p reality-ffi`.
@@ -16,8 +17,9 @@
  * для того же RcCore. Их JSON действует до возврата callback; user должен
  * оставаться живым до снятия callback или возврата rc_stop.
  *
- * reality-core as a library: a C ABI for apps on Android (VpnService), iOS
- * (Network Extension), and desktop. See docs/LIBRARY.en.md for details.
+ * reality-core as a library: a C ABI for Android, iOS, and desktop apps.
+ * Android VpnService can provide an FD; the current C ABI has no adapter for
+ * iOS NEPacketTunnelFlow. See docs/LIBRARY.en.md for details.
  *
  * Build with `cargo build --release -p reality-ffi`. Artifacts depend on the
  * target: Linux/Android use libreality.so and libreality.a; macOS uses
@@ -109,9 +111,10 @@ int rc_validate(const char *config, const char *base_dir);
  *              поля и
  *              ограничения: https://github.com/ERGFT/vpn-core/blob/main/docs/CONFIG.md
  *   base_dir — папка для относительных путей в настройках (NULL — текущая);
- *   tun_fd   — дескриптор TUN от системы на Unix (Android:
- *              ParcelFileDescriptor.detachFd(); владение переходит ядру при
- *              вызове и дескриптор закрывается при ошибке запуска) или -1;
+ *   tun_fd   — совместимый дескриптор TUN от системы на Unix. В Android —
+ *              `ParcelFileDescriptor.detachFd()`. iOS NEPacketTunnelFlow не
+ *              является FD, адаптера для него в C ABI нет. Владение
+ *              переходит ядру при вызове и FD закрывается при ошибке запуска;
  *              с дескриптором маршруты и kill switch — забота системы, в
  *              настройках нужен вход "tun". На не-Unix системах передавать
  *              дескриптор нельзя. -1 означает отсутствие дескриптора;
@@ -126,9 +129,10 @@ int rc_validate(const char *config, const char *base_dir);
  *              upstream compatibility is not claimed. See
  *              https://github.com/ERGFT/vpn-core/blob/main/docs/CONFIG.en.md
  *   base_dir — base directory for relative paths (NULL means current dir);
- *   tun_fd   — system-provided TUN descriptor on Unix (Android:
- *              ParcelFileDescriptor.detachFd()). Ownership transfers to the
- *              core on call; it is closed if startup fails. With an FD,
+ *   tun_fd   — a compatible system-provided TUN descriptor on Unix. In
+ *              Android, use `ParcelFileDescriptor.detachFd()`. iOS NEPacketTunnelFlow is
+ *              not an FD and has no adapter in this C ABI. Ownership transfers
+ *              to the core on call; the FD is closed if startup fails. With an FD,
  *              routing and kill switch are the system's responsibility, and
  *              the config needs a "tun" inbound. Pass no descriptor on
  *              non-Unix systems. -1 means no descriptor; other negative
@@ -168,14 +172,18 @@ int rc_is_alive(RcCore *core);
 int rc_last_error_code(RcCore *core);
 char *rc_last_error_message(RcCore *core);
 
-/* Остановить ядро: входы закрываются, маршруты возвращаются. Функция ждёт
- * возврата уже выполняющихся event/log callbacks и запрещает новые; после
- * возврата callback-функцию и user можно освободить. Не вызывайте rc_stop из
- * callback этого core. После этого core недействителен. NULL — ничего. */
-/* Stop the core: inbounds are closed and routes restored. Waits for running
- * event/log callbacks and prevents new ones from starting. After return, the
- * callback and user data may be freed. Do not call rc_stop from a callback for
- * this core. The core handle becomes invalid. NULL is a no-op. */
+/* Остановить ядро: входы закрываются; ядро снимает только маршруты, которые
+ * само установило для TUN с auto_route. Для TUN с дескриптором от системы
+ * маршрутами и kill switch управляет приложение-хост. Функция ждёт возврата
+ * уже выполняющихся event/log callbacks и запрещает новые; после возврата
+ * callback-функцию и user можно освободить. Не вызывайте rc_stop из callback
+ * этого core. После этого core недействителен. NULL — ничего. */
+/* Stop the core: inbounds are closed; the core removes only routes it
+ * installed for a TUN with auto_route. The host application manages routes
+ * and the kill switch for a system-provided TUN descriptor. The function waits
+ * for running event/log callbacks and prevents new ones from starting. After
+ * return, the callback and user data may be freed. Do not call rc_stop from a
+ * callback for this core. The core handle becomes invalid. NULL is a no-op. */
 void rc_stop(RcCore *core);
 
 /* Сообщить ядру, что host зафиксировал смену сети (Wi-Fi/cellular, default
