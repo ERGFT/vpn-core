@@ -1469,6 +1469,23 @@ added to REALITY plaintext with a regression test. This value was not
 auto-synchronized and could become stale; it was a plausible version rather
 than `0.0.0`, not a protocol feature claim.
 
+The checked upstream condition also required both configured version bounds,
+the allowed time difference, and a matching ShortId:
+
+```go
+if (config.MinClientVer == nil || Value(hs.c.ClientVer[:]...) >= Value(config.MinClientVer...)) &&
+    (config.MaxClientVer == nil || Value(hs.c.ClientVer[:]...) <= Value(config.MaxClientVer...)) &&
+    (config.MaxTimeDiff == 0 || time.Since(hs.c.ClientTime).Abs() <= config.MaxTimeDiff) &&
+    (config.ShortIds[hs.c.ClientShortId]) {
+    hs.c.conn = conn
+}
+```
+
+Nil version bounds disable their respective comparison. A failed condition
+leaves `hs.c.conn` unset and lets traffic fall through to the decoy rather than
+sending a TLS alert. The `Value` helper interprets version bytes as a
+big-endian integer, matching the three-byte field sent by this client.
+
 The plan emphasizes that upstream REALITY and DPI behavior evolve: fingerprints
 and client version need periodic verification. It closes with a continuing
 warning: expanding the rustls patch and crypto surface increases the value of
