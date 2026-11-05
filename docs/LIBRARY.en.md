@@ -241,9 +241,11 @@ rc_stop(core);
   Event/log callbacks must not call functions for the same `RcCore`; their JSON
   and address strings are borrowed until the callback returns, and their `user`
   context must stay alive until callback removal or until `rc_stop` returns.
-- **`rc_stop(core)`** — stop: inbounds close and routes are restored. Before
-  returning, it waits for callbacks to finish; no new callback starts after
-  return. You can release `user` data and callback resources after `rc_stop`.
+- **`rc_stop(core)`** — stop: inbounds close and core-managed `auto_route`
+  routes are removed. With an external TUN, the host application controls the
+  routes and kill switch. Before returning, it waits for callbacks to finish;
+  no new callback starts after return. You can release `user` data and callback
+  resources after `rc_stop`.
   `NULL` is accepted as a no-op.
 - **`rc_free_string(s)`** — free a string returned by the library.
 
