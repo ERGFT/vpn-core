@@ -128,16 +128,17 @@ does not currently report an operating-system limit; it is always `0`.
 While nobody listens to a stream, events are not even assembled. Up to 16
 streams at a time.
 
-- The token is always required (`Authorization: Bearer`; a WebSocket from a
-  browser — `?token=`, see `allow_query_token`). 5 wrong tokens from an
-  address (IPv6 — from a /64) block it for a minute and longer; 127.0.0.1
-  is never blocked. Only dashboard files and the `GET /` greeting are
-  served without it, as in Clash. `Host` must be the API address (DNS
-  rebinding protection); browser requests are accepted only from your own
-  dashboard and sites in `access_control_allow_origin`; listening on
-  anything but 127.0.0.1 requires `allow_ip`. Site addresses in
-  `/connections` are browsing history, so they are only in the API, not in
-  the log.
+- API requests require a bearer token. A browser WebSocket may pass it as
+  `?token=` when `allow_query_token` is enabled. CORS preflight `OPTIONS`
+  requests skip the token but still check `Host` and the allowed `Origin`.
+  Five wrong tokens from an address (IPv6 — from a /64) block that address for
+  a minute or longer; 127.0.0.1 is never blocked. Apart from preflight, only
+  dashboard files and the `GET /` greeting are served without a token, as in
+  Clash. `Host` must be the API address (DNS rebinding protection); browser
+  requests are accepted only from your own dashboard and sites in
+  `access_control_allow_origin`; listening on anything but 127.0.0.1 requires
+  `allow_ip`. Site addresses in `/connections` are browsing history, so they
+  are only in the API, not in the log.
 - Reload (`PUT /configs`, `POST /reload`, on Linux also `kill -HUP`): if the
   file has an error, the previous config keeps working. New outbounds,
   rules, DNS, groups and subscriptions apply immediately to new
