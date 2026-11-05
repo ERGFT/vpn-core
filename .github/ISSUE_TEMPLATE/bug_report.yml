@@ -21,7 +21,7 @@ body:
     id: os
     attributes:
       label: Система / OS
-      options: [Linux, Windows, другая / other]
+      options: [Linux, Windows, macOS, Android, iOS, другая / other]
     validations:
       required: true
   - type: textarea

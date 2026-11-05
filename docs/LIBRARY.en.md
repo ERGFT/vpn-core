@@ -216,6 +216,12 @@ rc_stop(core);
   application traffic, so the host must retry requests according to its own
   policy. Returns `0` when handled, or `-1` for a NULL handle or an internal
   error.
+- **`rc_set_protect(cb, user)` and `rc_set_connection_owner(cb, user)`** —
+  process-wide callbacks for socket protection and UID lookup. They must be
+  thread-safe and return quickly. Replacing or removing one waits for active
+  calls, so a callback must not call its own setter: it would wait for itself
+  to finish. After the setter returns, the previous callback and `user` may be
+  freed.
 - **`rc_set_event_callback(core, cb, user)`** — events (like the
   `GET /events` stream): connections opening and closing, group switches,
   subscription updates, reloads, mode changes. The callback receives a
