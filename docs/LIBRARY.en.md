@@ -179,8 +179,11 @@ rc_stop(core);
 ```
 
 - **`rc_start(config, base_dir, tun_fd, &err)`**:
-  - `config` — the config as text (sing-box or Xray-core JSON, as for
-    `reality-client --config`);
+  - `config` — text in the supported subset of sing-box or Xray-core JSON, as for
+    `reality-client --config`; see [CONFIG.en.md](https://github.com/ERGFT/vpn-core/blob/main/docs/CONFIG.en.md)
+    and the [feature matrix](https://github.com/ERGFT/vpn-core/blob/main/docs/FEATURES.en.md).
+    Naming an upstream format does not imply
+    compatibility with every upstream version or option;
   - `base_dir` — the folder for relative paths in it (geosite/geoip
     databases, rule sets, subscription caches);
   - `tun_fd` — a TUN descriptor on Unix, or -1. Windows does not accept an
