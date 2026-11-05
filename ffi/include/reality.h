@@ -264,36 +264,30 @@ int rc_set_log_callback(RcCore *core, const char *level, rc_callback cb, void *u
 /* Защищать каждый новый сокет ядра обратным вызовом (Android). Вызывать до
  * rc_start; действует на весь процесс. cb = NULL снимает callback. Callback
  * может вызываться одновременно из потоков ядра; cb/user должны быть
- * потокобезопасны. Замена/снятие не ждут вызовы, уже получившие старый
- * callback: они могут начаться или завершиться после возврата. Не освобождайте
- * старые cb/user, пока ни одно ядро не может вызвать их и все такие вызовы не
- * завершились. Callback должен быстро вернуться и не вызывать rc_set_protect
- * из самого себя. */
+ * потокобезопасны. Замена/снятие ждут выполняющиеся вызовы; после возврата
+ * старые callback/user можно освободить. Callback должен быстро вернуться и
+ * не вызывать rc_set_protect из самого себя. */
 /* Use this callback to protect every new core socket (Android). Call before
  * rc_start; it is process-wide. cb = NULL removes it. Calls may run
  * concurrently on core threads, so cb/user must be thread-safe. Replacing or
- * removing does not wait for calls that already obtained the old callback;
- * they may start or finish after this function returns. Keep the old cb/user
- * valid until no core can call them and all such calls have returned. The
- * callback must return quickly and must not call rc_set_protect recursively. */
+ * removing waits for active calls, so the old callback and user data may be
+ * freed after return. The callback must return quickly and must not call
+ * rc_set_protect recursively. */
 void rc_set_protect(rc_protect cb, void *user);
 
 /* Resolver UID: cb = NULL снимает resolver. Вызывать до rc_start, действует
- * на весь процесс. cb/user потокобезопасны. Замена/снятие не ждут вызовы,
- * уже получившие старый callback: они могут начаться или завершиться после
- * возврата. Не освобождайте старые cb/user, пока ни одно ядро не может вызвать
- * их и все такие вызовы не завершились. Callback должен быстро вернуться и
- * не вызывать rc_set_connection_owner из самого себя.
+ * на весь процесс. cb/user потокобезопасны. Замена/снятие ждут текущие
+ * вызовы; после возврата старые callback/user можно освободить. Callback
+ * должен быстро вернуться и не вызывать rc_set_connection_owner из самого себя.
  * Нужен для user_id-правил в TUN. Неизвестный UID при нужном правиле
  * блокирует поток, а не отправляет его через route.final/direct.
  * Android: ConnectivityManager.getConnectionOwnerUid (API 29+).
  * Имена пакетов и shared UID преобразует приложение, не ядро. */
 /* UID resolver: cb = NULL removes the resolver. Call before rc_start; the
  * setting is process-wide. cb/user must be thread-safe. Replacing/removing
- * does not wait for calls that already obtained the old callback; they may
- * start or finish after this function returns. Keep the old cb/user valid
- * until no core can call them and all such calls have returned. The callback
- * must return quickly and must not call rc_set_connection_owner recursively.
+ * waits for active calls, so the old callback and user data may be freed after
+ * return. The callback must return quickly and must not call
+ * rc_set_connection_owner recursively.
  * Required for user_id rules in TUN. If a matching rule requires the UID and
  * it is unknown, the flow is blocked instead of using route.final/direct.
  * Android uses ConnectivityManager.getConnectionOwnerUid (API 29+). The host
