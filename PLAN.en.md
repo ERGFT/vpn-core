@@ -1465,7 +1465,9 @@ without adding a crypto library, and wrong-key behavior was tested against
 Xray. The plan also investigated `minClientVer`/`maxClientVer`. An initially
 ambiguous 3x-ui issue ([#5922](https://github.com/MHSanaei/3x-ui/issues/5922))
 was followed by a line-by-line check of the live `main` branch of
-`XTLS/REALITY`, in `tls.go`. The relevant upstream condition was:
+`XTLS/REALITY`, in `tls.go`. At the time of the check, this file matched
+[upstream commit `83f6217`](https://github.com/XTLS/REALITY/blob/83f621788ca88b83179810b12baa7ae518aacb83/tls.go#L272-L277)
+(14 October 2026). The relevant upstream condition was:
 
 ```go
 if (config.MinClientVer == nil || Value(hs.c.ClientVer[:]...) >= Value(config.MinClientVer...)) &&
