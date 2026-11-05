@@ -4,6 +4,12 @@
 
 The core's local API implements the Clash API subset listed below, plus its own extensions. It is not fully compatible with every Clash, sing-box, mihomo, or Xray endpoint and schema. Enable it in the [config file](CONFIG.en.md).
 
+An embedding application can call the same ordinary routes through
+`rc_request` (see the [SDK guide](LIBRARY.en.md)). This is an in-process call:
+it does not start an HTTP server and requires no Bearer token. API streams are
+unavailable through `rc_request`; the SDK guide describes their limits and
+callbacks.
+
 [metacubexd](https://github.com/MetaCubeX/metacubexd) and
 [yacd](https://github.com/haishanh/yacd) were manually tested in a browser
 against the real core for groups, server selection, latency tests, connections,
