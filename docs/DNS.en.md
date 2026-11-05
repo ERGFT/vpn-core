@@ -4,9 +4,11 @@
 
 The client's own DNS instead of the system one: servers, rules, cache, fake-IP. Set in the [config file](CONFIG.en.md).
 
-The `dns` section — own DNS instead of the system one:
+The `dns` section configures the core's resolver. The following is a fragment
+of a sing-box configuration in JSONC (JSON with comments), which vpn-core's
+config parser supports:
 
-```json
+```jsonc
 "inbounds": [
   { "type": "direct", "tag": "dns-in", "listen": "127.0.0.1", "listen_port": 53 }   // DNS server for the system
 ],
@@ -34,12 +36,19 @@ In Xray: `"dns": {"servers": ["https://1.1.1.1/dns-query",
   with. DoT/DoH/DoQ certificates are verified (own roots —
   `tls.certificate_path`).
 - `detour` — which outbound to use to reach the server; defaults to
-  `route.final`, i.e. usually through the VLESS server: this way neither
-  your ISP nor your Wi-Fi neighbours see which names you look up.
-- Who uses the module: the DNS inbound (set `127.0.0.1` as DNS in the network
-  settings — then all programs' queries go through it); the `hijack-dns`
-  rule (programs' DNS queries going through the proxy or TUN); the `direct`
-  outbound (resolves names with it rather than with the system);
+  `route.final`. DNS query visibility depends on the server type and outbound:
+  unencrypted UDP/TCP queries are visible to on-path systems when the outbound
+  does not encrypt them, such as `direct`; DoT/DoH/DoQ protect DNS contents
+  with TLS, and VLESS carries them inside its connection. VLESS encryption
+  depends on its security mode: REALITY/TLS encrypt the connection, while
+  `security=none` does not. The DNS server still receives the name it resolves.
+- Who uses the module: the DNS inbound (when its address is set in the host's
+  ordinary system DNS setting, ordinary queries sent through that setting
+  reach the inbound; apps with their own DNS client or DoH/DoT can bypass it);
+  the `hijack-dns` rule
+  (redirects DNS queries that enter the proxy or TUN path; it does not
+  intercept DoH/DoT); the `direct` outbound (resolves names itself rather than
+  through the system resolver);
   `route.domain_strategy` `ip_if_non_match` (IP rules for names).
 - Cache: by answer TTL (at most an hour; negative — at most a minute), up to
   4096 answers (`cache_capacity`; `disable_cache` — no cache).
@@ -51,6 +60,15 @@ In Xray: `"dns": {"servers": ["https://1.1.1.1/dns-query",
   kept across restarts (`cache_file` — extension).
 - A DNS inbound open to the network requires `allow_ip`: otherwise it is an
   "open resolver" used for DDoS attacks.
+
+## Network changes
+
+When the host application reports a network change through
+`rc_network_changed`, the core clears its upstream DNS answer cache. A query
+that started before the signal and finishes after it is rejected and is not
+cached. The fake-IP table remains available so a retry using an already-issued
+address can still map it back to its name. This signal does not test network
+connectivity or restart application queries.
 
 ## Per-rule strategy
 
@@ -68,7 +86,7 @@ continue to inherit global `queryStrategy`.
 In sing-box JSON it is the tag of a dedicated server for transport hostnames
 when TUN comes from the OS (Android/iOS). Example:
 
-```json
+```jsonc
 "dns": {
   "servers": [
     {"type": "udp", "tag": "transport-dns", "server": "1.1.1.1", "detour": "direct"},
