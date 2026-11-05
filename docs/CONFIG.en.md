@@ -139,6 +139,27 @@ Groups, `block`, and `dns` are not valid detours. Missing tags and cycles are
 rejected. A failure at any hop is returned to the caller without falling back
 to `direct`. Only TCP chains are supported.
 
+### SOCKS5 and HTTP CONNECT authentication
+
+In sing-box `socks` and `http` outbounds, set credentials as a pair:
+`username` and `password`. SOCKS5 uses RFC 1929 authentication; each field
+must be 1–255 bytes. HTTP CONNECT uses Basic authentication; both fields must
+be supplied together and non-empty, the username cannot contain a colon, and
+each field can be up to 4096 bytes. Control characters are rejected. The
+`password_file` core extension supplies the password instead of `password`:
+the first non-empty line is used with surrounding whitespace trimmed. Choose
+only one password source.
+
+The SOCKS5 outbound supports TCP only and does not support TLS. HTTP CONNECT
+uses TCP and HTTP/1.1. TLS is optional and is enabled with `tls.enabled`;
+certificate verification is always required. `tls.server_name` defaults to
+`server`; `ca_file` adds trusted roots without disabling certificate
+verification. Without TLS or an encrypting
+`detour`, credentials travel without protection: SOCKS5 does not encrypt its
+authentication, and Basic encodes the password but does not encrypt it. A
+`detour` can protect the path to the proxy if the selected outbound encrypts
+the connection.
+
 ## Server groups and subscriptions
 
 Several servers make a group; a group is itself an outbound, and its tag is
