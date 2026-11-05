@@ -77,9 +77,12 @@ A sing-box `dns.rules[]` rule may set `strategy`: `prefer_ipv4`, `prefer_ipv6`,
 `ipv4_only` or `ipv6_only`. An absent field inherits global `dns.strategy`.
 The first matching rule selects both server and strategy. `ipv4_only` suppresses
 AAAA; `ipv6_only` suppresses A. `prefer_*` queries both families and orders
-internal lookup results. The same filtering applies to fake-IP. When real
-lookup skips a fake-IP rule, it also skips that rule's strategy. Xray rules
-continue to inherit global `queryStrategy`.
+addresses when the core resolves a name internally. For a normal application
+DNS query of type A or AAAA, the core keeps the requested type; `prefer_*` does
+not add a second query for the application. However, `ipv4_only` suppresses
+AAAA queries and `ipv6_only` suppresses A queries. The same filtering applies
+to fake-IP. When an internal real lookup skips a fake-IP rule, it also skips
+that rule's strategy. Xray rules continue to inherit global `queryStrategy`.
 
 ## Bootstrap for external TUN (experimental)
 
