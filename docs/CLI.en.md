@@ -4,16 +4,21 @@
 
 All `reality-client` options for running with a single link, and autostart setup. For several servers and rules — the [config file](CONFIG.en.md).
 
-## Config file
+## Configuration and validation
 
 Start normally with a config file, or check that it loads:
 
 ```sh
 reality-client --config config.json
 reality-client --config config.json --check
+reality-client --server-file server.txt --check
 ```
 
-`--check` loads the config and builds the application, then exits with the result. It does not start the proxy or test server reachability or real VPN traffic. See the [CONFIG guide](CONFIG.en.md) for config fields and limits.
+`--check` validates the final settings from either `--config` or single-server
+options (`--server` or `--server-file`), builds the application, then exits
+with the result. It does not start the proxy or test server reachability or
+real VPN traffic. See the [CONFIG guide](CONFIG.en.md) for config fields and
+limits.
 
 ## Running
 
