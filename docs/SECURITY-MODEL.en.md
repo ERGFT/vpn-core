@@ -52,8 +52,8 @@ The history and scope of the internal review are documented in [PLAN.en.md, “S
     the name when the query uses unencrypted DNS directly.
 - **The local SOCKS5/HTTP proxy limits wait times:** 10 s for the greeting and
   an idle timeout of 300 s (or 30 s if one side has already closed). By default,
-  SOCKS/HTTP and DNS inbounds allow up to 512 concurrent connections, while TUN
-  allows up to 4,096; configure the corresponding limit with `max_conns`.
+  SOCKS/HTTP and DNS inbounds each allow up to 512 concurrent connections. Each TUN inbound
+  allows up to 4,096; configure the per-inbound limit with `max_conns`.
 - **Some parsers limit input sizes, but this does not guarantee crash or DoS
   protection.** After reading the 5-byte header, the gRPC decoder rejects a
   message whose declared size exceeds 4 MiB without waiting for the complete
