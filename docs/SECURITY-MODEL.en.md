@@ -39,13 +39,18 @@ The history and scope of the internal review are documented in [PLAN.en.md, “S
   - the VLESS server's own name;
   - names the app resolved itself before connecting (for example, a
     browser with SOCKS5 without "Proxy DNS when using SOCKS v5");
-  - names for the `direct` outbound — through the `dns` section or the
-    system DNS;
-  - queries to DNS servers with `"detour": "direct"` and to a
-    `"type": "local"` server (the system resolver);
-  - names that `domain_strategy: ip_if_non_match` resolves for IP rules —
-    if the `dns` section's server for them goes direct (by default `dns`
-    queries go through `route.final`, usually the VLESS server).
+  - names resolved for the `direct` outbound: when a `dns` section is
+    configured, its selected DNS server resolves them; otherwise the system
+    resolver does. A server without an explicit `detour` uses `route.final`
+    (usually VLESS). With `detour: direct`, the local network sees the DNS
+    server address; it sees query contents only for unencrypted UDP/TCP DNS.
+    DoT, DoH, and DoQ encrypt DNS queries. `type: local` delegates resolution
+    to the system resolver, whose visibility depends on OS settings;
+  - names resolved by `domain_strategy: ip_if_non_match` for IP rules —
+    through the selected DNS server and its `detour`. The local network sees
+    the name when the query uses unencrypted DNS directly; by default, DNS
+    servers without an explicit `detour` go through `route.final`, usually
+    VLESS.
 - **The local proxy does not hold on to "dead" connections:** 10 s for the
   SOCKS5/HTTP greeting, idle timeout (300 s; 30 s if one side has already
   closed), a limit on concurrent connections.
