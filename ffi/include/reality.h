@@ -103,8 +103,9 @@ int rc_validate(const char *config, const char *base_dir);
 
 /*
  * Запустить ядро.
- *   config   — настройки текстом: JSON sing-box или Xray-core (формат
- *              определяется сам), как файл для `reality-client --config`;
+ *   config   — обязательная UTF-8 строка с нулём в конце: JSON sing-box
+ *              или Xray-core (формат определяется сам), как файл для
+ *              `reality-client --config`;
  *   base_dir — папка для относительных путей в настройках (NULL — текущая);
  *   tun_fd   — дескриптор TUN от системы на Unix (Android:
  *              ParcelFileDescriptor.detachFd(); владение переходит ядру при
@@ -118,8 +119,8 @@ int rc_validate(const char *config, const char *base_dir);
  * Возвращает ядро или NULL.
  */
 /* Start the core.
- *   config   — configuration text: sing-box or Xray-core JSON (auto-detected),
- *              in the same format as `reality-client --config`;
+ *   config   — required NUL-terminated UTF-8 string: sing-box or Xray-core JSON
+ *              (auto-detected), in the same format as `reality-client --config`;
  *   base_dir — base directory for relative paths (NULL means current dir);
  *   tun_fd   — system-provided TUN descriptor on Unix (Android:
  *              ParcelFileDescriptor.detachFd()). Ownership transfers to the
@@ -196,8 +197,10 @@ int rc_network_changed(RcCore *core);
  *   rc_request(core, "PUT", "/proxies/proxy", "{\"name\":\"auto\"}", &status);
  *   rc_request(core, "PATCH", "/configs", "{\"mode\":\"global\"}", &status);
  *   rc_request(core, "GET", "/connections", NULL, &status);
- * body — NULL или JSON. В status (если не NULL) — код ответа HTTP.
- * Возвращает тело ответа (JSON; "" у 204) — освободить rc_free_string.
+ * method/path — обязательные UTF-8 строки с нулём в конце; core — живой
+ * handle. body — NULL или JSON; status — NULL или место под код ответа HTTP.
+ * Возвращает выделенную библиотекой строку с телом (JSON; "" у 204), даже
+ * при ошибке аргументов — освободить rc_free_string.
  * Потоки (/events, /logs…) — через rc_set_event_callback, rc_set_log_callback.
  */
 /* Request the core API using the same paths and responses as the HTTP API
@@ -206,20 +209,27 @@ int rc_network_changed(RcCore *core);
  *   rc_request(core, "PUT", "/proxies/proxy", "{\"name\":\"auto\"}", &status);
  *   rc_request(core, "PATCH", "/configs", "{\"mode\":\"global\"}", &status);
  *   rc_request(core, "GET", "/connections", NULL, &status);
- * body may be NULL or JSON. If status is non-NULL, it receives the HTTP
- * response code. Returns the response body (JSON; empty for 204); free it with
+ * method and path are required NUL-terminated UTF-8 strings; core must be a
+ * live handle. body may be NULL or JSON; status may be NULL or a pointer to
+ * receive the HTTP response code. Returns a library-allocated response body
+ * (JSON; empty for 204), including for argument errors; free it with
  * rc_free_string. Streams (/events, /logs, etc.) use the callback functions.
  */
 char *rc_request(RcCore *core, const char *method, const char *path, const char *body,
                  int *status);
 
-/* Применить новые настройки без разрыва соединений. Возвращает JSON
- * {"notes": [...]} (что вступит в силу только после перезапуска) или NULL
- * при ошибке (текст — в error); при ошибке работают прежние настройки. */
+/* Применить новые настройки без разрыва соединений. config — обязательная
+ * UTF-8 строка с нулём в конце; error — NULL или место под указатель.
+ * Возвращает выделенный JSON {"notes": [...]} (что вступит в силу только
+ * после перезапуска) или NULL при ошибке. Только при ошибке в error
+ * записывается выделенная строка — освободить rc_free_string. При ошибке
+ * работают прежние настройки. */
 /* Apply new configuration without disconnecting existing connections.
- * Returns JSON {"notes": [...]} describing settings that take effect only
- * after restart, or NULL on error (text is written to error). On failure, the
- * previous configuration remains active. */
+ * config is a required NUL-terminated UTF-8 string; error may be NULL or point
+ * to a location for a string pointer. Returns an allocated JSON string
+ * {"notes": [...]} describing settings that take effect only after restart,
+ * or NULL on error. Only on error, error receives an allocated string; free it
+ * with rc_free_string. On failure, the previous configuration remains active. */
 char *rc_reload(RcCore *core, const char *config, char **error);
 
 /* События ядра (как GET /events): connection_open, connection_close,
@@ -252,42 +262,54 @@ int rc_set_event_callback(RcCore *core, rc_callback cb, void *user);
 int rc_set_log_callback(RcCore *core, const char *level, rc_callback cb, void *user);
 
 /* Защищать каждый новый сокет ядра обратным вызовом (Android). Вызывать до
- * rc_start; действует на весь процесс. Замена/снятие ждут уже выполняющиеся
- * вызовы; после возврата старые callback/user можно освободить. Callback
- * должен быстро вернуться и не вызывать rc_set_protect из самого себя. */
+ * rc_start; действует на весь процесс. cb = NULL снимает callback. Callback
+ * может вызываться одновременно из потоков ядра; cb/user должны быть
+ * потокобезопасны. Замена/снятие ждут выполняющиеся вызовы; после возврата
+ * старые callback/user можно освободить. Callback должен быстро вернуться и
+ * не вызывать rc_set_protect из самого себя. */
 /* Use this callback to protect every new core socket (Android). Call before
- * rc_start; it is process-wide. Replacing/removing waits for active calls, so
- * the old callback and user data may be freed after return. The callback must
- * return quickly and must not call rc_set_protect recursively. */
+ * rc_start; it is process-wide. cb = NULL removes it. Calls may run
+ * concurrently on core threads, so cb/user must be thread-safe. Replacing or
+ * removing waits for active calls, so the old callback and user data may be
+ * freed after return. The callback must return quickly and must not call
+ * rc_set_protect recursively. */
 void rc_set_protect(rc_protect cb, void *user);
 
-/* Resolver UID: вызывать до rc_start, действует на весь процесс.
- * cb/user потокобезопасны. Замена/снятие ждут текущие вызовы; после возврата
- * старые callback/user можно освободить. Callback должен быстро вернуться и
- * не вызывать rc_set_connection_owner из самого себя.
+/* Resolver UID: cb = NULL снимает resolver. Вызывать до rc_start, действует
+ * на весь процесс. cb/user потокобезопасны. Замена/снятие ждут текущие
+ * вызовы; после возврата старые callback/user можно освободить. Callback
+ * должен быстро вернуться и не вызывать rc_set_connection_owner из самого себя.
  * Нужен для user_id-правил в TUN. Неизвестный UID при нужном правиле
  * блокирует поток, а не отправляет его через route.final/direct.
  * Android: ConnectivityManager.getConnectionOwnerUid (API 29+).
  * Имена пакетов и shared UID преобразует приложение, не ядро. */
-/* UID resolver: call before rc_start; the setting is process-wide. cb/user
- * must be thread-safe. Replacing/removing waits for active calls, so the old
- * callback and user data may be freed after return. The callback must return
- * quickly and must not call rc_set_connection_owner recursively.
+/* UID resolver: cb = NULL removes the resolver. Call before rc_start; the
+ * setting is process-wide. cb/user must be thread-safe. Replacing/removing
+ * waits for active calls, so the old callback and user data may be freed after
+ * return. The callback must return quickly and must not call
+ * rc_set_connection_owner recursively.
  * Required for user_id rules in TUN. If a matching rule requires the UID and
  * it is unknown, the flow is blocked instead of using route.final/direct.
  * Android uses ConnectivityManager.getConnectionOwnerUid (API 29+). The host
  * app, not the core, maps package names and shared UIDs. */
 void rc_set_connection_owner(rc_connection_owner cb, void *user);
 
-/* Windows: каталог для файла блокировки auto_route — запись в него только
- * у SYSTEM и администраторов. Без него вход TUN с auto_route на Windows не
- * запускается (с готовым дескриптором TUN не нужен). Вызывать до rc_start,
- * один раз; на других системах ничего не делает. 0 — успех, -1 — ошибка. */
-/* Windows: directory for the auto_route lock file; only SYSTEM and
- * administrators may write to it. On Windows, TUN with auto_route cannot
- * start without this directory (it is not needed when a TUN FD is supplied).
- * Call once before rc_start. No effect on other systems. 0 means success;
- * -1 means error. */
+/* Windows: dir — обязательная UTF-8 строка с нулём в конце; NULL или
+ * некорректный UTF-8 даёт -1, принятие строки — 0. Функция не проверяет
+ * существование каталога и его права; каталог для файла блокировки
+ * auto_route приложение должно защитить так, чтобы писать могли только
+ * SYSTEM и администраторы. Ошибка открытия обнаружится при запуске TUN с
+ * auto_route. Путь задаётся до rc_start один раз; повторный вызов не заменит
+ * уже заданный путь. На других системах настройка не действует. Строка пути
+ * нужна только на время вызова. */
+/* dir must be a NUL-terminated UTF-8 string; NULL or invalid UTF-8 returns
+ * -1, and accepting the string returns 0. The function does not check whether
+ * the directory exists or its permissions. On Windows, the host app must
+ * protect the auto_route lock directory so only SYSTEM and administrators
+ * can write to it; an open error is reported when TUN with auto_route starts.
+ * Set the path once before rc_start; a later call does not replace it. The
+ * setting has no effect on other systems. The path string is borrowed only
+ * for the duration of the call. */
 int rc_set_lock_dir(const char *dir);
 
 /* Освободить строку, которую вернула библиотека. NULL — ничего.
