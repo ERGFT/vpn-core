@@ -14,7 +14,7 @@
 | `flow` | пусто или `xtls-rprx-vision` (`-udp443` тоже); прочее — ошибка |
 | `path`, `host` | путь и заголовок Host для ws, httpupgrade, xhttp (`?ed=` в пути отбрасывается) |
 | `mode` | для xhttp: `auto` (по умолчанию: REALITY — `stream-one`, иначе `packet-up`; с `downloadSettings` и REALITY — `stream-up`), `packet-up`, `stream-up`, `stream-one` (`stream-one` несовместим с разделением направлений) |
-| `extra` | для xhttp: JSON как у Xray — `headers`, `xPaddingBytes`, `noGRPCHeader`, `scMaxEachPostBytes`, `scMinPostsIntervalMs`, `uplinkHTTPMethod`; `downloadSettings` поддерживает отдельный адрес/порт и XHTTP-соединение, см. [матрицу возможностей](FEATURES.md); неподдерживаемые параметры отвергаются |
+| `extra` | для xhttp: JSON как у Xray — `headers`, `xPaddingBytes`, `noGRPCHeader`, `scMaxEachPostBytes`, `scMinPostsIntervalMs`, `uplinkHTTPMethod`; `downloadSettings` поддерживает отдельный адрес/порт и XHTTP-соединение, см. [матрицу возможностей](FEATURES.md); известные несовместимые настройки отклоняются, неизвестные ключи предупреждаются в журнале и игнорируются |
 
 Минимальный пример раздельного канала скачивания (полный JSON задаётся как значение `extra=`):
 
@@ -31,8 +31,11 @@
 }
 ```
 
-Путь должен совпадать с `path=` основного канала. Поддерживаются только явно
-перечисленные вложенные поля; `stream-one` и неизвестные поля отклоняются.
+Путь должен совпадать с `path=` основного канала. В `downloadSettings`
+поддерживаются только явно перечисленные вложенные поля; `stream-one` и
+неизвестные там поля отклоняются. Для остальных ключей `extra` неизвестные
+параметры игнорируются с предупреждением в журнале, поэтому они не включают
+функции, которых клиент не реализует.
 
 Дополнительные параметры:
 
