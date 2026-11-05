@@ -9,7 +9,7 @@ on Linux only is the auxiliary memory sampler `bench/src/bin/memwatch.rs`
 
 ## 0. The prebuilt .exe and how it was tested
 
-In the development environment the Windows version is cross-compiled
+In the Linux development environment the Windows version is cross-compiled
 (`scripts/cross_windows.sh`: target `x86_64-pc-windows-gnu`, mingw-w64
 linker) and tested under **Wine 9**:
 
