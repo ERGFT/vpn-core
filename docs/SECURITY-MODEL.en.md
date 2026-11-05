@@ -50,10 +50,10 @@ The history and scope of the internal review are documented in [PLAN.en.md, “S
   - names resolved by `domain_strategy: ip_if_non_match` for IP rules —
     through the selected DNS server and its `detour`. The local network sees
     the name when the query uses unencrypted DNS directly.
-- **The local proxy does not hold on to "dead" connections:** 10 s for the
-  SOCKS5/HTTP greeting, idle timeout (300 s; 30 s if one side has already
-  closed), up to 512 concurrent connections per inbound by default; configure
-  the limit with `max_conns`.
+- **The local SOCKS5/HTTP proxy limits wait times:** 10 s for the greeting and
+  an idle timeout of 300 s (or 30 s if one side has already closed). By default,
+  SOCKS/HTTP and DNS inbounds allow up to 512 concurrent connections, while TUN
+  allows up to 4,096; configure the corresponding limit with `max_conns`.
 - **Some parsers limit input sizes, but this does not guarantee crash or DoS
   protection.** After reading the 5-byte header, the gRPC decoder rejects a
   message whose declared size exceeds 4 MiB without waiting for the complete
