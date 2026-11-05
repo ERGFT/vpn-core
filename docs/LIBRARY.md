@@ -178,8 +178,8 @@ rc_stop(core);
 
 - **`rc_start(config, base_dir, tun_fd, &err)`** — настройки текстом (JSON
   поддерживаемой части форматов sing-box или Xray-core — как для
-  `reality-client --config`; поддерживаемые поля перечислены в [CONFIG.md](CONFIG.md) и
-  [матрице возможностей](FEATURES.md). Название формата не означает полную
+  `reality-client --config`; поддерживаемые поля перечислены в [CONFIG.md](https://github.com/ERGFT/vpn-core/blob/main/docs/CONFIG.md) и
+  [матрице возможностей](https://github.com/ERGFT/vpn-core/blob/main/docs/FEATURES.md). Название формата не означает полную
   совместимость со всеми версиями и параметрами upstream-проекта. Папка для
   относительных путей в них (базы geosite/geoip, наборы правил, кеши
   подписок), дескриптор TUN на Unix или -1. На Windows готовый дескриптор
