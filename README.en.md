@@ -112,7 +112,7 @@ from an extracted ZIP. Public headers and examples are in [`ffi/`](ffi/).
 | Inbounds | SOCKS5, HTTP, and mixed |
 | Outbounds | Include VLESS, Trojan, direct, block, DNS, and server groups. SOCKS5 and HTTP CONNECT are supported only for TCP and only in sing-box format; `detour` chains are also available there |
 | Configuration | Xray-core format and part of sing-box format; rules, server groups, and subscriptions |
-| Networking and routing | UDP over VLESS through XUDP, DNS (DoH/DoT/DoQ), TUN, kill switch, and IPv4/IPv6 selection (Happy Eyeballs) |
+| Networking and routing | UDP over VLESS through XUDP, DNS (DoH/DoT/DoQ), TUN for TCP/UDP; core-managed `auto_route` and kill switch on Linux/Windows, with the host managing routes for an external TUN; IPv4/IPv6 selection (Happy Eyeballs) |
 | Management and platform integration | Local Clash API, metacubexd and yacd dashboards, systemd, and Windows service; Android/iOS through C ABI remain experimental |
 | Experimental | `fragment`, `noises`, and application routing integration |
 | Not supported | KCP transport; ICMP/ping through TUN |

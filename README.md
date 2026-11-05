@@ -115,7 +115,7 @@ SDK предназначен для приложений, которым нуж�
 | Входы | SOCKS5, HTTP и mixed |
 | Выходы | Включают VLESS, Trojan, direct, block, DNS и группы серверов. SOCKS5 и HTTP CONNECT поддерживаются только для TCP и только в формате sing-box; там же доступны цепочки `detour` |
 | Конфигурация | Форматы Xray-core и часть формата sing-box; правила, группы серверов и подписки |
-| Сеть и маршрутизация | UDP в VLESS через XUDP, DNS (DoH/DoT/DoQ), TUN, kill switch и выбор IPv4/IPv6 (Happy Eyeballs) |
+| Сеть и маршрутизация | UDP в VLESS через XUDP, DNS (DoH/DoT/DoQ), TUN для TCP/UDP; собственные `auto_route` и kill switch — Linux/Windows, маршруты внешнего TUN задаёт хост; выбор IPv4/IPv6 (Happy Eyeballs) |
 | Управление и платформенная интеграция | Локальный Clash API, панели metacubexd и yacd, systemd и служба Windows; Android/iOS через C ABI остаются экспериментальными |
 | Экспериментально | `fragment`, `noises` и интеграция с правилами приложений |
 | Не поддерживается | Транспорт KCP; ICMP/ping через TUN |
