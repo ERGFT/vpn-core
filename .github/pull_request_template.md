@@ -1,5 +1,11 @@
 ## Что изменено / What changed
 
+## Документация / Documentation
+
+- [ ] При изменении документации сверены [VCTWS 1.0](../docs/STYLE_GUIDE.md) и [глоссарий](../docs/GLOSSARY.md) / For documentation changes, checked [VCTWS 1.0](../docs/STYLE_GUIDE.en.md) and the [glossary](../docs/GLOSSARY.en.md)
+- [ ] RU/EN версии имеют одинаковый технический смысл / RU/EN versions have the same technical meaning
+- [ ] Приведены источники фактов; проверки действительно выполнены / Fact sources are listed; reported checks were actually run
+
 ## Как проверено / How it was tested
 
 - [ ] `scripts/ci.sh --quick` (fmt, SPDX, ссылки / doc links, синтаксис скриптов / script syntax, clippy, тесты / tests)
