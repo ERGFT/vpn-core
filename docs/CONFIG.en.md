@@ -15,13 +15,18 @@ reality-client --config config.json --check   # validate only
 reality-client --config config.json
 ```
 
-Existing sing-box and Xray configs (from v2rayN, panels, etc.) work too:
-everything the core supports behaves as it does there. Whatever the core does
-not support (other protocols, chains outside the limited SOCKS5/HTTP CONNECT
-`detour`, sing-box multiplexing…) is an
-error at startup with the path to the key, e.g. `outbounds[2].multiplex: не
-поддерживается` (not supported), rather than a silently ignored setting. A
-typo in a key name is an error too.
+sing-box and Xray files can be used as a starting point, but vpn-core accepts
+only the parts of those formats that it supports. The format name does not
+guarantee compatibility with every config from v2rayN or a panel, or behavior
+that fully matches upstream. Check the table below and the [features
+matrix](FEATURES.en.md). Many unknown or unsupported keys produce an error
+with the key path; some explicitly handled fields may be ignored. For example,
+an unsupported `multiplex` setting produces
+`outbounds[2].multiplex: не поддерживается` (not supported).
+
+The `--check` command parses the file and builds the application, then exits
+before `app.start`. It reports configuration errors but does not test a
+connection to a server.
 
 ```json
 {
