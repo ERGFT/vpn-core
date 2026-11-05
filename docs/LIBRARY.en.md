@@ -278,7 +278,7 @@ string with `rc_free_string`.
 | `rc_stop` | NULL is a safe no-op | Frees the handle; call once, then never use that pointer again |
 | `rc_set_event_callback` / `rc_set_log_callback` | A NULL callback unsubscribes; a NULL handle or invalid log level returns `-1` | After replacement/removal returns, the previous callback and `user` may be freed; a NULL log `level` means `info` |
 | `rc_set_protect` / `rc_set_connection_owner` | Process-wide setting; a NULL callback removes it; no status is returned | The old `user` may be freed after removal/replacement returns |
-| `rc_set_lock_dir` | NULL or non-UTF-8 path returns `-1`; a valid path returns `0` | The path string is borrowed for the call only |
+| `rc_set_lock_dir` | NULL or non-UTF-8 string returns `-1`; accepting a UTF-8 string returns `0`; the directory and its permissions are not checked | Windows accepts only the first path; the setting has no effect on other systems; the string is borrowed for the call only |
 | `rc_free_string` | NULL is a safe no-op | Accepts only a string returned by this library that has not already been freed |
 
 NULL is accepted only where explicitly documented. Every non-NULL pointer must
@@ -465,11 +465,14 @@ The simplest option is `rc_start(config, dir, -1, …)` with a config as for
 - `mixed` is the proxy;
 - control goes through `rc_request`, without HTTP.
 
-On Windows call `rc_set_lock_dir(dir)` before `rc_start`: the folder for
-the `auto_route` lock file, writable only by SYSTEM and administrators
-(like `%ProgramData%\RealityClient` for `reality-client`). Without it a
-`tun` inbound with `auto_route` will not start: in a shared folder any
-user could take the lock first.
+On Windows call `rc_set_lock_dir(dir)` once before `rc_start`, with the folder
+for the `auto_route` lock file. The host app must protect it so only SYSTEM and
+administrators can write to it (like `%ProgramData%\RealityClient` for
+`reality-client`). The function checks only that the string is non-NULL and
+valid UTF-8; it does not check whether the directory exists or its permissions.
+If the lock file cannot be opened or another instance already owns it, starting
+TUN with `auto_route` fails. A later call does not replace the first path. The
+setting has no effect on other systems.
 
 ## Verification
 
