@@ -20,8 +20,9 @@ macOS arm64, Android arm64-v8a, and iOS arm64. Each ZIP has a separate
 `.sha256` file. CI checks archive contents and checksums; it builds and runs
 the unpacked C example on Linux, Windows, and macOS. Android and iOS are checked
 by cross-linking the example. These mobile checks do not replace an
-on-device run. Dependency license notices, SBOM, and build provenance are
-published as separate release files.
+on-device run. Dependency license notices and SBOM are published as release
+files. GitHub build provenance is published separately as a GitHub-hosted
+attestation for the release files, not as a downloadable asset.
 
 SDK ZIPs produced by the current workflow on `main` contain `manifest.json`
 with `schema_version: 1`. It records the
