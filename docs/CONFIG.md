@@ -23,7 +23,7 @@ reality-client --config config.json
 поддерживается`, а не молча пропущенная настройка. Опечатка в имени
 ключа — тоже ошибка.
 
-```json
+```jsonc
 {
   "inbounds": [
     { "type": "mixed", "tag": "local", "listen": "127.0.0.1", "listen_port": 1080 }
@@ -81,6 +81,8 @@ reality-client --config config.json
 [sing-geoip](https://github.com/SagerNet/sing-geoip/tree/rule-set) или
 MetaCubeX/meta-rules-dat) и исходный `.json`, только `type: local`:
 
+Ниже — частичный фрагмент раздела `route`, а не полный файл настроек.
+
 ```json
 "route": {
   "rule_set": [{ "type": "local", "tag": "ru", "format": "binary", "path": "geosite-category-ru.srs" }],
@@ -121,6 +123,9 @@ MetaCubeX/meta-rules-dat) и исходный `.json`, только `type: local
 SOCKS5/HTTP CONNECT звеньев можно вложить; базовым выходом может быть `direct`,
 VLESS или Trojan:
 
+Ниже показаны связанные разделы `outbounds` и `route`; это частичный фрагмент
+конфигурации, а не полный файл.
+
 ```json
 "outbounds": [
   { "type": "socks", "tag": "entry", "server": "entry.example", "server_port": 1080, "network": "tcp" },
@@ -138,7 +143,10 @@ VLESS или Trojan:
 Несколько серверов — группа; группа сама выход, её tag пишут в правила и
 `route.final`:
 
-```json
+Следующий JSONC-фрагмент показывает только группу и подписку, а не полный файл
+настроек.
+
+```jsonc
 "outbounds": [
   { "type": "urltest", "tag": "auto",            // самый быстрый; "fallback" — первый работающий;
     "outbounds": ["proxy"],                      // "selector" — выбранный (default или первый)
@@ -174,6 +182,8 @@ VLESS или Trojan:
   сохранённого списка загружается до включения маршрутов.
 
 ## Против DPI: fragment и noises
+
+Ниже — объект выхода `direct` для раздела `outbounds`, а не полный файл настроек.
 
 ```json
 { "type": "direct", "tag": "direct",

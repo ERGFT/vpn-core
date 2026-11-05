@@ -23,7 +23,7 @@ error at startup with the path to the key, e.g. `outbounds[2].multiplex: не
 поддерживается` (not supported), rather than a silently ignored setting. A
 typo in a key name is an error too.
 
-```json
+```jsonc
 {
   "inbounds": [
     { "type": "mixed", "tag": "local", "listen": "127.0.0.1", "listen_port": 1080 }
@@ -80,6 +80,8 @@ sing-box rule sets — `.srs` (e.g. from
 [sing-geoip](https://github.com/SagerNet/sing-geoip/tree/rule-set) or
 MetaCubeX/meta-rules-dat) and source `.json`, `type: local` only:
 
+The following is a partial `route` section, not a complete config file.
+
 ```json
 "route": {
   "rule_set": [{ "type": "local", "tag": "ru", "format": "binary", "path": "geosite-category-ru.srs" }],
@@ -119,6 +121,9 @@ The sing-box `detour` field can be set on `socks` or `http` outbounds. It uses
 the specified TCP outbound to connect to the proxy server. Multiple SOCKS5/HTTP
 CONNECT hops can be nested; `direct`, VLESS, or Trojan can be the base outbound:
 
+The following shows related `outbounds` and `route` sections; it is a partial
+config fragment, not a complete file.
+
 ```json
 "outbounds": [
   { "type": "socks", "tag": "entry", "server": "entry.example", "server_port": 1080, "network": "tcp" },
@@ -136,7 +141,10 @@ to `direct`. Only TCP chains are supported.
 Several servers make a group; a group is itself an outbound, and its tag is
 used in rules and `route.final`:
 
-```json
+The following JSONC fragment shows only the group and subscription sections,
+not a complete config file.
+
+```jsonc
 "outbounds": [
   { "type": "urltest", "tag": "auto",            // fastest; "fallback" — first working;
     "outbounds": ["proxy"],                      // "selector" — selected (default or first)
@@ -174,6 +182,9 @@ strategy and `observatory` (check URL and interval).
   downloaded before routes are enabled.
 
 ## Anti-DPI: fragment and noises
+
+The following is a `direct` outbound object for the `outbounds` section, not a
+complete config file.
 
 ```json
 { "type": "direct", "tag": "direct",

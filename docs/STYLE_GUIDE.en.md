@@ -198,6 +198,34 @@ Give changing figures for test counts, benchmarks, platforms, and versions a sou
 - **SHOULD:** Add a table of contents and clear headings to long documents.
 - **MUST:** Do not change upstream or generated files for editorial consistency.
 
+## Editorial examples
+
+These examples show how to make a claim verifiable without broadening its meaning. The “before” wording is intentionally incomplete; it does not describe the project's current behavior.
+
+### Procedure with a result check
+
+**Before:** “Check the config file.”
+
+**After:** “Run `reality-client --config config.json --check`. If the config is valid, the CLI prints `настройки в порядке` and exits before calling `app.start`. This check does not confirm a network connection.”
+
+**Why:** the action, expected result, and check boundary follow from [CLI](CLI.en.md) and the [command handler](../bin/client/src/main.rs).
+
+### Parameter description
+
+**Before:** “`cache_capacity` limits the number of DNS answers.”
+
+**After:** “`cache_capacity` sets the maximum number of DNS cache entries. An entry is keyed by the query name and DNS record type; A and AAAA records for one name count separately.”
+
+**Why:** the description names the parameter's unit and does not confuse answers with cache entries; see [DNS](DNS.en.md) and the [cache implementation](../core/src/app/dns/cache.rs).
+
+### Security claim
+
+**Before:** “`allow_insecure` disables TLS verification.”
+
+**After:** “A VLESS/Trojan server with `security=none` uses an unencrypted connection. The core skips that server unless `allow_insecure` is enabled.”
+
+**Why:** the wording names the specific mode and its consequence without claiming that the option disables certificate verification; see [CONFIG](CONFIG.en.md) and the [config parser](../core/src/app/config/singbox.rs).
+
 ## Maintaining this standard
 
 Before changing a document, identify its class and primary source of facts. In the pull request, link the sources and list the relevant checks. For documentation changes, run `git diff --check` and `python scripts/check_doc_links.py`; check language pairs, commands, and examples. When changing a C ABI header, also run `python scripts/check_ffi_abi.py`. Required CI must pass for the current PR head before merge.
