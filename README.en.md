@@ -95,7 +95,7 @@ The SDK lets an application embed `vpn-core` as its networking core. It can conn
 | `rc_request` | Call the core API directly, without a network HTTP server or token |
 | `rc_reload` | Apply a new configuration without recreating the whole app |
 | `rc_network_changed` | Notify the core of a network change detected by the host application |
-| `rc_is_alive` | Check the instance state and detect a terminal error |
+| `rc_is_alive` / `rc_last_error_code` | Check whether the instance is running; get its error category after it exits |
 | Callbacks | Receive events/logs and provide platform functions such as socket protection or UID lookup |
 
 The [library guide](docs/LIBRARY.en.md) covers CMake and pkg-config, platform
