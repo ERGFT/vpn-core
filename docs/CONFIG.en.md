@@ -60,14 +60,23 @@ What each format supports:
 |---|---|---|
 | Inbounds | `socks`, `http`, `mixed`, `tun`; `direct` + a `hijack-dns` rule — DNS server | `socks`, `http`, `mixed`, `tun`; `dokodemo-door` (or `tunnel`, only in the DNS-server role) routed to a `dns` outbound |
 | Outbounds | `vless`, `trojan`, TCP `socks` and `http` (HTTP CONNECT), `direct`, `block`, `dns`, `selector`, `urltest`; `fallback` is a vpn-core extension | `vless`, `trojan`, `freedom` (with `fragment`, `noises`), `blackhole`, `dns`; `balancers` with `leastPing`/`leastLoad` are converted to `urltest` (checks from `observatory`) |
-| Transport and TLS | `tls` (`reality`, `utls`, `alpn`, `certificate_path`), `transport`: `ws`, `grpc`, `httpupgrade`; core extension `type: xhttp` | `streamSettings`: `raw`/`tcp`, `ws`, `grpc`, `httpupgrade`, `xhttp` (also the legacy alias `splithttp`); `tls`/`reality`; `mux` (Mux.Cool) |
+| Transport and TLS | `tls` (`reality`, `utls`, `alpn`, `certificate_path`), `transport`: `ws`, `grpc`, `httpupgrade`; core extension `type: xhttp` with the supported part of `extra` | `streamSettings`: `raw`/`tcp`, `ws`, `grpc`, `httpupgrade`, `xhttp` (legacy alias: `splithttp`), including the supported part of `extra.downloadSettings`; `tls`/`reality`; `mux` (Mux.Cool) |
 | Rules | `domain`, `domain_suffix`, `domain_keyword`, `domain_regex`, `geosite`, `geoip`, `ip_cidr`, `ip_is_private`, `port`, `port_range`, `network`, `inbound`, `rule_set`, `user_id`, `invert`, `protocol: dns`; actions `route`, `reject`, `sniff`, `hijack-dns` | `domain` (`geosite:`, `domain:`, `full:`, `regexp:`, `keyword:`, plain substring), `ip` (`geoip:`, addresses), `port`, `network`, `inboundTag`, `outboundTag`/`balancerTag`; `domainStrategy` `AsIs`/`IPIfNonMatch` |
 | DNS | `servers` (with `type`, and the legacy form with `address`), `rules`, `final`, `strategy`, `fakeip` | `servers` (strings and objects with `domains`; `+local` — direct), `queryStrategy`, `fakedns` |
 | API | `experimental.clash_api`: `external_controller`, `secret` | the same `experimental.clash_api` extension |
 
 Xray `leastLoad` does not retain its original semantics: both balancer types
 are converted to the same latency-based `urltest` group, and
-`strategy.settings` is ignored. Do not assume full Xray routing compatibility.
+`strategy.settings` is ignored. The probe URL and interval come from
+`observatory` or `burstObservatory`; other parameters in these sections do
+not imply full Xray routing compatibility.
+
+For XHTTP, the Xray parser accepts `downloadSettings` in `xhttpSettings` (or
+`splithttpSettings`) and passes it to the limited `extra` parser. The sing-box
+`transport.type: xhttp` extension uses the same XHTTP parser. The supported
+fields, limits, and a separate download-channel example are documented in the
+[link and XHTTP guide](LINK.en.md); this does not mean that all Xray options
+are supported.
 
 Rules are checked in order; the first match wins. Within one rule the
 "where" conditions (domains, `geosite`, addresses, `geoip`) are combined with
