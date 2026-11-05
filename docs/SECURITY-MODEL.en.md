@@ -2,12 +2,11 @@
 
 [Русский](SECURITY-MODEL.md) | **English**
 
-What the client guarantees and what it protects against. How to report a vulnerability — [SECURITY.md](../SECURITY.md).
+Which security properties the client provides, the conditions under which they hold, and the remaining threats. How to report a vulnerability — [SECURITY.md](../SECURITY.md).
 
 ## Security
 
-What the client guarantees and what it protects against (details and
-history — [PLAN.en.md, “Security audit (2026-09-26)”](../PLAN.en.md#security-audit-2026-09-26)):
+The history and scope of the internal review are documented in [PLAN.en.md, “Security audit (2026-09-26)”](../PLAN.en.md#security-audit-2026-09-26).
 
 - **Who receives the UUID depends on `security`:**
   - `reality` — only a server that passed REALITY verification. VLESS data
