@@ -104,7 +104,8 @@ int rc_validate(const char *config, const char *base_dir);
 /*
  * Запустить ядро.
  *   config   — обязательная UTF-8 строка с нулём в конце: JSON в поддерживаемой
- *              ядром части форматов sing-box или Xray-core (см. docs/CONFIG.md),
+ *              ядром части форматов sing-box или Xray-core; см.
+ *              https://github.com/ERGFT/vpn-core/blob/main/docs/CONFIG.md,
  *              как для `reality-client --config`;
  *   base_dir — папка для относительных путей в настройках (NULL — текущая);
  *   tun_fd   — дескриптор TUN от системы на Unix (Android:
@@ -120,7 +121,8 @@ int rc_validate(const char *config, const char *base_dir);
  */
 /* Start the core.
  *   config   — required NUL-terminated UTF-8 string: JSON in the subset of
- *              sing-box or Xray-core supported by the core (see docs/CONFIG.md),
+ *              sing-box or Xray-core supported by the core; see
+ *              https://github.com/ERGFT/vpn-core/blob/main/docs/CONFIG.md,
  *              in the same format as `reality-client --config`;
  *   base_dir — base directory for relative paths (NULL means current dir);
  *   tun_fd   — system-provided TUN descriptor on Unix (Android:
