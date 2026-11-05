@@ -15,13 +15,18 @@ reality-client --config config.json --check   # validate only
 reality-client --config config.json
 ```
 
-Existing sing-box and Xray configs (from v2rayN, panels, etc.) work too:
-everything the core supports behaves as it does there. Whatever the core does
-not support (other protocols, chains outside the limited SOCKS5/HTTP CONNECT
-`detour`, sing-box multiplexing…) is an
-error at startup with the path to the key, e.g. `outbounds[2].multiplex: не
-поддерживается` (not supported), rather than a silently ignored setting. A
-typo in a key name is an error too.
+sing-box and Xray files can be used as a starting point, but vpn-core accepts
+only the parts of those formats that it supports. The format name does not
+guarantee compatibility with every config from v2rayN or a panel, or behavior
+that fully matches upstream. Check the table below and the [features
+matrix](FEATURES.en.md). Many unknown or unsupported keys produce an error
+with the key path; some explicitly handled fields may be ignored. For example,
+an unsupported `multiplex` setting produces
+`outbounds[2].multiplex: не поддерживается` (not supported).
+
+The `--check` command parses the file and builds the application, then exits
+before `app.start`. It reports configuration errors but does not test a
+connection to a server.
 
 ```json
 {
@@ -55,14 +60,23 @@ What each format supports:
 |---|---|---|
 | Inbounds | `socks`, `http`, `mixed`, `tun`; `direct` + a `hijack-dns` rule — DNS server | `socks`, `http`, `mixed`, `tun`; `dokodemo-door` (or `tunnel`, only in the DNS-server role) routed to a `dns` outbound |
 | Outbounds | `vless`, `trojan`, TCP `socks` and `http` (HTTP CONNECT), `direct`, `block`, `dns`, `selector`, `urltest`; `fallback` is a vpn-core extension | `vless`, `trojan`, `freedom` (with `fragment`, `noises`), `blackhole`, `dns`; `balancers` with `leastPing`/`leastLoad` are converted to `urltest` (checks from `observatory`) |
-| Transport and TLS | `tls` (`reality`, `utls`, `alpn`, `certificate_path`), `transport`: `ws`, `grpc`, `httpupgrade`; core extension `type: xhttp` | `streamSettings`: `raw`/`tcp`, `ws`, `grpc`, `httpupgrade`, `xhttp` (also the legacy alias `splithttp`); `tls`/`reality`; `mux` (Mux.Cool) |
+| Transport and TLS | `tls` (`reality`, `utls`, `alpn`, `certificate_path`), `transport`: `ws`, `grpc`, `httpupgrade`; core extension `type: xhttp` with the supported part of `extra` | `streamSettings`: `raw`/`tcp`, `ws`, `grpc`, `httpupgrade`, `xhttp` (legacy alias: `splithttp`), including the supported part of `extra.downloadSettings`; `tls`/`reality`; `mux` (Mux.Cool) |
 | Rules | `domain`, `domain_suffix`, `domain_keyword`, `domain_regex`, `geosite`, `geoip`, `ip_cidr`, `ip_is_private`, `port`, `port_range`, `network`, `inbound`, `rule_set`, `user_id`, `invert`, `protocol: dns`; actions `route`, `reject`, `sniff`, `hijack-dns` | `domain` (`geosite:`, `domain:`, `full:`, `regexp:`, `keyword:`, plain substring), `ip` (`geoip:`, addresses), `port`, `network`, `inboundTag`, `outboundTag`/`balancerTag`; `domainStrategy` `AsIs`/`IPIfNonMatch` |
 | DNS | `servers` (with `type`, and the legacy form with `address`), `rules`, `final`, `strategy`, `fakeip` | `servers` (strings and objects with `domains`; `+local` — direct), `queryStrategy`, `fakedns` |
 | API | `experimental.clash_api`: `external_controller`, `secret` | the same `experimental.clash_api` extension |
 
 Xray `leastLoad` does not retain its original semantics: both balancer types
 are converted to the same latency-based `urltest` group, and
-`strategy.settings` is ignored. Do not assume full Xray routing compatibility.
+`strategy.settings` is ignored. The probe URL and interval come from
+`observatory` or `burstObservatory`; other parameters in these sections do
+not imply full Xray routing compatibility.
+
+For XHTTP, the Xray parser accepts `downloadSettings` in `xhttpSettings` (or
+`splithttpSettings`) and passes it to the limited `extra` parser. The sing-box
+`transport.type: xhttp` extension uses the same XHTTP parser. The supported
+fields, limits, and a separate download-channel example are documented in the
+[link and XHTTP guide](LINK.en.md); this does not mean that all Xray options
+are supported.
 
 Rules are checked in order; the first match wins. Within one rule the
 "where" conditions (domains, `geosite`, addresses, `geoip`) are combined with

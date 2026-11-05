@@ -15,13 +15,18 @@ reality-client --config config.json --check   # только проверить
 reality-client --config config.json
 ```
 
-Подходят и готовые настройки sing-box и Xray (из v2rayN, панелей и т.п.):
-всё, что умеет ядро, работает как там. Чего ядро не умеет (другие
-протоколы, цепочки вне ограниченного `detour` у SOCKS5/HTTP CONNECT,
-мультиплексирование sing-box…), — ошибка при
-запуске с путём до ключа, например `outbounds[2].multiplex: не
-поддерживается`, а не молча пропущенная настройка. Опечатка в имени
-ключа — тоже ошибка.
+Файлы sing-box и Xray можно использовать как основу, но vpn-core принимает
+только поддерживаемые им части этих форматов. Название формата не гарантирует
+совместимость с любой конфигурацией из v2rayN или панели и не обещает полного
+совпадения поведения с upstream. Сверяйтесь с таблицей ниже и разделом
+[возможностей](FEATURES.md). Многие неизвестные или неподдерживаемые ключи
+заканчиваются ошибкой с указанием пути; отдельные явно обработанные поля могут
+игнорироваться. Например, неподдерживаемый `multiplex` приводит к ошибке
+`outbounds[2].multiplex: не поддерживается`.
+
+Команда `--check` проверяет разбор файла и построение приложения, затем
+завершается до `app.start`. Она показывает ошибки конфигурации, но не проверяет
+подключение к серверу.
 
 ```json
 {
@@ -55,14 +60,22 @@ reality-client --config config.json
 |---|---|---|
 | Входы | `socks`, `http`, `mixed`, `tun`; `direct` + правило `hijack-dns` — DNS-сервер | `socks`, `http`, `mixed`, `tun`; `dokodemo-door` (или `tunnel`, только в роли DNS-сервера), отданный маршрутизацией выходу `dns` |
 | Выходы | `vless`, `trojan`, TCP `socks` и `http` (HTTP CONNECT), `direct`, `block`, `dns`, `selector`, `urltest`; `fallback` — расширение vpn-core | `vless`, `trojan`, `freedom` (с `fragment`, `noises`), `blackhole`, `dns`; `balancers` с `leastPing`/`leastLoad` преобразуются в `urltest` (проверка — из `observatory`) |
-| Транспорт и TLS | `tls` (`reality`, `utls`, `alpn`, `certificate_path`), `transport`: `ws`, `grpc`, `httpupgrade`; расширение ядра `type: xhttp` | `streamSettings`: `raw`/`tcp`, `ws`, `grpc`, `httpupgrade`, `xhttp` (также старое имя `splithttp`); `tls`/`reality`; `mux` (Mux.Cool) |
+| Транспорт и TLS | `tls` (`reality`, `utls`, `alpn`, `certificate_path`), `transport`: `ws`, `grpc`, `httpupgrade`; расширение ядра `type: xhttp` с поддерживаемой частью `extra` | `streamSettings`: `raw`/`tcp`, `ws`, `grpc`, `httpupgrade`, `xhttp` (старое имя — `splithttp`), включая поддерживаемую часть `extra.downloadSettings`; `tls`/`reality`; `mux` (Mux.Cool) |
 | Правила | `domain`, `domain_suffix`, `domain_keyword`, `domain_regex`, `geosite`, `geoip`, `ip_cidr`, `ip_is_private`, `port`, `port_range`, `network`, `inbound`, `rule_set`, `user_id`, `invert`, `protocol: dns`; действия `route`, `reject`, `sniff`, `hijack-dns` | `domain` (`geosite:`, `domain:`, `full:`, `regexp:`, `keyword:`, просто подстрока), `ip` (`geoip:`, адреса), `port`, `network`, `inboundTag`, `outboundTag`/`balancerTag`; `domainStrategy` `AsIs`/`IPIfNonMatch` |
 | DNS | `servers` (с `type` и старые с `address`), `rules`, `final`, `strategy`, `fakeip` | `servers` (строки и объекты с `domains`; `+local` — напрямую), `queryStrategy`, `fakedns` |
 | API | `experimental.clash_api`: `external_controller`, `secret` | то же расширение `experimental.clash_api` |
 
 В Xray `leastLoad` не сохраняет исходную семантику: оба типа balancer
 преобразуются в одну latency-based группу `urltest`, а `strategy.settings`
-игнорируются. Не рассчитывайте на полную совместимость Xray routing.
+игнорируются. Адрес и интервал проверки берутся из `observatory` или
+`burstObservatory`; остальные параметры этих секций не означают полной
+совместимости Xray routing.
+
+Для XHTTP Xray-парсер принимает `downloadSettings` в `xhttpSettings` (или
+`splithttpSettings`) и передаёт его в ограниченный разбор `extra`. Расширение
+sing-box `transport.type: xhttp` использует тот же XHTTP-разбор. Поддерживаемые
+поля, ограничения и пример отдельного канала скачивания описаны в руководстве
+[по ссылкам и XHTTP](LINK.md); это не означает поддержку всех параметров Xray.
 
 Правила проверяются по порядку, срабатывает первое подошедшее. В одном
 правиле условия «куда» (домены, `geosite`, адреса, `geoip`) соединяются
