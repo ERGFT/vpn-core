@@ -33,9 +33,11 @@ The history and scope of the internal review are documented in [PLAN.en.md, “S
   connection. This is a simplified mimic: it makes one request and does not
   open a full browser. The Chrome profile is used when `fp=` is absent;
   supported `fp=` values select other profiles.
-- **DNS for proxied traffic:** if the app passes the site name (SOCKS5 with a
-  hostname, HTTP proxy, TUN with fake-IP), the name is resolved by the
-  server and the local DNS does not see it. Visible to the local network may be:
+- **DNS for proxied traffic:** when the selected outbound is VLESS or Trojan,
+  and the app passes the site name (SOCKS5 with a hostname, HTTP proxy, TUN
+  with fake-IP), the core passes the name to the server, which resolves it;
+  the local DNS does not see that name. The `direct` outbound uses local
+  resolution as described below. Visible to the local network may be:
   - the VLESS server's own name;
   - names the app resolved itself before connecting (for example, a
     browser with SOCKS5 without "Proxy DNS when using SOCKS v5");
