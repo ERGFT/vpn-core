@@ -101,8 +101,11 @@ themselves (sing-box and Xray will not accept them):
 
 - on `vless`/`trojan` outbounds: `link` or `link_file` — a
   `vless://`/`trojan://` link instead of fields (the secret can live in a
-  separate file); `allow_insecure` — allow an unencrypted server; `mux` —
-  Mux.Cool (in sing-box: `"mux": 8`); `fragment`;
+  separate file); `allow_insecure` — explicitly allow `security=none` for
+  VLESS or Trojan. The connection to the server is unencrypted in this mode;
+  a Trojan password is also sent in plaintext. This field does not disable
+  TLS certificate verification; keys for that purpose are unsupported;
+  `mux` — Mux.Cool (in sing-box: `"mux": 8`); `fragment`;
 - on `direct` (sing-box): `fragment`, `noises` — as on `freedom` in Xray;
 - the `fallback` outbound (first working) and `subscriptions` on groups;
 - at the root: `subscriptions` — panel subscriptions;
