@@ -1462,12 +1462,31 @@ AEAD check without changing their validation logic.
 REALITY `pqv=` adds ML-DSA-65 signing over HMAC-SHA512(AuthKey; certificate
 key || ClientHello || ServerHello), as in `reality.go`; aws-lc was used
 without adding a crypto library, and wrong-key behavior was tested against
-Xray. The plan also investigated `minClientVer`/`maxClientVer`: upstream
-checks the three-byte client version alongside ShortId/time, and on mismatch
-silently proxies to the decoy. A fixed `CLIENT_VERSION = [26, 9, 9]` was
-added to REALITY plaintext with a regression test. This value was not
-auto-synchronized and could become stale; it was a plausible version rather
-than `0.0.0`, not a protocol feature claim.
+Xray. The plan also investigated `minClientVer`/`maxClientVer`. An initially
+ambiguous 3x-ui issue ([#5922](https://github.com/MHSanaei/3x-ui/issues/5922))
+was followed by a line-by-line check of the live `main` branch of
+`XTLS/REALITY`, in `tls.go`. At the time of the check, this file matched
+[upstream commit `83f6217`](https://github.com/XTLS/REALITY/blob/83f621788ca88b83179810b12baa7ae518aacb83/tls.go#L272-L277)
+(14 October 2026). The relevant upstream condition was:
+
+```go
+if (config.MinClientVer == nil || Value(hs.c.ClientVer[:]...) >= Value(config.MinClientVer...)) &&
+    (config.MaxClientVer == nil || Value(hs.c.ClientVer[:]...) <= Value(config.MaxClientVer...)) &&
+    (config.MaxTimeDiff == 0 || time.Since(hs.c.ClientTime).Abs() <= config.MaxTimeDiff) &&
+    (config.ShortIds[hs.c.ClientShortId]) {
+    hs.c.conn = conn
+}
+```
+
+This confirms an active three-byte client-version check alongside ShortId and
+time validation. The version bounds are optional: when either configured bound
+is nil, that side of the comparison is disabled. On a failed comparison the
+server does not send a TLS alert; `hs.c.conn` remains unset and traffic is
+silently proxied to the cover site. `Value()` packs the bytes as a big-endian
+integer. The project therefore added a fixed `CLIENT_VERSION = [26, 9, 9]` to
+REALITY plaintext with a regression test. This value was not auto-synchronized
+and could become stale; it was a plausible version rather than `0.0.0`, not a
+protocol feature claim.
 
 The plan emphasizes that upstream REALITY and DPI behavior evolve: fingerprints
 and client version need periodic verification. It closes with a continuing
