@@ -32,5 +32,12 @@ and first run. This is the detailed reference.
 | [stage5-crypto-review-and-interop.en.md](stage5-crypto-review-and-interop.en.md) | checklist for a third-party crypto review of REALITY |
 | [RELEASING.en.md](RELEASING.en.md) | preflight builds, artifact verification, and tag publishing |
 
+## Documentation rules
+
+| Page | About |
+|---|---|
+| [STYLE_GUIDE.en.md](STYLE_GUIDE.en.md) | VCTWS 1.0 editorial rules for technical documentation |
+| [GLOSSARY.en.md](GLOSSARY.en.md) | agreed Russian and English technical terms |
+
 Decision history by stage — [PLAN.en.md](../PLAN.en.md), what changed —
 [CHANGELOG.md](../CHANGELOG.md#changelog).
