@@ -21,14 +21,15 @@
       // "allow_ip": ["192.168.1.23"],   // расширение: кому из сети можно
       // "max_conns": 512                // расширение
     }
-    // TUN — весь трафик компьютера, как у VPN (права администратора/root;
-    // на Windows — wintun.dll рядом с программой):
+    // TUN направляет системный TCP- и UDP-трафик в ядро; ICMP/ping не поддерживается.
+    // Нужны права администратора/root; на Windows — wintun.dll рядом с программой
+    // (подробности и ограничения: docs/TUN.md):
     // {
     //   "type": "tun",
     //   "tag": "tun",
     //   "address": ["172.19.0.1/30"],
     //   "auto_route": true,
-    //   "strict_route": true,            // kill switch (Linux): упал клиент — сеть закрыта
+    //   "strict_route": true,            // kill switch (Linux/Windows; см. docs/TUN.md)
     //   "route_exclude_address": ["192.168.0.0/16"]
     // },
     // DNS-сервер для системы (127.0.0.1 — как DNS в настройках сети) —

@@ -52,7 +52,7 @@ pub struct TunSettings {
     pub mtu: u16,
     pub auto_route: bool,
     pub route_exclude: Vec<IpNet>,
-    /// Kill switch (Linux): без живого TUN трафик не идёт мимо туннеля.
+    /// Kill switch (Linux/Windows): без живого TUN трафик не идёт мимо туннеля.
     pub strict_route: bool,
     pub dns_hijack: bool,
     pub sniff: bool,
