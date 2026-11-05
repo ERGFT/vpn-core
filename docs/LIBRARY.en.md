@@ -20,8 +20,9 @@ macOS arm64, Android arm64-v8a, and iOS arm64. Each ZIP has a separate
 `.sha256` file. CI checks archive contents and checksums; it builds and runs
 the unpacked C example on Linux, Windows, and macOS. Android and iOS are checked
 by cross-linking the example. These mobile checks do not replace an
-on-device run. Dependency license notices, SBOM, and build provenance are
-published as separate release files.
+on-device run. Dependency license notices and SBOM are published as release
+files. GitHub build provenance is published separately as a GitHub-hosted
+attestation for the release files, not as a downloadable asset.
 
 SDK ZIPs produced by the current workflow on `main` contain `manifest.json`
 with `schema_version: 1`. It records the
@@ -190,8 +191,10 @@ rc_stop(core);
 
   On a config error it returns NULL and puts the text in `err`.
 - **`rc_request(core, method, path, body, &status)`** — synchronous requests
-  to the local API ([API.en.md](API.en.md)), with the same path and response,
-  but without networking or a token. Streaming paths (`/events`, `/traffic`,
+  to the local API ([API.en.md](API.en.md)), with the same path and response.
+  The call invokes the API directly, bypassing the HTTP server and its token
+  check; a route may still initiate network operations. Streaming paths
+  (`/events`, `/traffic`,
   `/memory`, `/logs`) and the WebSocket `/connections` stream are not available
   through this function: events and logs use callbacks, while streaming
   traffic/memory data is not exposed in library mode. A regular
@@ -216,6 +219,12 @@ rc_stop(core);
   application traffic, so the host must retry requests according to its own
   policy. Returns `0` when handled, or `-1` for a NULL handle or an internal
   error.
+- **`rc_set_protect(cb, user)` and `rc_set_connection_owner(cb, user)`** —
+  process-wide callbacks for socket protection and UID lookup. They must be
+  thread-safe and return quickly. Replacing or removing one waits for active
+  calls, so a callback must not call its own setter: it would wait for itself
+  to finish. After the setter returns, the previous callback and `user` may be
+  freed.
 - **`rc_set_event_callback(core, cb, user)`** — events (like the
   `GET /events` stream): connections opening and closing, group switches,
   subscription updates, reloads, mode changes. The callback receives a

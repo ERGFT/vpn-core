@@ -28,7 +28,9 @@ and attaches the files, checksums, licenses, and CycloneDX SBOM to the release.
 GitHub separately publishes a build provenance attestation for the files; this
 is a verifiable GitHub record, not a separate downloadable asset. Compare the
 published asset names and SHA-256 with the preflight artifacts. Verify a
-downloaded file with `gh attestation verify <file> --repo ERGFT/vpn-core`.
+downloaded file with `gh attestation verify <file> --repo ERGFT/vpn-core`;
+see the [official GitHub CLI manual](https://cli.github.com/manual/gh_attestation_verify)
+for details.
 
 Android/iOS artifacts are cross-compiled and linked; this does not confirm
 execution on physical devices. REALITY has not received an external

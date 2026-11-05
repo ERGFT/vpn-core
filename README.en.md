@@ -86,7 +86,7 @@ The executable is in `target/release/` on Linux and `target\release\` on Windows
 
 ## For developers
 
-The SDK is for apps that need an embedded VLESS client. Its public interface is a C ABI. The [library guide](docs/LIBRARY.en.md) and [`reality.h`](ffi/include/reality.h) describe memory ownership, threads, callbacks, and platform integration.
+The SDK lets an application embed `vpn-core` as its networking core. It can connect to VLESS and Trojan servers; its public interface is a C ABI. The [library guide](docs/LIBRARY.en.md) and [`reality.h`](ffi/include/reality.h) describe memory ownership, threads, callbacks, and platform integration.
 
 | API | Purpose |
 |---|---|
@@ -116,8 +116,9 @@ from an extracted ZIP. Public headers and examples are in [`ffi/`](ffi/).
 | Management and platform integration | Local Clash API, metacubexd and yacd dashboards, systemd, and Windows service; Android/iOS through C ABI remain experimental |
 | Experimental | `fragment`, `noises`, and application routing integration |
 | Not supported | KCP transport; ICMP/ping through TUN |
+Importing a sing-box config does not imply support for every option.
 
-Importing a sing-box config **does not mean full compatibility** with all of its options. See the [full matrix](docs/FEATURES.en.md) for each feature's status and test coverage.
+The [feature matrix](docs/FEATURES.en.md) lists capabilities, maturity, and specific checks. Scenarios and test results are documented in the [testing guide](docs/TESTING.en.md).
 
 ## Choosing a core
 
@@ -146,14 +147,13 @@ independent external audit.
 
 ## Security and limitations
 
-This is an educational and research project with no independent external security audit. REALITY has received only an internal review; the report and its limits are described above. A listed feature does not guarantee security for every configuration.
+This is an educational and research project with no independent external security audit. REALITY has received only an internal review; its scope is described in the [report](docs/stage5-crypto-review-and-interop.en.md). The [security model](docs/SECURITY-MODEL.en.md) explains threats, DNS behavior, and failure handling in detail. A listed feature does not guarantee security for every configuration.
 
-- With `security=none`, traffic is not encrypted; this mode requires the explicit `--allow-insecure` option.
+- With `security=none`, traffic is not encrypted; the CLI requires the explicit `--allow-insecure` option. The sing-box `allow_insecure` setting is documented in the [configuration guide](docs/CONFIG.en.md).
 - With REALITY, the UUID is sent only after REALITY verification. With TLS, the server must present a valid certificate.
 - By default, the local proxy listens only on `127.0.0.1`. DNS behavior depends on traffic type and configuration; see the [security model](docs/SECURITY-MODEL.en.md).
-- The project is licensed under [GPL-3.0-or-later](LICENSE). Check how the license applies to your app and distribution before embedding the core.
-
-Report vulnerabilities privately using [SECURITY.md](SECURITY.md), not in a public issue.
+- Report vulnerabilities privately using [SECURITY.md](SECURITY.md).
+- The project is licensed under [GPL-3.0-or-later](LICENSE); check how the license applies to your app and distribution before embedding the core.
 
 ## Contributing and license
 

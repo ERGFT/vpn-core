@@ -22,6 +22,9 @@ example, is not claimed as tested here.
 "route": { "presets": ["block-ads", "private-direct", "ru-direct"] }
 ```
 
+This is a partial config fragment, not a complete JSON file. Add the shown fields
+to the corresponding sections of your configuration.
+
 - `secret` — the token right in the config, `secret_file` (extension) — in
   a separate file; at least 16 UTF-8 bytes. Use an ASCII token to make its
   length unambiguous.
@@ -60,7 +63,8 @@ curl -H "$T" "http://127.0.0.1:9090/dns/query?name=example.com&type=A"
 
 | Request | What it does |
 |---|---|
-| `GET /version` | core version and version fields for Clash API clients |
+| `GET /` | greeting without a token; browsers are redirected to `/ui/` when a dashboard is configured |
+| `GET /version` | core version and Clash client compatibility flags (`premium`, `meta`) |
 | `GET /configs`, `PATCH /configs` | inbound ports and the mode; change the mode (`mode`; ports and the rest — only in the config file) |
 | `PUT /configs` | reread the config file; with `payload` — apply a new config (without writing the file, as in Clash) |
 | `GET /proxies[/{name}]`, `PUT /proxies/{group}` | outbounds, groups (`now`, `all`), subscription servers; select a selector member |
@@ -69,7 +73,7 @@ curl -H "$T" "http://127.0.0.1:9090/dns/query?name=example.com&type=A"
 | `GET /connections`, `DELETE /connections[/{id}]` | open connections (outbound, chain, rule, traffic); close |
 | `GET /rules` | rules in order and `route.final` |
 | `GET /providers/proxies[/{name}]`, `PUT …/{name}`, `GET …/{name}/healthcheck` | subscriptions: servers, update, check |
-| `GET /providers/rules` | empty rule-provider list (`{"providers": {}}`) |
+| `GET /providers/rules` | empty rule-provider map (`{"providers": {}}`) |
 | `GET /dns/query?name=&type=` | ask the client's DNS |
 
 Own requests (not in the Clash API): `GET /stats` (traffic per outbound),
@@ -124,16 +128,17 @@ curl -N -H "$T" "http://127.0.0.1:9090/logs?level=warning"
 While nobody listens to a stream, events are not even assembled. Up to 16
 streams at a time.
 
-- The token is always required (`Authorization: Bearer`; a WebSocket from a
-  browser — `?token=`, see `allow_query_token`). 5 wrong tokens from an
-  address (IPv6 — from a /64) block it for a minute and longer; 127.0.0.1
-  is never blocked. Only dashboard files and the `GET /` greeting are
-  served without it, as in Clash. `Host` must be the API address (DNS
-  rebinding protection); browser requests are accepted only from your own
-  dashboard and sites in `access_control_allow_origin`; listening on
-  anything but 127.0.0.1 requires `allow_ip`. Site addresses in
-  `/connections` are browsing history, so they are only in the API, not in
-  the log.
+- API requests require a bearer token. A browser WebSocket may pass it as
+  `?token=` when `allow_query_token` is enabled. CORS preflight `OPTIONS`
+  requests skip the token but still check `Host` and the allowed `Origin`.
+  Five wrong tokens from an address (IPv6 — from a /64) block that address for
+  a minute or longer; 127.0.0.1 is never blocked. Apart from preflight, only
+  dashboard files and the `GET /` greeting are served without a token, as in
+  Clash. `Host` must be the API address (DNS rebinding protection); browser
+  requests are accepted only from your own dashboard and sites in
+  `access_control_allow_origin`; listening on anything but 127.0.0.1 requires
+  `allow_ip`. Site addresses in `/connections` are browsing history, so they
+  are only in the API, not in the log.
 - Reload (`PUT /configs`, `POST /reload`, on Linux also `kill -HUP`): if the
   file has an error, the previous config keeps working. New outbounds,
   rules, DNS, groups and subscriptions apply immediately to new
