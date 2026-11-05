@@ -56,6 +56,11 @@ tag workflow publishes a release (not a draft) only after the CLI and every
 SDK target build successfully. Verify provenance with
 `gh attestation verify <file> --repo ERGFT/vpn-core`.
 
+The separate `mobile` job cross-compiles `reality-ffi` for Android arm64-v8a
+and iOS arm64. It has `continue-on-error: true`, so a failed mobile build does
+not fail the workflow. A successful build confirms library compilation, not
+execution on a device.
+
 The release workflow attaches C ABI SDKs for Linux x86_64, Windows x86_64,
 macOS arm64, Android arm64-v8a, and iOS arm64 alongside the CLI. Archive
 contents and metadata vary by version; do not assume current packaging features

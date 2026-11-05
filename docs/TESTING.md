@@ -56,6 +56,11 @@ DNS.
 релиз (не черновик) только после успешной сборки CLI и всех SDK. Проверка
 attestation: `gh attestation verify <файл> --repo ERGFT/vpn-core`.
 
+Отдельная задача `mobile` кросс-компилирует `reality-ffi` для Android
+arm64-v8a и iOS arm64. Ошибка этой задачи не делает workflow неуспешным
+(`continue-on-error: true`); успешная сборка подтверждает компиляцию
+библиотеки, но не её запуск на устройстве.
+
 Релизный workflow прикладывает к CLI SDK C ABI для Linux x86_64, Windows
 x86_64, macOS arm64, Android arm64-v8a и iOS arm64. Состав и metadata архива
 зависят от версии; не переносите возможности текущего packaging на старые ZIP.
