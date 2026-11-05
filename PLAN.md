@@ -1,7 +1,15 @@
 # План: своё ядро VLESS(+REALITY) — с пометками по рискам
 
-English translation: [PLAN.en.md](PLAN.en.md). Historical status notes are
-not a substitute for the current implementation, tests, or release artifacts.
+Это исторический инженерный журнал. Английский перевод — [PLAN.en.md](PLAN.en.md).
+Статусы и утверждения описывают работу на дату записи; они не заменяют
+текущую реализацию, тесты или опубликованные артефакты. Актуальный публичный
+статус см. в [матрице возможностей](docs/FEATURES.md) и
+[истории релизов](CHANGELOG.md).
+
+Позднее пользователь изменил первоначальное требование плана: для допуска к
+первому релизу зачтено внутреннее ревью трёх агентов Codex. Это не означает,
+что внешний аудит REALITY проводился; см.
+[чек-лист REALITY](docs/stage5-crypto-review-and-interop.md).
 
 ## 2026-10-17: UID и сайты в одном TUN (экспериментально)
 
