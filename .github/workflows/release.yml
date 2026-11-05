@@ -264,8 +264,9 @@ jobs:
             Помимо CLI, релиз содержит SDK C ABI для встраивания ядра в приложения:
             Linux x86_64, Windows x86_64, macOS arm64, Android arm64-v8a и iOS arm64.
             В SDK входят готовая библиотека, заголовок `reality.h`, минимальный
-            пример на C и руководства по API и интеграции. SHA-256 checksums,
-            CycloneDX SBOM и build provenance приложены к файлам релиза.
+            пример на C и руководства по API и интеграции. SHA-256 checksums и
+            CycloneDX SBOM приложены к файлам релиза. GitHub build provenance
+            публикуется отдельно как attestation для этих файлов, не как asset.
 
             Встраивание распространяется по GPL-3.0-or-later. Перед включением
             ядра в приложение проверьте требования лицензии и приложите лицензии
