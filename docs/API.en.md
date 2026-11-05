@@ -4,6 +4,12 @@
 
 The core's local API implements the Clash API subset listed below, plus its own extensions. It is not fully compatible with every Clash, sing-box, mihomo, or Xray endpoint and schema. Enable it in the [config file](CONFIG.en.md).
 
+An embedding application can call the same ordinary routes through
+`rc_request` (see the [SDK guide](LIBRARY.en.md)). This is an in-process call:
+it does not start an HTTP server and requires no Bearer token. API streams are
+unavailable through `rc_request`; the SDK guide describes their limits and
+callbacks.
+
 [metacubexd](https://github.com/MetaCubeX/metacubexd) and
 [yacd](https://github.com/haishanh/yacd) were manually tested in a browser
 against the real core for groups, server selection, latency tests, connections,
@@ -71,6 +77,15 @@ curl -H "$T" "http://127.0.0.1:9090/dns/query?name=example.com&type=A"
 | `GET /providers/proxies[/{name}]`, `PUT …/{name}`, `GET …/{name}/healthcheck` | subscriptions: servers, update, check |
 | `GET /providers/rules` | empty rule-provider list (`{"providers": {}}`) |
 | `GET /dns/query?name=&type=` | ask the client's DNS |
+
+`GET /proxies/{name}/delay` and `GET /group/{name}/delay` require the `url`
+parameter. `timeout` is in milliseconds, defaults to 5000, and is capped at
+30000. An invalid `timeout` or missing `url` returns `400`. An unknown outbound or group returns `404`. A single outbound returns a `delay` field in milliseconds; if it does
+not respond before the timeout, the API returns `504`. A group response
+contains only the members that responded.
+
+For `GET /dns/query`, `name` is required and `type` is optional; it defaults
+to `A`. A missing `name` or a DNS query error returns `400`.
 
 Own requests (not in the Clash API): `GET /stats` (traffic per outbound),
 `GET /groups`, `PUT /groups/{tag}`, `POST /groups/{tag}/check`,
