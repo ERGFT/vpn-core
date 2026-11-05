@@ -15,13 +15,14 @@ reality-client --config config.json --check   # validate only
 reality-client --config config.json
 ```
 
-Existing sing-box and Xray configs (from v2rayN, panels, etc.) work too:
-everything the core supports behaves as it does there. Whatever the core does
-not support (other protocols, chains outside the limited SOCKS5/HTTP CONNECT
-`detour`, sing-box multiplexing…) is an
-error at startup with the path to the key, e.g. `outbounds[2].multiplex: не
-поддерживается` (not supported), rather than a silently ignored setting. A
-typo in a key name is an error too.
+An existing sing-box or Xray config can be used as a starting point, but the
+core supports only the subset of each format listed below. Matching JSON
+formats do not imply full compatibility with the source application or
+identical field semantics: the core has its own limits and extensions. After
+adapting a file, run `--check`. It parses and builds the configuration but does
+not connect to a server. Unknown and explicitly unsupported fields that the
+parser checks produce an error with the key path; some source-specific metadata
+fields may be ignored.
 
 ```jsonc
 {
