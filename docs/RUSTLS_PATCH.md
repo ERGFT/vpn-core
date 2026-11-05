@@ -28,12 +28,21 @@ ClientHello, ведётся обмен ключами TLS 1.3 и разбира�
 | `server/hs.rs`, `server/server_conn.rs`, `server/test.rs` | Резолверу сертификата сервера открыты `ClientHello.random` и X25519-часть доли клиента — нужно только тестовому серверу REALITY в тестах ядра. |
 | `Cargo.toml` | Пустой `[workspace]`, чтобы крейт собирался отдельно. |
 
+Хук REALITY заменяет долю `key_share` только в первом ClientHello. Текущий
+путь REALITY не поддерживает рукопожатие с HelloRetryRequest (HRR). Не
+переносите это ограничение на обычные TLS-соединения без REALITY: здесь
+описан именно путь хука REALITY. Тест
+`hello_retry_request_path_still_completes_with_grease` проверяет HRR без
+REALITY и не подтверждает поддержку REALITY+HRR.
+
 Патч добавляет GREASE (RFC 8701) в наборы шифров, группы, доли ключа,
 версии и расширения каждого ClientHello этого rustls, если для профиля не
 задано `no_grease`. Ядро задаёт `no_grease` для профиля Firefox. Этот
 переключатель не управляет ECH GREASE: оно задаётся отдельно через
-`EchMode`; профиль Chrome и Firefox включает его, а Safari очищает. Поэтому
-параметры GREASE различаются по профилям и настройкам, а утверждение о том,
+`EchMode`; профили Chrome и Firefox запрашивают его, если системный
+генератор случайных чисел успешно заполняет ключ-заглушку, а Safari очищает
+режим. Параметры GREASE различаются по профилям и настройкам, а утверждение
+о том,
 что все разновидности GREASE присутствуют во всех TLS-соединениях, было бы
 неточным. Поскольку патч подменяет rustls во всём графе зависимостей,
 изменённая логика ClientHello применима и к другим TLS-соединениям ядра,
@@ -62,9 +71,14 @@ CI — `scripts/rustls_advisories.sh` (job `audit`, в том числе раз 
 3. Поменять версию в `Cargo.lock` (`cargo update -p rustls`), пересоздать
    `.diff` (`scripts/rustls_patch.sh`) и просмотреть его целиком —
    вошло только задуманное.
-4. Полный `scripts/ci.sh`: тесты REALITY (`reality_full_stack`,
-   `reality_handshake`), интероп с настоящим Xray-core, сверка отпечатка
-   Chrome (`scripts/check_chrome_fingerprint.sh`), живой тест Windows в CI.
+4. Запустить полный `scripts/ci.sh`: обязательные тесты включают suite
+   ядра и REALITY (`reality_full_stack`, `reality_handshake`). Интероп с
+   Xray выполняется, если доступен бинарник; Chrome fingerprint check —
+   если есть доступ к `raw.githubusercontent.com`; vendor `.diff` check —
+   если есть доступ к crates.io. Отдельно дождаться GitHub CI, где
+   `windows_live_test.ps1` проверяет TUN и службу на настоящем Windows
+   runner. Пропущенный необязательный шаг означает, что проверка не
+   выполнялась, а не что она прошла.
 5. В CHANGELOG — новая версия rustls и что пришлось менять в патче.
 
 Исправление безопасности в rustls, которое приходится на изменённые

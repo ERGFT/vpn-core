@@ -11,11 +11,14 @@ The history and scope of the internal review are documented in [PLAN.en.md, “S
 - **Who receives the UUID depends on `security`:**
   - `reality` — only a server that passed REALITY verification. VLESS data
     is sent after a full handshake with verification (certificate HMAC,
-    ML-DSA-65 with `pqv=`). If REALITY verification fails, the client
-    checks the certificate like an ordinary browser only to finish the
-    handshake plausibly (see below): that connection is never handed to
-    the app and the UUID is not sent over it. A degenerate `pbk=` is
-    rejected.
+    ML-DSA-65 with `pqv=`); the core passes the connection to VLESS only
+    after the hook reports `is_verified()`. If a certificate is not a valid
+    REALITY certificate but passes ordinary TLS validation, the connection
+    may be completed only for the background site mimic (see below): it is
+    not handed to the app and the UUID is not sent over it. Errors from the
+    REALITY check itself — for example, an invalid or missing ML-DSA-65
+    signature when `pqv=` is set — abort the handshake without this
+    fallback. A degenerate `pbk=` is rejected.
   - `tls` — whoever presents a valid certificate for the `sni=` name (by
     the built-in root set or `--ca`): the same protection as HTTPS, the
     UUID goes to anyone holding a valid certificate for that name.
@@ -53,9 +56,13 @@ The history and scope of the internal review are documented in [PLAN.en.md, “S
     through the selected DNS server and its `detour`. The local network sees
     the name when the query uses unencrypted DNS directly.
 - **The local SOCKS5/HTTP proxy limits wait times:** 10 s for the greeting and
-  an idle timeout of 300 s (or 30 s if one side has already closed). By default,
-  SOCKS/HTTP and DNS inbounds each allow up to 512 concurrent connections. Each TUN inbound
-  allows up to 4,096; configure the per-inbound limit with `max_conns`.
+  an idle timeout of 300 s (or 30 s if one side has already closed). Each
+  SOCKS/HTTP inbound allows up to 512 connections by default. A DNS inbound
+  allows up to 512 TCP connections (`max_conns`), while UDP queries have a
+  separate fixed limit of 256 concurrent handlers; excess UDP packets are
+  dropped. Each TUN inbound has up to 4,096 slots by default for TCP
+  connections and UDP flows. The limits controlled by `max_conns` are set
+  per inbound.
 - **Some parsers limit input sizes, but this does not guarantee crash or DoS
   protection.** After reading the 5-byte header, the gRPC decoder rejects a
   message whose declared size exceeds 4 MiB without waiting for the complete
