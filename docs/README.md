@@ -13,7 +13,7 @@
 | [CLI.md](CLI.md) | ключи командной строки, автозапуск (служба Windows, systemd) |
 | [CONFIG.md](CONFIG.md) | файл настроек sing-box/Xray: входы, выходы, правила, наборы правил, группы серверов, подписки, `fragment` и `noises` |
 | [DNS.md](DNS.md) | свой DNS: серверы DoH/DoT/DoQ, правила, кеш, fake-IP |
-| [TUN.md](TUN.md) | перенаправление системного трафика в TUN; ядро обрабатывает TCP и UDP |
+| [TUN.md](TUN.md) | перенаправление системного трафика в TUN; ядро обрабатывает TCP/UDP; kill switch на Linux/Windows; ICMP и ping не поддерживаются |
 | [API.md](API.md) | локальное API (Clash API), веб-панели, перечитывание настроек |
 | [LINK.md](LINK.md) | параметры ссылки `vless://` |
 | [WINDOWS.md](WINDOWS.md) | сборка и запуск на Windows |
