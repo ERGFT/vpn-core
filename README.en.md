@@ -148,7 +148,7 @@ independent external audit.
 
 This is an educational and research project with no independent external security audit. REALITY has received only an internal review; the report and its limits are described above. A listed feature does not guarantee security for every configuration.
 
-- With `security=none`, traffic is not encrypted; this mode requires the explicit `--allow-insecure` option.
+- With `security=none`, traffic is not encrypted. The CLI requires the explicit `--allow-insecure` option; in a sing-box config, set the core extension `allow_insecure: true` on the VLESS/Trojan outbound (see the [configuration guide](docs/CONFIG.en.md)).
 - With REALITY, the UUID is sent only after REALITY verification. With TLS, the server must present a valid certificate.
 - By default, the local proxy listens only on `127.0.0.1`. DNS behavior depends on traffic type and configuration; see the [security model](docs/SECURITY-MODEL.en.md).
 - The project is licensed under [GPL-3.0-or-later](LICENSE). Check how the license applies to your app and distribution before embedding the core.
