@@ -23,7 +23,7 @@ error at startup with the path to the key, e.g. `outbounds[2].multiplex: не
 поддерживается` (not supported), rather than a silently ignored setting. A
 typo in a key name is an error too.
 
-```json
+```jsonc
 {
   "inbounds": [
     { "type": "mixed", "tag": "local", "listen": "127.0.0.1", "listen_port": 1080 }
@@ -55,7 +55,7 @@ What each format supports:
 |---|---|---|
 | Inbounds | `socks`, `http`, `mixed`, `tun`; `direct` + a `hijack-dns` rule — DNS server | `socks`, `http`, `mixed`, `tun`; `dokodemo-door` routed to a `dns` outbound — DNS server |
 | Outbounds | `vless`, `trojan`, TCP `socks` and `http` (HTTP CONNECT), `direct`, `block`, `dns`, `selector`, `urltest`; `fallback` is a vpn-core extension | `vless`, `trojan`, `freedom` (with `fragment`, `noises`), `blackhole`, `dns`; `balancers` with `leastPing`/`leastLoad` are converted to `urltest` (checks from `observatory`) |
-| Transport and TLS | `tls` (`reality`, `utls`, `alpn`, `certificate_path`), `transport`: `ws`, `grpc`, `httpupgrade` | `streamSettings`: `raw`/`tcp`, `ws`, `grpc`, `httpupgrade`, `xhttp`; `tls`/`reality`; `mux` (Mux.Cool) |
+| Transport and TLS | `tls` (`reality`, `utls`, `alpn`, `certificate_path`), `transport`: `ws`, `grpc`, `httpupgrade`; core extension `type: xhttp` | `streamSettings`: `raw`/`tcp`, `ws`, `grpc`, `httpupgrade`, `xhttp` (also the legacy alias `splithttp`); `tls`/`reality`; `mux` (Mux.Cool) |
 | Rules | `domain`, `domain_suffix`, `domain_keyword`, `domain_regex`, `geosite`, `geoip`, `ip_cidr`, `ip_is_private`, `port`, `port_range`, `network`, `inbound`, `rule_set`, `user_id`, `invert`, `protocol: dns`; actions `route`, `reject`, `sniff`, `hijack-dns` | `domain` (`geosite:`, `domain:`, `full:`, `regexp:`, `keyword:`, plain substring), `ip` (`geoip:`, addresses), `port`, `network`, `inboundTag`, `outboundTag`/`balancerTag`; `domainStrategy` `AsIs`/`IPIfNonMatch` |
 | DNS | `servers` (with `type`, and the legacy form with `address`), `rules`, `final`, `strategy`, `fakeip` | `servers` (strings and objects with `domains`; `+local` — direct), `queryStrategy`, `fakedns` |
 | API | `experimental.clash_api`: `external_controller`, `secret` | the same `experimental.clash_api` extension |
@@ -79,6 +79,8 @@ sing-box rule sets — `.srs` (e.g. from
 [SagerNet/sing-geosite](https://github.com/SagerNet/sing-geosite/tree/rule-set),
 [sing-geoip](https://github.com/SagerNet/sing-geoip/tree/rule-set) or
 MetaCubeX/meta-rules-dat) and source `.json`, `type: local` only:
+
+The following is a partial `route` section, not a complete config file.
 
 ```json
 "route": {
@@ -119,6 +121,9 @@ The sing-box `detour` field can be set on `socks` or `http` outbounds. It uses
 the specified TCP outbound to connect to the proxy server. Multiple SOCKS5/HTTP
 CONNECT hops can be nested; `direct`, VLESS, or Trojan can be the base outbound:
 
+The following shows related `outbounds` and `route` sections; it is a partial
+config fragment, not a complete file.
+
 ```json
 "outbounds": [
   { "type": "socks", "tag": "entry", "server": "entry.example", "server_port": 1080, "network": "tcp" },
@@ -136,7 +141,10 @@ to `direct`. Only TCP chains are supported.
 Several servers make a group; a group is itself an outbound, and its tag is
 used in rules and `route.final`:
 
-```json
+The following JSONC fragment shows only the group and subscription sections,
+not a complete config file.
+
+```jsonc
 "outbounds": [
   { "type": "urltest", "tag": "auto",            // fastest; "fallback" — first working;
     "outbounds": ["proxy"],                      // "selector" — selected (default or first)
@@ -164,12 +172,19 @@ strategy and `observatory` (check URL and interval).
   (`ca_file` — for a panel's self-signed certificate); `security=none`
   servers are skipped without `allow_insecure`. Downloads go through the
   group, and while the list is empty — through `direct` (or `detour`). The
-  last list is saved to `<tag>.subscription` next to the config (mode 600):
-  the client starts without the panel. Only the panel's host name is logged,
-  not the subscription URL. With TUN, a subscription without a saved list is
+  last list is saved to `<tag>.subscription` next to the config. On Unix, the
+  file is created with mode `0600`; on Windows, permissions are inherited from
+  the directory. The service directory under `%ProgramData%` is not writable by
+  regular users, but for a normal run access depends on the config directory's
+  ACL. The file contains UUIDs, and the cache lets the client start without the
+  panel. Only the panel's host name is logged, not the subscription URL. With
+  TUN, a subscription without a saved list is
   downloaded before routes are enabled.
 
 ## Anti-DPI: fragment and noises
+
+The following is a `direct` outbound object for the `outbounds` section, not a
+complete config file.
 
 ```json
 { "type": "direct", "tag": "direct",
