@@ -50,7 +50,7 @@
 //! |---|---|
 //! | `GET /events` | свои события: `connection_open`, `connection_close`, `group_switch`, `group_check`, `subscription_update`, `reload`, `mode_change`, `lagged` (см. `events.rs`) |
 //! | `GET /traffic` | раз в секунду: скорость `up`/`down` (байт/с) и `upTotal`/`downTotal` |
-//! | `GET /memory` | раз в секунду: `inuse` (байт) |
+//! | `GET /memory` | раз в секунду: `inuse` и `oslimit` (байт; `oslimit` всегда 0) |
 //! | `GET /logs?level=info` | журнал: `{"type": "info", "payload": "…"}` |
 //! | `GET /connections` (только WebSocket) | раз в `interval` мс (по умолчанию 1000) — то же, что `GET /connections` |
 //!
