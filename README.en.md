@@ -40,7 +40,7 @@ lifecycle integration; see the [C ABI guide](docs/LIBRARY.en.md).
 | Windows x86_64 | Yes | Yes | Client and library are checked in CI; some system features have specific limits |
 | macOS arm64 | No | Yes | SDK is built for release packages; running an app on-device is not confirmed |
 | Android arm64-v8a | No | Yes | Experimental integration; the app must connect the TUN itself |
-| iOS arm64 | No | Yes | Experimental integration; no ready-to-use client app |
+| iOS arm64 | No | Yes | SDK cross-link only; no `NEPacketTunnelFlow` adapter, and no VPN app has been tested on-device |
 
 The release workflow builds SDK archives for these ABIs when a versioned tag is pushed. Each archive includes the library, `reality.h`, a minimal C example, and API documentation. Check [Releases](https://github.com/ERGFT/vpn-core/releases) for published packages; if none are available, build from source using the [library guide](docs/LIBRARY.en.md).
 
@@ -113,7 +113,7 @@ from an extracted ZIP. Public headers and examples are in [`ffi/`](ffi/).
 | Outbounds | Include VLESS, Trojan, direct, block, DNS, and server groups. SOCKS5 and HTTP CONNECT are supported only for TCP and only in sing-box format; `detour` chains are also available there |
 | Configuration | Supported subsets of the Xray-core and sing-box formats; rules, server groups, and subscriptions |
 | Networking and routing | UDP over VLESS through XUDP, DNS (DoH/DoT/DoQ), TUN, kill switch, and IPv4/IPv6 selection (Happy Eyeballs) |
-| Management and platform integration | Local Clash API, metacubexd and yacd dashboards, systemd, and Windows service; Android/iOS through C ABI remain experimental |
+| Management and platform integration | Local Clash API, metacubexd and yacd dashboards, systemd, and Windows service; Android/iOS C ABI integration remains experimental, and no iOS `NEPacketTunnelFlow` adapter is provided |
 | Experimental | `fragment`, `noises`, and application routing integration |
 | Not supported | KCP transport; ICMP/ping through TUN |
 Importing an Xray-core or sing-box config does not imply support for every option in those formats.

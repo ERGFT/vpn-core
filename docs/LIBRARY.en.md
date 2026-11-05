@@ -105,9 +105,8 @@ after the SDK is moved. Use CMake on Windows and mobile platforms.
 Combined app/site rules use the added `rc_set_connection_owner` API:
 [contract, fail-closed behavior and Android integration](APPLICATION_ROUTING.en.md).
 
-The core can be embedded directly into an app — Android (`VpnService`), iOS
-(Network Extension), a desktop client — instead of running `reality-client`
-as a separate process. The interface is a C ABI: usable from Kotlin/Java
+The core can be embedded directly into an Android, iOS, or desktop app instead
+of running `reality-client` as a separate process. The interface is a C ABI: usable from Kotlin/Java
 (JNI), Swift, C/C++, Go (cgo), C# (P/Invoke), Python (ctypes) and anything
 else that can call C functions.
 
@@ -244,10 +243,12 @@ rc_stop(core);
   Event/log callbacks must not call functions for the same `RcCore`; their JSON
   and address strings are borrowed until the callback returns, and their `user`
   context must stay alive until callback removal or until `rc_stop` returns.
-- **`rc_stop(core)`** — stop: inbounds close and routes are restored. Before
-  returning, it waits for callbacks to finish; no new callback starts after
-  return. You can release `user` data and callback resources after `rc_stop`.
-  `NULL` is accepted as a no-op.
+- **`rc_stop(core)`** — stop: inbounds close, and the core removes only the
+  routes it installed for a TUN with `auto_route`. When the host supplies a TUN
+  descriptor, the host application manages routes and the kill switch. Before
+  returning, the function waits for callbacks to finish; no new callback
+  starts after return. You can release `user` data and callback resources
+  after `rc_stop`. `NULL` is accepted as a no-op.
 - **`rc_free_string(s)`** — free a string returned by the library.
 
 After `rc_is_alive(core) == 0`, retrieve the cause with
@@ -449,12 +450,24 @@ The C side of the wrapper (`jni.c`) calls `rc_start`/`rc_request`/`rc_stop`.
 It passes `rc_set_protect` a callback that calls `VpnService.protect(int)`
 through `JNIEnv` (attach the thread with `AttachCurrentThread`).
 
-## iOS, macOS
+## iOS and macOS
 
-Inside `NEPacketTunnelProvider`, the utun descriptor can be found among the
-process's open descriptors (WireGuard and sing-box do this) and passed to
-`rc_start`. In a Network Extension, the core's sockets bypass the tunnel
-without `rc_set_protect`.
+The release SDK contains a static iOS library; this confirms that the artifact
+builds, not that a VPN works on a device. The C ABI accepts a Unix file
+descriptor but has no packet read/write callbacks. An iOS
+`NEPacketTunnelProvider` uses `NEPacketTunnelFlow.readPackets` and
+`writePackets`; that object cannot be passed as `tun_fd`. Apple states there is
+no supported way to obtain a file descriptor from `NEPacketTunnelFlow`
+([API documentation](https://developer.apple.com/documentation/networkextension/nepackettunnelflow),
+[Apple Developer Technical Support](https://developer.apple.com/forums/thread/756852)).
+The current C ABI does not provide an adapter for this packet-flow API, so
+integration as a full iOS Network Extension VPN client is not verified.
+
+The macOS SDK consumer is checked on a runner, but this does not verify a
+system VPN/TUN. A host must provide a compatible Unix descriptor; the project
+does not supply a Network Extension adapter or on-device test. The core-managed
+TUN mode is not claimed on Apple platforms; it is verified on Linux and
+Windows.
 
 ## Desktop
 

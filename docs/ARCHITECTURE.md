@@ -1293,9 +1293,10 @@ zashboard, этим не подтверждается.
   - `rc_request` — тот же API, что по HTTP (`Api::embedded` +
     `Api::local`: разбор пути и ответы общие, без сети, токена и
     проверок браузера);
-  - на Android и iOS приложение отдаёт готовый дескриптор TUN
-    (`InboundConfig::tun_fd` → `AsyncDevice::from_fd`; маршруты и kill
-    switch тогда ставит система);
+  - на Android приложение может передать дескриптор TUN из `VpnService`
+    (`InboundConfig::tun_fd` → `AsyncDevice::from_fd`); маршруты и kill switch
+    тогда ставит система. iOS `NEPacketTunnelFlow` не является дескриптором,
+    а адаптера packet-flow API в C ABI нет (подробности — `LIBRARY.md`);
   - сокеты ядра «защищает» обратный вызов приложения
     (`net_protect::set_callback` → `VpnService.protect`).
 

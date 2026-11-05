@@ -88,7 +88,8 @@ that rule's strategy. Xray rules continue to inherit global `queryStrategy`.
 
 `dns.bootstrap` is a **vpn-core extension**, not a standard sing-box/Xray field.
 In sing-box JSON it is the tag of a dedicated server for transport hostnames
-when TUN comes from the OS (Android/iOS). Example:
+when the host passes an external TUN descriptor (for example, from Android
+`VpnService`). Example:
 
 ```jsonc
 "dns": {
@@ -110,3 +111,6 @@ does not enable system fallback for transport hostnames. Bootstrap
 uses `prefer_ipv4` independently of application rules; cache entries are scoped
 by server tag. Direct DNS can see VPN/DoH server names, but normal query rules
 and `final` remain unchanged. CLI-managed TUN retains its existing lookup path.
+On iOS, `NEPacketTunnelFlow` is not a file descriptor and cannot be passed to
+the current C ABI; no packet-flow adapter is provided. Building the iOS SDK
+does not by itself confirm integration with an iOS VPN.

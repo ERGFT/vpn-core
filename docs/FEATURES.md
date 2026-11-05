@@ -48,7 +48,7 @@
 | Транспорт `kcp` | не поддерживается | не поддерживается (почему — ниже); `quic`/`h2` удалены из самого Xray-core — ошибка подсказывает `xhttp` |
 | Linux | готово | собирается и проверен |
 | Windows | готово | CI на настоящей Windows: все тесты, сборка `.exe`, служба и TUN с настоящим трафиком; smoke против Xray-core — под Wine ([`docs/WINDOWS.md`](WINDOWS.md)) |
-| Режим библиотеки (C ABI): Android, iOS, десктоп — [LIBRARY.md](LIBRARY.md) | экспериментально | release workflow запускает C/C++ consumer из SDK на Linux, Windows и macOS; Android/iOS consumer проверяется кросс-компоновкой; VPN-приложение на устройстве не запускалось |
+| Режим библиотеки (C ABI): Android, iOS, десктоп — [LIBRARY.md](LIBRARY.md) | экспериментально | release workflow запускает C/C++ consumer из SDK на Linux, Windows и macOS; Android/iOS consumer проверяется кросс-компоновкой; VPN-приложение на устройстве не запускалось; адаптера iOS `NEPacketTunnelFlow` нет |
 | ICMP (ping) через TUN | не поддерживается | — |
 | macOS | проверено частично | release workflow собирает и запускает C/C++ consumer из SDK на macOS arm64; `reality-client` и полноценный VPN/TUN-сценарий на macOS не проверены |
 
