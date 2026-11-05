@@ -132,11 +132,12 @@ streams at a time.
   `?token=` when `allow_query_token` is enabled. CORS preflight `OPTIONS`
   requests skip the token but still check `Host` and the allowed `Origin`.
   Five wrong tokens from an address (IPv6 — from a /64) block that address for
-  a minute or longer; 127.0.0.1 is never blocked. Apart from preflight, only
-  dashboard files and the `GET /` greeting are served without a token, as in
-  Clash. `Host` must be the API address (DNS rebinding protection); browser
-  requests are accepted only from your own dashboard and sites in
-  `access_control_allow_origin`; listening on anything but 127.0.0.1 requires
+  one minute; repeated blocks grow to one hour. A valid token resets the failure
+  count. Loopback addresses (`127.0.0.1`, `::1`) are never blocked. Apart from
+  preflight, only dashboard files and the `GET /` greeting are served without a
+  token, as in Clash. `Host` must be the API address to prevent DNS rebinding.
+  Browser requests are accepted only from your own dashboard and sites in
+  `access_control_allow_origin`. Listening on anything but 127.0.0.1 requires
   `allow_ip`. Site addresses in `/connections` are browsing history, so they
   are only in the API, not in the log.
 - Reload (`PUT /configs`, `POST /reload`, on Linux also `kill -HUP`): if the
