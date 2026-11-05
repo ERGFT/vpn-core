@@ -47,11 +47,17 @@ DNS is hijacked by an `inboundTag` rule → a `dns` outbound.
   the client is killed, the interface disappears together with its routes —
   the network works directly again. With `strict_route` — the opposite:
   the network stays closed (kill switch) until the client is started again
-  or `reality-client --tun-cleanup` is run (only `route_exclude_address`
-  and essentials stay open: DHCP, and NDP for IPv6). On Linux this is an
-  `unreachable` rule, on Windows — persistent WFP filters (they survive
-  even a reboot); the Windows service restarts itself after a crash. After
-  a crash the system DNS is closed too: the server name resolves on restart
+  or `reality-client --tun-cleanup` is run. On Linux, networks excluded
+  with `route_exclude_address` remain reachable after a crash; the
+  `unreachable` rule blocks other routes. While the client is running, its
+  marked connections bypass TUN. On Windows, exclusion routes support IPv4
+  only: an IPv6 `route_exclude_address` entry does not bypass TUN and triggers
+  a warning. WFP allows IPv4 destinations in `route_exclude_address`. It also
+  allows DHCP when IPv4 is routed, and NDP (ICMPv6), DHCPv6, and link-local
+  when IPv6 is routed. Persistent WFP filters
+  (which survive a reboot) block other connections; the Windows service
+  restarts itself after a crash. The system DNS is closed too: the server
+  name resolves on restart
   if the server address is an IP or the `dns` section has a server by IP
   with `"detour": "direct"`. On Windows, for the first few seconds after
   the kill switch turns on, the system is still "identifying" the TUN
