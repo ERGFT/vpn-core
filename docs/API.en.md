@@ -78,6 +78,15 @@ curl -H "$T" "http://127.0.0.1:9090/dns/query?name=example.com&type=A"
 | `GET /providers/rules` | empty rule-provider list (`{"providers": {}}`) |
 | `GET /dns/query?name=&type=` | ask the client's DNS |
 
+`GET /proxies/{name}/delay` and `GET /group/{name}/delay` require the `url`
+parameter. `timeout` is in milliseconds, defaults to 5000, and is capped at
+30000. A single outbound returns a `delay` field in milliseconds; if it does
+not respond before the timeout, the API returns `504`. A group response
+contains only the members that responded.
+
+For `GET /dns/query`, `name` is required and `type` is optional; it defaults
+to `A`. A missing `name` or a DNS query error returns `400`.
+
 Own requests (not in the Clash API): `GET /stats` (traffic per outbound),
 `GET /groups`, `PUT /groups/{tag}`, `POST /groups/{tag}/check`,
 `POST /subscriptions/{tag}/update`, `POST /reload` (with notes in the

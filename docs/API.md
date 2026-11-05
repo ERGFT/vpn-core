@@ -75,6 +75,16 @@ curl -H "$T" "http://127.0.0.1:9090/dns/query?name=example.com&type=A"
 | `GET /providers/rules` | пустой список rule providers (`{"providers": {}}`) |
 | `GET /dns/query?name=&type=` | спросить DNS клиента |
 
+Для `GET /proxies/{имя}/delay` и `GET /group/{имя}/delay` обязателен
+параметр `url`. `timeout` задаётся в миллисекундах, по умолчанию — 5000;
+значение выше 30000 ограничивается 30000. Для одного выхода ответ содержит
+поле `delay` со значением в миллисекундах; если выход не ответил до истечения
+времени ожидания, API возвращает `504`. В ответе для группы указаны только
+участники, которые ответили.
+
+В `GET /dns/query` параметр `name` обязателен, а `type` необязателен и по
+умолчанию равен `A`. Отсутствующий `name` и ошибка DNS-запроса дают `400`.
+
 Свои запросы (в Clash API их нет): `GET /stats` (трафик по выходам),
 `GET /groups`, `PUT /groups/{tag}`, `POST /groups/{tag}/check`,
 `POST /subscriptions/{tag}/update`, `POST /reload` (с замечаниями в ответе).
