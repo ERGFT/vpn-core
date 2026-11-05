@@ -140,8 +140,8 @@ struct Args {
     #[arg(long)]
     sniff: bool,
 
-    /// Требовать логин и пароль на SOCKS5: `логин:пароль`
-    /// (обязательно, если слушать не только на 127.0.0.1)
+    /// Требовать логин и пароль на SOCKS5 и HTTP proxy (Basic):
+    /// `логин:пароль` (обязательно, если слушать не только на 127.0.0.1)
     #[arg(
         long,
         value_name = "ЛОГИН:ПАРОЛЬ",
@@ -150,7 +150,7 @@ struct Args {
     )]
     auth: Option<String>,
 
-    /// Файл с `логин:пароль` для SOCKS5 (вместо --auth)
+    /// Файл с `логин:пароль` для SOCKS5 и HTTP proxy (вместо --auth)
     #[arg(long, value_name = "ФАЙЛ", conflicts_with = "auth")]
     auth_file: Option<PathBuf>,
 
