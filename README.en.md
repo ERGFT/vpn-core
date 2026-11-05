@@ -137,7 +137,7 @@ independent external audit.
 
 This is an educational and research project with no independent external security audit. REALITY has received an internal review; its scope is described in the [report](docs/stage5-crypto-review-and-interop.en.md). The [security model](docs/SECURITY-MODEL.en.md) explains threats, DNS behavior, and failure handling in detail.
 
-With `security=none`, traffic is not encrypted; the CLI requires the explicit `--allow-insecure` option. By default, the local proxy listens only on `127.0.0.1`. Report vulnerabilities privately using [SECURITY.md](SECURITY.md). The project is licensed under [GPL-3.0-or-later](LICENSE); check how the license applies to your app and distribution before embedding the core.
+With `security=none`, traffic is not encrypted; the CLI requires the explicit `--allow-insecure` option. The sing-box `allow_insecure` setting is documented in the [configuration guide](docs/CONFIG.en.md). By default, the local proxy listens only on `127.0.0.1`. Report vulnerabilities privately using [SECURITY.md](SECURITY.md). The project is licensed under [GPL-3.0-or-later](LICENSE); check how the license applies to your app and distribution before embedding the core.
 
 ## Contributing and license
 
