@@ -95,7 +95,7 @@ The SDK lets an application embed `vpn-core` as its networking core. It can conn
 | `rc_request` | Call the core API directly, without a network HTTP server or token |
 | `rc_reload` | Apply a new configuration without recreating the whole app |
 | `rc_network_changed` | Notify the core of a network change detected by the host application |
-| `rc_is_alive` | Check the instance state and detect a terminal error |
+| `rc_is_alive` / `rc_last_error_code` | Check whether the instance is running; get its error category after it exits |
 | Callbacks | Receive events/logs and provide platform functions such as socket protection or UID lookup |
 
 The [library guide](docs/LIBRARY.en.md) covers CMake and pkg-config, platform
@@ -111,12 +111,12 @@ from an extracted ZIP. Public headers and examples are in [`ffi/`](ffi/).
 | Transports | TCP, WebSocket, gRPC, HTTPUpgrade, and XHTTP |
 | Inbounds | SOCKS5, HTTP, and mixed |
 | Outbounds | Include VLESS, Trojan, direct, block, DNS, and server groups. SOCKS5 and HTTP CONNECT are supported only for TCP and only in sing-box format; `detour` chains are also available there |
-| Configuration | Xray-core format and part of sing-box format; rules, server groups, and subscriptions |
+| Configuration | Supported subsets of the Xray-core and sing-box formats; rules, server groups, and subscriptions |
 | Networking and routing | UDP over VLESS through XUDP, DNS (DoH/DoT/DoQ), TUN, kill switch, and IPv4/IPv6 selection (Happy Eyeballs) |
 | Management and platform integration | Local Clash API, metacubexd and yacd dashboards, systemd, and Windows service; Android/iOS through C ABI remain experimental |
 | Experimental | `fragment`, `noises`, and application routing integration |
 | Not supported | KCP transport; ICMP/ping through TUN |
-Importing a sing-box config does not imply support for every option.
+Importing an Xray-core or sing-box config does not imply support for every option in those formats.
 
 The [feature matrix](docs/FEATURES.en.md) lists capabilities, maturity, and specific checks. Scenarios and test results are documented in the [testing guide](docs/TESTING.en.md).
 

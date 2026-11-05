@@ -311,8 +311,8 @@ SIGHUP, `PUT /config` (a new config as text), or directly
 |---|---|
 | `mod.rs` | the `Config` model, `Config::parse`/`load`, format detection, `input_files` |
 | `obj.rs` | JSONC, object walker that tracks consumed keys, Go durations |
-| `singbox.rs` | sing-box format → `Config` |
-| `xray.rs` | Xray-core format → `Config` |
+| `singbox.rs` | supported sing-box subset → `Config` |
+| `xray.rs` | supported Xray-core subset → `Config` |
 | `link.rs` | `LinkBuilder`: outbound fields → a `vless://`/`trojan://` link |
 
 ### 5.1. Parsing

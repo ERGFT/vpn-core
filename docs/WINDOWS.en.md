@@ -132,7 +132,7 @@ VPN: traffic goes through it only for programs that use this proxy.
 
 ## 5. More options
 
-- `--config config.json` — config file in the sing-box or Xray-core format:
+- `--config config.json` — config file using a supported subset of the sing-box or Xray-core format:
   multiple inbounds and outbounds, routing rules (ads to `block`, Russian
   sites and the local network direct, etc.). Examples —
   `examples/sing-box.json`, `examples/xray.json`. Double the backslashes of

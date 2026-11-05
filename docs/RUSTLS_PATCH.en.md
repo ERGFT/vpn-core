@@ -30,12 +30,29 @@ The full extent of the changes is in `vendor/rustls-reality-patch.diff`
 | `server/hs.rs`, `server/server_conn.rs`, `server/test.rs` | The server certificate resolver gets `ClientHello.random` and the X25519 part of the client's share — only the test REALITY server in the core's tests needs this. |
 | `Cargo.toml` | An empty `[workspace]` so the crate builds on its own. |
 
-Not everything is gated on `reality` / `chrome_hello`: GREASE
-(RFC 8701) — in cipher suites, groups, key shares, versions and
-extensions — is added by the patch to **every** ClientHello of this
-rustls (except with a `no_grease` profile), i.e. to the core's other TLS
-connections too (DoH/DoT, subscription downloads). Servers must ignore
-GREASE, but it is a change in rustls behaviour for the whole process.
+The REALITY hook replaces the `key_share` only in the first ClientHello.
+The current REALITY path does not support a handshake that uses
+HelloRetryRequest (HRR). Do not extend this limitation to ordinary TLS
+connections without REALITY: this statement applies specifically to the
+REALITY hook.
+The `hello_retry_request_path_still_completes_with_grease` test exercises
+HRR without REALITY and does not verify REALITY+HRR support.
+
+The patch adds GREASE (RFC 8701) to cipher suites, groups, key shares,
+versions and extensions in every ClientHello built by this rustls unless
+the profile sets `no_grease`. The core sets `no_grease` for the Firefox
+profile. This switch does not control ECH GREASE, which is configured
+separately through `EchMode`: the core requests it for Chrome and Firefox
+profiles only if the system random generator successfully fills the
+placeholder key, and clears the mode for Safari. GREASE fields therefore
+vary by profile and setting; it would be inaccurate to say that every form
+of GREASE is present in every TLS connection. Since the patch replaces
+rustls across
+the dependency graph, the changed ClientHello logic also applies to the
+core's other TLS connections, including DoH/DoT and subscription
+downloads; the selected profile determines which GREASE fields are sent.
+Servers must ignore standard GREASE values, but this still changes rustls
+behaviour process-wide.
 
 ## Updating rustls
 
@@ -58,10 +75,14 @@ patch:
 3. Bump the version in `Cargo.lock` (`cargo update -p rustls`),
    regenerate the `.diff` (`scripts/rustls_patch.sh`) and read it in full —
    only what was intended went in.
-4. The full `scripts/ci.sh`: REALITY tests (`reality_full_stack`,
-   `reality_handshake`), interop with real Xray-core, the Chrome
-   fingerprint check (`scripts/check_chrome_fingerprint.sh`), the live
-   Windows test in CI.
+4. Run the full `scripts/ci.sh`: required tests include the core and REALITY
+   suites (`reality_full_stack`, `reality_handshake`). Xray interop runs when
+   the binary is available; the Chrome fingerprint check runs when
+   `raw.githubusercontent.com` is reachable; the vendor `.diff` check runs
+   when crates.io is reachable. Separately wait for GitHub CI, where
+   `windows_live_test.ps1` checks TUN and the service on a real Windows
+   runner. A skipped optional step means that check was not performed; it
+   is not a passing result.
 5. In the CHANGELOG — the new rustls version and what had to change in
    the patch.
 
