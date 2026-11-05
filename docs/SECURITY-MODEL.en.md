@@ -54,9 +54,11 @@ The history and scope of the internal review are documented in [PLAN.en.md, “S
   SOCKS5/HTTP greeting, idle timeout (300 s; 30 s if one side has already
   closed), a limit on concurrent connections.
 - **Some parsers limit input sizes, but this does not guarantee crash or DoS
-  protection.** The gRPC decoder rejects an individual frame larger than
-  4 MiB; the `rejects_oversized_message_before_buffering_it` test covers this
-  behavior. WebSocket configures 1 MiB frame and message limits in its parser.
+  protection.** After reading the 5-byte header, the gRPC decoder rejects a
+  message whose declared size exceeds 4 MiB without waiting for the complete
+  message to be buffered; the
+  `rejects_oversized_message_before_buffering_it` test covers this behavior.
+  WebSocket configures 1 MiB frame and message limits in its parser.
   For XHTTP, the HTTP/2 client sets a 256 KiB header-list limit; this does not
   limit body size. These values describe specific settings and do not prove
   that all HTTP paths are safe or free of input-handling bugs.
