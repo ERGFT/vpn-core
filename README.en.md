@@ -86,7 +86,7 @@ The executable is in `target/release/` on Linux and `target\release\` on Windows
 
 ## For developers
 
-The SDK is for apps that need an embedded VLESS client. Its public interface is a C ABI. The [library guide](docs/LIBRARY.en.md) and [`reality.h`](ffi/include/reality.h) describe memory ownership, threads, callbacks, and platform integration.
+The SDK lets an application embed `vpn-core` as its networking core. It can connect to VLESS and Trojan servers; its public interface is a C ABI. The [library guide](docs/LIBRARY.en.md) and [`reality.h`](ffi/include/reality.h) describe memory ownership, threads, callbacks, and platform integration.
 
 | API | Purpose |
 |---|---|
