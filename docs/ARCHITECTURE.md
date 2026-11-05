@@ -298,8 +298,8 @@ SIGHUP, `PUT /config` (новые настройки текстом) или на
 |---|---|
 | `mod.rs` | модель `Config`, `Config::parse`/`load`, определение формата, `input_files` |
 | `obj.rs` | JSONC, обход объекта с учётом прочитанных ключей, длительности Go |
-| `singbox.rs` | формат sing-box → `Config` |
-| `xray.rs` | формат Xray-core → `Config` |
+| `singbox.rs` | поддерживаемое подмножество sing-box → `Config` |
+| `xray.rs` | поддерживаемое подмножество Xray-core → `Config` |
 | `link.rs` | `LinkBuilder`: поля выхода → ссылка `vless://`/`trojan://` |
 
 ### 5.1. Разбор
