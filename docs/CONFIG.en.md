@@ -2,10 +2,11 @@
 
 [Русский](CONFIG.md) | **English**
 
-The config file in sing-box or Xray-core format: inbounds, outbounds, routing, server groups, subscriptions, `fragment` and `noises`. See also: [DNS](DNS.en.md), [TUN](TUN.en.md), [application routing](APPLICATION_ROUTING.en.md), [API](API.en.md), [link parameters](LINK.en.md).
+The config file uses a supported subset of the sing-box or Xray-core format: inbounds, outbounds, routing, server groups, subscriptions, `fragment`, and `noises`. See also: [DNS](DNS.en.md), [TUN](TUN.en.md), [application routing](APPLICATION_ROUTING.en.md), [API](API.en.md), [link parameters](LINK.en.md).
 
-For multiple inbounds and outbounds, use a config file instead of flags, in
-the **sing-box** or **Xray-core** format (JSON, comments allowed); the format
+For multiple inbounds and outbounds, use a config file instead of flags, with
+the supported subset of the **sing-box** or **Xray-core** format (JSON,
+comments allowed); the format
 is detected automatically. Annotated examples:
 [`examples/sing-box.json`](../examples/sing-box.json) and
 [`examples/xray.json`](../examples/xray.json).

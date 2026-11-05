@@ -131,7 +131,7 @@ Set-Content ссылка.txt "vless://UUID@host:443?encryption=none&security=rea
 
 ## 5. Дополнительные ключи
 
-- `--config config.json` — файл настроек в формате sing-box или Xray-core:
+- `--config config.json` — файл настроек с поддерживаемым подмножеством формата sing-box или Xray-core:
   несколько входов и выходов, правила маршрутизации (реклама — в `block`,
   российские сайты и локальная сеть — напрямую и т.п.). Примеры —
   `examples/sing-box.json`, `examples/xray.json`. Обратную косую черту в

@@ -11,7 +11,7 @@ and first run. This is the detailed reference.
 |---|---|
 | [FEATURES.en.md](FEATURES.en.md) | all features, their status and how each was tested; known limitations |
 | [CLI.en.md](CLI.en.md) | command-line options, autostart (Windows service, systemd) |
-| [CONFIG.en.md](CONFIG.en.md) | sing-box/Xray config file: inbounds, outbounds, rules, rule sets, server groups, subscriptions, `fragment` and `noises` |
+| [CONFIG.en.md](CONFIG.en.md) | supported subsets of the sing-box/Xray formats: inbounds, outbounds, rules, rule sets, server groups, subscriptions, `fragment`, and `noises` |
 | [DNS.en.md](DNS.en.md) | own DNS: DoH/DoT/DoQ servers, rules, cache, fake-IP |
 | [TUN.en.md](TUN.en.md) | system routing for TCP/UDP through a virtual interface, kill switch, and protocol limits |
 | [API.en.md](API.en.md) | local API (Clash API), web dashboards, config reload |

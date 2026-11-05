@@ -105,9 +105,9 @@ curl -H "$T" -X PUT --data-binary @new.json "http://127.0.0.1:9090/config?check=
 curl -H "$T" -X PUT --data-binary @new.json http://127.0.0.1:9090/config             # apply and save
 ```
 
-- The `PUT /config` body is the whole config, sing-box or Xray (the format
-  is detected automatically). It is validated, applied without dropping
-  connections (like a reload) and written to the config file atomically,
+- The `PUT /config` body is a complete config using the supported subset of
+  sing-box or Xray (the format is detected automatically). It is validated,
+  applied without dropping connections (like a reload) and written to the config file atomically,
   the previous one kept as `<file>.bak`; `?save=0` applies without writing.
   An error is a 400 and nothing changes. Response:
   `{"applied", "saved", "notes"}` (`notes` — what takes effect only after a

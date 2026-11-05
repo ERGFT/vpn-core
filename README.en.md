@@ -111,12 +111,12 @@ from an extracted ZIP. Public headers and examples are in [`ffi/`](ffi/).
 | Transports | TCP, WebSocket, gRPC, HTTPUpgrade, and XHTTP |
 | Inbounds | SOCKS5, HTTP, and mixed |
 | Outbounds | Include VLESS, Trojan, direct, block, DNS, and server groups. SOCKS5 and HTTP CONNECT are supported only for TCP and only in sing-box format; `detour` chains are also available there |
-| Configuration | Xray-core format and part of sing-box format; rules, server groups, and subscriptions |
+| Configuration | Supported subsets of the Xray-core and sing-box formats; rules, server groups, and subscriptions |
 | Networking and routing | UDP over VLESS through XUDP, DNS (DoH/DoT/DoQ), TUN, kill switch, and IPv4/IPv6 selection (Happy Eyeballs) |
 | Management and platform integration | Local Clash API, metacubexd and yacd dashboards, systemd, and Windows service; Android/iOS through C ABI remain experimental |
 | Experimental | `fragment`, `noises`, and application routing integration |
 | Not supported | KCP transport; ICMP/ping through TUN |
-Importing a sing-box config does not imply support for every option.
+Importing an Xray-core or sing-box config does not imply support for every option in those formats.
 
 The [feature matrix](docs/FEATURES.en.md) lists capabilities, maturity, and specific checks. Scenarios and test results are documented in the [testing guide](docs/TESTING.en.md).
 
