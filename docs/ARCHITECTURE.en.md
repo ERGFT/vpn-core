@@ -210,7 +210,7 @@ Key types:
 
 ### 4.2. `App::build` — everything that can be checked before starting
 
-`core/src/app/mod.rs`:
+`core/src/app/mod.rs` and `core/src/app/outbound_factory.rs`:
 
 - `inbound_tags` — the tags of all inbounds. A rule naming a non-existent
   inbound is an error.
@@ -219,8 +219,9 @@ Key types:
     through other groups);
   - expands presets (`route.presets`) into rules, and rule sets
     (`rule_set`) into rule and DNS conditions;
-  - builds outbounds in order: `vless`/`trojan` (link → `VlessConfig`),
-    `direct`, `block`, `dns`, groups;
+  - builds outbounds in order: VLESS, Trojan, SOCKS5, and HTTP CONNECT through
+    the static `outbound_factory`; `direct`, `block`, `dns`, and groups remain
+    in `build_core`;
   - once all outbounds exist, fills group members and checks `default`;
   - creates subscriptions (each must belong to at least one group) and
     loads their saved lists;
@@ -1437,9 +1438,11 @@ PLAN.en.md):
 **A new outbound.**
 
 1. Write a type implementing `Outbound` (`connect`, `udp`).
-2. Add an `OutboundKind` variant and build it in `build_core`.
-3. Parse it in both formats.
-4. Add an integration test through `App::build(&cfg).start()` and a SOCKS5
+2. Add an `OutboundKind` variant and parse it in both formats. For a
+   server-backed proxy (VLESS, Trojan, SOCKS5, HTTP CONNECT), add construction
+   to `app/outbound_factory.rs`; keep DNS, groups, detours, and routing in
+   `build_core`.
+3. Add an integration test through `App::build(&cfg).start()` and a SOCKS5
    inbound.
 
 **A new protocol over the same transports** (like Trojan):
