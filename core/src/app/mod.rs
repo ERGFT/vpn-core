@@ -31,6 +31,7 @@ pub mod http_client;
 pub mod http_connect_out;
 pub mod http_in;
 pub mod outbound;
+mod outbound_factory;
 pub mod proxy_in;
 pub mod router;
 pub mod rules;
@@ -359,54 +360,6 @@ fn secret(
         (None, Some(p)) => Ok(Some(config::read_secret_file(p)?)),
         (None, None) => Ok(None),
     }
-}
-
-#[allow(
-    clippy::expect_used,
-    reason = "инвариант: вызывается только для выхода типа VLESS"
-)]
-fn build_vless(o: &config::OutboundConfig) -> Result<VlessOutbound> {
-    let cfg = o.as_vless().expect("VLESS settings match outbound kind");
-    let link = cfg.link.read()?;
-    let roots = match &cfg.ca_file {
-        Some(ca) => Some(Arc::new(config::load_ca(ca)?)),
-        None => None,
-    };
-    let frag = build_fragment(&o.tag, cfg.fragment.as_ref())?;
-    let v = vless_from_link(
-        &o.tag,
-        &link,
-        cfg.xudp,
-        cfg.allow_insecure,
-        roots,
-        false,
-        frag,
-    )?;
-    match cfg.mux {
-        Some(n) => v.with_mux(n),
-        None => Ok(v),
-    }
-}
-
-#[allow(
-    clippy::expect_used,
-    reason = "инвариант: вызывается только для выхода типа Trojan"
-)]
-fn build_trojan(o: &config::OutboundConfig) -> Result<trojan_out::TrojanOutbound> {
-    let cfg = o.trojan().expect("Trojan settings match outbound kind");
-    let link = cfg.link.read()?;
-    let roots = match &cfg.ca_file {
-        Some(ca) => Some(Arc::new(config::load_ca(ca)?)),
-        None => None,
-    };
-    trojan_from_link(
-        &o.tag,
-        &link,
-        cfg.allow_insecure,
-        roots,
-        false,
-        build_fragment(&o.tag, cfg.fragment.as_ref())?,
-    )
 }
 
 /// Выход Trojan из ссылки (из настроек или из подписки).
@@ -1160,41 +1113,10 @@ fn build_core(
         .collect();
     for o in &cfg.outbounds {
         let built: Arc<dyn Outbound> = match o.kind() {
-            OutboundKind::Vless => Arc::new(build_vless(o)?),
-            OutboundKind::Trojan => Arc::new(build_trojan(o)?),
-            OutboundKind::Socks5 => {
-                let proxy = o.socks5().expect("SOCKS5 settings match outbound kind");
-                let (username, password) = proxy.credentials()?;
-                Arc::new(
-                    socks_out::Socks5Outbound::new(
-                        o.tag.clone(),
-                        proxy.server.clone(),
-                        proxy.port,
-                        username,
-                        password,
-                    )?
-                    .with_detour(detour_slots.get(&o.tag).cloned()),
-                )
-            }
-            OutboundKind::HttpConnect => {
-                let cfg = o
-                    .http_connect()
-                    .expect("HTTP CONNECT settings match outbound kind");
-                let (username, password) = cfg.proxy.credentials()?;
-                let roots = cfg.ca_file.as_deref().map(config::load_ca).transpose()?;
-                let outbound = http_connect_out::HttpConnectOutbound::new(
-                    o.tag.clone(),
-                    cfg.proxy.server.clone(),
-                    cfg.proxy.port,
-                    username,
-                    password,
-                    cfg.tls,
-                    cfg.tls_server_name.clone(),
-                )?
-                .with_roots(roots)
-                .with_detour(detour_slots.get(&o.tag).cloned());
-                Arc::new(outbound)
-            }
+            OutboundKind::Vless
+            | OutboundKind::Trojan
+            | OutboundKind::Socks5
+            | OutboundKind::HttpConnect => outbound_factory::build_proxy(o, &detour_slots)?,
             OutboundKind::Direct => Arc::new(build_direct(
                 o,
                 cfg.dns.is_some().then(|| dns_slot.clone()),

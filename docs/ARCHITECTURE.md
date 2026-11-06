@@ -201,7 +201,7 @@ flowchart LR
 
 ### 4.2. `App::build` — всё, что можно проверить до запуска
 
-`core/src/app/mod.rs`:
+`core/src/app/mod.rs` и `core/src/app/outbound_factory.rs`:
 
 - `inbound_tags` — tag всех входов (правило с несуществующим входом —
   ошибка).
@@ -210,8 +210,9 @@ flowchart LR
     себя через другие);
   - раскрывает пресеты (`route.presets`) в правила и наборы правил
     (`rule_set`) в условия правил и DNS;
-  - строит выходы по порядку: `vless`/`trojan` (ссылка → `VlessConfig`),
-    `direct`, `block`, `dns`, группы;
+  - строит выходы по порядку: VLESS, Trojan, SOCKS5 и HTTP CONNECT через
+    статическую фабрику `outbound_factory`; `direct`, `block`, `dns` и группы
+    остаются в `build_core`;
   - когда все выходы собраны, заполняет участников групп и проверяет
     `default`;
   - создаёт подписки (каждая должна входить хотя бы в одну группу) и
@@ -1355,9 +1356,11 @@ zashboard, этим не подтверждается.
 **Новый выход.**
 
 1. Тип, реализующий `Outbound` (`connect`, `udp`).
-2. Вариант `OutboundKind` и сборка в `build_core`.
-3. Разбор в обоих форматах.
-4. Интеграционный тест через `App::build(&cfg).start()` и SOCKS5-вход.
+2. Вариант `OutboundKind` и разбор в обоих форматах. Для серверного proxy
+   (VLESS, Trojan, SOCKS5, HTTP CONNECT) добавьте сборку в
+   `app/outbound_factory.rs`; DNS, группы, detour и маршрутизацию оставляйте
+   в `build_core`.
+3. Интеграционный тест через `App::build(&cfg).start()` и SOCKS5-вход.
 
 **Новый протокол поверх тех же транспортов** (как Trojan):
 `transport::open(cfg)` даёт готовый поток TLS/REALITY + транспорт; поверх
