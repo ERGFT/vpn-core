@@ -24,7 +24,7 @@ use super::obj::{duration, Obj};
 use super::singbox::{clash_api, ipnets};
 use super::{
     Config, DomainStrategy, InboundConfig, InboundKind, OutboundConfig, OutboundKind, PortSpec,
-    RouteConfig, RuleConfig,
+    RawOutboundConfig, RouteConfig, RuleConfig,
 };
 use crate::app::dns::{DnsConfig, DnsRuleConfig, DnsServerConfig, FakeIpConfig, Strategy};
 use crate::app::Network;
@@ -61,15 +61,15 @@ pub fn parse(root: &Obj<'_>) -> Result<Config> {
                 "routing.balancers {tag}: selector не подошёл ни к одному выходу"
             )));
         }
-        let mut g = OutboundConfig::new(&tag, OutboundKind::Urltest);
+        let mut g = RawOutboundConfig::new(&tag, OutboundKind::Urltest);
         g.outbounds = members;
         g.url = probe_url.clone();
         g.interval = probe_interval;
-        outbounds.push(g);
+        outbounds.push(g.finish()?);
     }
     let direct_tag = outbounds
         .iter()
-        .find(|o| o.kind == OutboundKind::Direct)
+        .find(|o| o.kind() == OutboundKind::Direct)
         .map(|o| o.tag.clone());
     let dns = match root.obj("dns")? {
         Some(d) => Some(dns_section(d, direct_tag.as_deref())?),
@@ -80,7 +80,7 @@ pub fn parse(root: &Obj<'_>) -> Result<Config> {
 
     let dns_outbounds: Vec<String> = outbounds
         .iter()
-        .filter(|o| o.kind == OutboundKind::Dns)
+        .filter(|o| o.kind() == OutboundKind::Dns)
         .map(|o| o.tag.clone())
         .collect();
     let mut inbounds = Vec::new();
@@ -244,7 +244,7 @@ fn outbound(o: Obj<'_>) -> Result<OutboundConfig> {
             ))
         }
     };
-    let mut out = OutboundConfig::new(&tag, kind);
+    let mut out = RawOutboundConfig::new(&tag, kind);
     o.ignore(&["protocol", "tag"]);
     o.unsupported("proxySettings", "цепочки выходов")?;
     o.unsupported("sendThrough", "sendThrough")?;
@@ -309,11 +309,11 @@ fn outbound(o: Obj<'_>) -> Result<OutboundConfig> {
     }
     out.check_fields()?;
     o.finish()?;
-    Ok(out)
+    out.finish()
 }
 
 /// vless/trojan: settings + streamSettings + mux → ссылка.
-fn server(o: &Obj<'_>, s: Obj<'_>, out: &mut OutboundConfig) -> Result<()> {
+fn server(o: &Obj<'_>, s: Obj<'_>, out: &mut RawOutboundConfig) -> Result<()> {
     let vless = out.kind == OutboundKind::Vless;
     // Старая форма (vnext/servers) и новая (адрес прямо в settings).
     let list = s.objs(if vless { "vnext" } else { "servers" })?;

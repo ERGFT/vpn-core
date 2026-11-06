@@ -347,11 +347,11 @@ Config
 │                                     max_conns, sniff, sniff_override_destination,
 │                                     tun: name, addresses, mtu, auto_route, route_exclude,
 │                                     strict_route, dns_hijack
-├── outbounds: Vec<OutboundConfig>    tag, kind (vless/trojan/socks/direct/block/dns/selector/
-│                                     urltest/fallback), link | link_file, ca_file, xudp,
-│                                     allow_insecure, mux, fragment, noises,
-│                                     groups: outbounds, subscriptions, url, interval,
-│                                     tolerance, default
+├── outbounds: Vec<OutboundConfig>    tag + typed variant:
+│                                     vless/trojan: link source, CA, protocol settings;
+│                                     socks/http: address, typed auth, detour;
+│                                     direct: fragment/noises; block/dns have no settings;
+│                                     selector/urltest/fallback: only their own group settings
 ├── route: RouteConfig                rules, final, rule_set, presets, geosite/geoip_file,
 │                                     domain_strategy
 ├── dns: Option<DnsConfig>            servers, rules, final, strategy, fakeip, cache
@@ -359,8 +359,11 @@ Config
 └── api: Option<ApiConfig>            listen, token | token_file, allow_ip
 ```
 
-The model is internal: only the two parsers fill it, and the rest of the
-core uses it. A new format (say, Clash YAML) is a third parser, with no
+The model is internal: parsers first collect fields in a temporary model,
+validate combinations, and normalize them into one outbound variant. A SOCKS5
+outbound therefore cannot carry HTTP CONNECT TLS settings, and a selector
+cannot carry the `urltest` switching threshold. The rest of the core uses the
+normalized model. A new format (say, Clash YAML) is a third parser, with no
 changes elsewhere.
 
 ### 5.3. Outbounds as links

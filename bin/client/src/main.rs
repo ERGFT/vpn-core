@@ -40,9 +40,7 @@ use anyhow::{Context, Result};
 use clap::Parser;
 
 use reality_core::app::access::IpNet;
-use reality_core::app::config::{
-    Config, InboundConfig, InboundKind, OutboundConfig, OutboundKind, RouteConfig,
-};
+use reality_core::app::config::{Config, InboundConfig, InboundKind, OutboundConfig, RouteConfig};
 use reality_core::app::App;
 
 #[derive(Parser, Debug)]
@@ -224,32 +222,14 @@ fn config_from_args(args: &Args) -> Result<Config> {
             #[cfg(unix)]
             tun_fd_owner: None,
         }],
-        outbounds: vec![OutboundConfig {
-            tag: "proxy".into(),
-            kind: OutboundKind::Vless,
+        outbounds: vec![OutboundConfig::vless(
+            "proxy",
             link,
             link_file,
-            ca_file: args.ca.clone(),
-            xudp: !args.no_xudp,
-            allow_insecure: args.allow_insecure,
-            mux: None,
-            fragment: None,
-            noises: Vec::new(),
-            proxy_server: None,
-            proxy_port: None,
-            proxy_username: None,
-            proxy_password: None,
-            proxy_password_file: None,
-            proxy_tls: false,
-            proxy_tls_server_name: None,
-            detour: None,
-            outbounds: Vec::new(),
-            subscriptions: Vec::new(),
-            url: None,
-            interval: None,
-            tolerance: None,
-            default: None,
-        }],
+            args.ca.clone(),
+            !args.no_xudp,
+            args.allow_insecure,
+        )?],
         route: RouteConfig {
             final_: Some("proxy".into()),
             ..Default::default()

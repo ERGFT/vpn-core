@@ -331,11 +331,11 @@ Config
 │                                     max_conns, sniff, sniff_override_destination,
 │                                     tun: имя, адреса, mtu, auto_route, route_exclude,
 │                                     strict_route, dns_hijack
-├── outbounds: Vec<OutboundConfig>    tag, kind (vless/trojan/socks/direct/block/dns/selector/
-│                                     urltest/fallback), link | link_file, ca_file, xudp,
-│                                     allow_insecure, mux, fragment, noises,
-│                                     группы: outbounds, subscriptions, url, interval,
-│                                     tolerance, default
+├── outbounds: Vec<OutboundConfig>    tag + типизированный вариант:
+│                                     vless/trojan: источник ссылки, CA, transport-параметры;
+│                                     socks/http: адрес, typed auth, detour;
+│                                     direct: fragment/noises; block/dns без параметров;
+│                                     selector/urltest/fallback: только параметры своей группы
 ├── route: RouteConfig                rules, final, rule_set, presets, geosite/geoip_file,
 │                                     domain_strategy
 ├── dns: Option<DnsConfig>            servers, rules, final, strategy, fakeip, кеш
@@ -343,9 +343,12 @@ Config
 └── api: Option<ApiConfig>            listen, token | token_file, allow_ip
 ```
 
-Модель — внутренняя: её заполняют только два разборщика, а пользуется
-всё остальное ядро. Новые форматы (например, Clash YAML) добавляются
-третьим разборщиком без изменений в остальном коде.
+Модель — внутренняя: разборщики сначала собирают поля во временную модель,
+проверяют сочетания и нормализуют их в один вариант выхода. Поэтому у
+SOCKS5 не может оказаться TLS-настройки HTTP CONNECT, а у selector — порога
+переключения `urltest`. После нормализации моделью пользуется остальное ядро.
+Новые форматы (например, Clash YAML) добавляются третьим разборщиком без
+изменений в остальном коде.
 
 ### 5.3. Выходы как ссылки
 

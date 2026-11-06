@@ -22,7 +22,7 @@ use super::link::LinkBuilder;
 use super::obj::{duration, Obj};
 use super::{
     Config, DomainStrategy, InboundConfig, InboundKind, OutboundConfig, OutboundKind, PortSpec,
-    RouteConfig, RuleConfig,
+    RawOutboundConfig, RouteConfig, RuleConfig,
 };
 use crate::app::access::IpNet;
 use crate::app::api::ApiConfig;
@@ -131,10 +131,10 @@ pub fn parse(root: &Obj<'_>) -> Result<Config> {
         }
     }
     if route.rules.iter().any(|r| r.outbound == REJECT) {
-        outbounds.push(OutboundConfig::new(REJECT, OutboundKind::Block));
+        outbounds.push(RawOutboundConfig::new(REJECT, OutboundKind::Block).finish()?);
     }
     if route.rules.iter().any(|r| r.outbound == HIJACK_DNS) {
-        outbounds.push(OutboundConfig::new(HIJACK_DNS, OutboundKind::Dns));
+        outbounds.push(RawOutboundConfig::new(HIJACK_DNS, OutboundKind::Dns).finish()?);
     }
     Ok(Config {
         inbounds,
@@ -298,7 +298,7 @@ fn outbound(o: Obj<'_>) -> Result<OutboundConfig> {
             ))
         }
     };
-    let mut out = OutboundConfig::new(&tag, kind);
+    let mut out = RawOutboundConfig::new(&tag, kind);
     o.ignore(&["type", "tag"]);
     if !matches!(kind, OutboundKind::Socks5 | OutboundKind::HttpConnect) {
         o.unsupported("detour", "цепочки доступны только у SOCKS5 и HTTP CONNECT")?;
@@ -386,7 +386,7 @@ fn outbound(o: Obj<'_>) -> Result<OutboundConfig> {
     }
     out.check_fields()?;
     o.finish()?;
-    Ok(out)
+    out.finish()
 }
 
 fn fragment(o: &Obj<'_>) -> Result<Option<crate::transport::fragment::FragmentConfig>> {
@@ -400,7 +400,7 @@ fn fragment(o: &Obj<'_>) -> Result<Option<crate::transport::fragment::FragmentCo
 
 /// vless/trojan: поля сервера → ссылка (её разбирает и проверяет тот же
 /// код, что и ссылку из командной строки).
-fn server(o: &Obj<'_>, out: &mut OutboundConfig) -> Result<()> {
+fn server(o: &Obj<'_>, out: &mut RawOutboundConfig) -> Result<()> {
     let vless = out.kind == OutboundKind::Vless;
     out.allow_insecure = o.bool("allow_insecure")?.unwrap_or(false);
     out.fragment = fragment(o)?;

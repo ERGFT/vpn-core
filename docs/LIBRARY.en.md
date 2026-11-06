@@ -110,6 +110,10 @@ of running `reality-client` as a separate process. The interface is a C ABI: usa
 (JNI), Swift, C/C++, Go (cgo), C# (P/Invoke), Python (ctypes) and anything
 else that can call C functions.
 
+The `reality-core` Rust package is not published as a standalone crate. Its
+internal types and signatures are not a stable interface for external
+consumers; use the documented C ABI to embed the core in an application.
+
 - Header: [`ffi/include/reality.h`](../ffi/include/reality.h).
 - Minimal embedding example: [`ffi/examples/minimal.c`](../ffi/examples/minimal.c).
 - Code: [`ffi/src/lib.rs`](../ffi/src/lib.rs), a C example —

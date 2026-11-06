@@ -106,6 +106,10 @@ pkg-config --static --libs vpn-core  # включает зависимости �
 Kotlin/Java (JNI), Swift, C/C++, Go (cgo), C# (P/Invoke), Python (ctypes) и
 всего, что умеет вызывать функции C.
 
+Rust-пакет `reality-core` не публикуется как самостоятельный crate. Его
+внутренние типы и сигнатуры не являются стабильным интерфейсом для внешних
+потребителей; для интеграции приложения используйте документированный C ABI.
+
 - Заголовок: [`ffi/include/reality.h`](../ffi/include/reality.h).
 - Минимальный пример встраивания: [`ffi/examples/minimal.c`](../ffi/examples/minimal.c).
 - Код: [`ffi/src/lib.rs`](../ffi/src/lib.rs), пример на C —

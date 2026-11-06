@@ -10,8 +10,13 @@
 
 pub mod link;
 mod obj;
+mod outbound;
 mod singbox;
 mod xray;
+
+pub use outbound::OutboundConfig;
+pub(crate) use outbound::OutboundSettings;
+use outbound::RawOutboundConfig;
 
 use std::net::SocketAddr;
 #[cfg(unix)]
@@ -250,299 +255,6 @@ impl OutboundKind {
     }
 }
 
-#[derive(Clone)]
-pub struct OutboundConfig {
-    pub tag: String,
-    pub kind: OutboundKind,
-    /// vless: ссылка прямо в файле (лучше — `link_file`).
-    pub link: Option<String>,
-    pub link_file: Option<PathBuf>,
-    /// vless: свои корневые сертификаты для `security=tls`.
-    pub ca_file: Option<PathBuf>,
-    /// vless: UDP через XUDP (по умолчанию) или поток на назначение.
-    pub xudp: bool,
-    /// vless: разрешить `security=none` (без шифрования).
-    pub allow_insecure: bool,
-    /// vless: Mux.Cool — до стольких TCP-соединений в одном потоке
-    /// (как `mux.concurrency` у Xray; не вместе с Vision).
-    pub mux: Option<u16>,
-    /// vless, direct: дробить начало соединения (ClientHello) против DPI.
-    pub fragment: Option<crate::transport::fragment::FragmentConfig>,
-    /// direct: пакеты-пустышки перед первой UDP-датаграммой к адресу.
-    pub noises: Vec<crate::transport::noise::NoiseConfig>,
-    /// socks/http: адрес proxy и учётные данные.
-    pub proxy_server: Option<String>,
-    pub proxy_port: Option<u16>,
-    pub proxy_username: Option<String>,
-    pub proxy_password: Option<String>,
-    /// Расширение vpn-core: пароль proxy из файла с ограниченным доступом.
-    pub proxy_password_file: Option<PathBuf>,
-    /// HTTP CONNECT: TLS к proxy с проверкой публичного корневого набора.
-    pub proxy_tls: bool,
-    /// HTTP CONNECT: имя для SNI и проверки сертификата; по умолчанию server.
-    pub proxy_tls_server_name: Option<String>,
-    /// SOCKS5/HTTP CONNECT: предыдущий outbound, через который открывается proxy-сокет.
-    pub detour: Option<String>,
-
-    // ── только для групп (selector, urltest, fallback) ──
-    /// Участники — tag других выходов (в том числе групп).
-    pub outbounds: Vec<String>,
-    /// Подписки, серверы которых входят в группу.
-    pub subscriptions: Vec<String>,
-    /// Адрес проверки (по умолчанию `https://www.gstatic.com/generate_204`).
-    pub url: Option<String>,
-    /// Как часто проверять, секунд (по умолчанию 180).
-    pub interval: Option<u64>,
-    /// urltest: не переключаться, пока текущий хуже лучшего не больше
-    /// чем на столько миллисекунд (по умолчанию 50).
-    pub tolerance: Option<u64>,
-    /// selector: участник по умолчанию.
-    pub default: Option<String>,
-}
-
-impl std::fmt::Debug for OutboundConfig {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("OutboundConfig")
-            .field("tag", &self.tag)
-            .field("kind", &self.kind)
-            .field("link", &crate::redact::opt(&self.link))
-            .field("link_file", &self.link_file)
-            .field("ca_file", &self.ca_file)
-            .field("xudp", &self.xudp)
-            .field("allow_insecure", &self.allow_insecure)
-            .field("mux", &self.mux)
-            .field("fragment", &self.fragment)
-            .field("noises", &self.noises)
-            .field("proxy_server", &self.proxy_server)
-            .field("proxy_port", &self.proxy_port)
-            .field("proxy_username", &crate::redact::opt(&self.proxy_username))
-            .field("proxy_password", &crate::redact::opt(&self.proxy_password))
-            .field("proxy_password_file", &self.proxy_password_file)
-            .field("proxy_tls", &self.proxy_tls)
-            .field("proxy_tls_server_name", &self.proxy_tls_server_name)
-            .field("detour", &self.detour)
-            .field("outbounds", &self.outbounds)
-            .field("subscriptions", &self.subscriptions)
-            .field("url", &self.url)
-            .field("interval", &self.interval)
-            .field("tolerance", &self.tolerance)
-            .field("default", &self.default)
-            .finish()
-    }
-}
-
-impl OutboundConfig {
-    pub fn new(tag: &str, kind: OutboundKind) -> Self {
-        OutboundConfig {
-            tag: tag.to_string(),
-            kind,
-            link: None,
-            link_file: None,
-            ca_file: None,
-            xudp: true,
-            allow_insecure: false,
-            mux: None,
-            fragment: None,
-            noises: Vec::new(),
-            proxy_server: None,
-            proxy_port: None,
-            proxy_username: None,
-            proxy_password: None,
-            proxy_password_file: None,
-            proxy_tls: false,
-            proxy_tls_server_name: None,
-            detour: None,
-            outbounds: Vec::new(),
-            subscriptions: Vec::new(),
-            url: None,
-            interval: None,
-            tolerance: None,
-            default: None,
-        }
-    }
-
-    /// Поля, которые бывают только у одного вида выхода.
-    pub fn check_fields(&self) -> Result<()> {
-        let tag = &self.tag;
-        let group = self.kind.is_group();
-        let group_fields = !self.outbounds.is_empty()
-            || !self.subscriptions.is_empty()
-            || self.url.is_some()
-            || self.interval.is_some()
-            || self.tolerance.is_some()
-            || self.default.is_some();
-        if self.fragment.is_some()
-            && !matches!(
-                self.kind,
-                OutboundKind::Vless | OutboundKind::Trojan | OutboundKind::Direct
-            )
-        {
-            return Err(Error::Config(format!(
-                "выход {tag}: fragment — только у vless, trojan и direct"
-            )));
-        }
-        if !self.noises.is_empty() && self.kind != OutboundKind::Direct {
-            return Err(Error::Config(format!(
-                "выход {tag}: noises — только у direct"
-            )));
-        }
-        if self.detour.as_ref().is_some_and(|t| {
-            t.trim().is_empty() || t.trim() != t || t.chars().any(char::is_control) || t == tag
-        }) {
-            return Err(Error::Config(format!(
-                "выход {tag}: detour должен содержать корректный tag другого выхода"
-            )));
-        }
-        if self.detour.is_some()
-            && !matches!(self.kind, OutboundKind::Socks5 | OutboundKind::HttpConnect)
-        {
-            return Err(Error::Config(format!(
-                "выход {tag}: detour пока поддерживается только у SOCKS5 и HTTP CONNECT"
-            )));
-        }
-        if !group && group_fields {
-            return Err(Error::Config(format!(
-                "выход {tag}: outbounds, subscriptions, url, interval, tolerance, default — только у групп (selector, urltest, fallback)"
-            )));
-        }
-        let server_fields = self.link.is_some() || self.link_file.is_some() || self.allow_insecure;
-        let server = matches!(self.kind, OutboundKind::Vless | OutboundKind::Trojan);
-        let ca_file_allowed = server || (self.kind == OutboundKind::HttpConnect && self.proxy_tls);
-        if (!server && server_fields) || (self.ca_file.is_some() && !ca_file_allowed) {
-            return Err(Error::Config(format!(
-                "выход {tag}: link, link_file и allow_insecure — только у vless и trojan; ca_file допустим также у HTTP CONNECT с TLS"
-            )));
-        }
-        let socks_fields = self.proxy_server.is_some()
-            || self.proxy_port.is_some()
-            || self.proxy_username.is_some()
-            || self.proxy_password.is_some()
-            || self.proxy_password_file.is_some();
-        if !matches!(self.kind, OutboundKind::Socks5 | OutboundKind::HttpConnect)
-            && (socks_fields || self.proxy_tls || self.proxy_tls_server_name.is_some())
-        {
-            return Err(Error::Config(format!(
-                "выход {tag}: параметры proxy допустимы только у type = \"socks\" или type = \"http\""
-            )));
-        }
-        if self.kind == OutboundKind::Socks5 {
-            let server = self.proxy_server.as_ref().filter(|s| {
-                !s.trim().is_empty() && s.trim() == s.as_str() && !s.chars().any(char::is_control)
-            });
-            let port = self.proxy_port.filter(|p| *p != 0);
-            if server.is_none() || port.is_none() {
-                return Err(Error::Config(format!(
-                    "выход {tag}: SOCKS5 требует server и server_port от 1 до 65535"
-                )));
-            }
-            if self.proxy_password.is_some() && self.proxy_password_file.is_some() {
-                return Err(Error::Config(format!(
-                    "выход {tag}: SOCKS5 password и password_file взаимоисключающие"
-                )));
-            }
-            let has_password = self.proxy_password.is_some() || self.proxy_password_file.is_some();
-            if self.proxy_username.is_some() != has_password {
-                return Err(Error::Config(format!(
-                    "выход {tag}: SOCKS5 username и password должны быть заданы вместе"
-                )));
-            }
-            if self
-                .proxy_password
-                .as_ref()
-                .is_some_and(|password| password.is_empty() || password.len() > 255)
-            {
-                return Err(Error::Config(format!(
-                    "выход {tag}: SOCKS5 password должен занимать 1–255 байт"
-                )));
-            }
-            if self
-                .proxy_username
-                .as_ref()
-                .is_some_and(|u| u.is_empty() || u.len() > 255)
-            {
-                return Err(Error::Config(format!(
-                    "выход {tag}: SOCKS5 username должен занимать 1–255 байт"
-                )));
-            }
-        }
-        if self.kind == OutboundKind::HttpConnect {
-            let server = self.proxy_server.as_ref().filter(|s| {
-                !s.trim().is_empty() && s.trim() == s.as_str() && !s.chars().any(char::is_control)
-            });
-            let port = self.proxy_port.filter(|p| *p != 0);
-            if server.is_none() || port.is_none() {
-                return Err(Error::Config(format!(
-                    "выход {tag}: HTTP CONNECT требует server и server_port от 1 до 65535"
-                )));
-            }
-            if self.proxy_password.is_some() && self.proxy_password_file.is_some() {
-                return Err(Error::Config(format!(
-                    "выход {tag}: HTTP CONNECT password и password_file взаимоисключающие"
-                )));
-            }
-            let has_password = self.proxy_password.is_some() || self.proxy_password_file.is_some();
-            if self.proxy_username.is_some() != has_password {
-                return Err(Error::Config(format!(
-                    "выход {tag}: HTTP CONNECT username и password должны быть заданы вместе"
-                )));
-            }
-            if self.proxy_username.as_ref().is_some_and(|u| {
-                u.is_empty() || u.len() > 4096 || u.contains(':') || u.chars().any(char::is_control)
-            }) || self
-                .proxy_password
-                .as_ref()
-                .is_some_and(|p| p.is_empty() || p.len() > 4096 || p.chars().any(char::is_control))
-            {
-                return Err(Error::Config(format!(
-                    "выход {tag}: HTTP CONNECT учётные данные пусты, слишком длинные или некорректны для Basic auth"
-                )));
-            }
-            if self.proxy_tls_server_name.is_some() && !self.proxy_tls {
-                return Err(Error::Config(format!(
-                    "выход {tag}: tls.server_name можно задавать только при tls.enabled = true"
-                )));
-            }
-            if self.proxy_tls_server_name.as_ref().is_some_and(|s| {
-                s.trim().is_empty() || s.trim() != s.as_str() || s.chars().any(char::is_control)
-            }) {
-                return Err(Error::Config(format!(
-                    "выход {tag}: некорректное имя tls.server_name"
-                )));
-            }
-        }
-        if self.kind != OutboundKind::Vless && self.mux.is_some() {
-            return Err(Error::Config(format!(
-                "выход {tag}: mux — только у type = \"vless\""
-            )));
-        }
-        if group {
-            if self.outbounds.is_empty() && self.subscriptions.is_empty() {
-                return Err(Error::Config(format!(
-                    "выход {tag}: в группе нет участников (outbounds или subscriptions)"
-                )));
-            }
-            if self.default.is_some() && self.kind != OutboundKind::Selector {
-                return Err(Error::Config(format!(
-                    "выход {tag}: default бывает только у selector"
-                )));
-            }
-            if self.tolerance.is_some() && self.kind != OutboundKind::Urltest {
-                return Err(Error::Config(format!(
-                    "выход {tag}: tolerance бывает только у urltest"
-                )));
-            }
-            if self.kind == OutboundKind::Selector
-                && (self.url.is_some() || self.interval.is_some())
-            {
-                return Err(Error::Config(format!(
-                    "выход {tag}: selector не проверяет участников — url и interval не нужны"
-                )));
-            }
-        }
-        Ok(())
-    }
-}
-
 #[derive(Debug, Clone, Default)]
 pub struct RouteConfig {
     /// Правила по порядку; срабатывает первое подошедшее.
@@ -601,7 +313,14 @@ impl Config {
     /// пароли, сертификаты, базы и наборы правил, кеши подписок и fake-IP.
     /// Нужен, чтобы перенести настройки целиком (служба Windows).
     pub fn input_files(&self) -> Vec<PathBuf> {
-        let mut v: Vec<PathBuf> = Vec::new();
+        let outbound_paths: Vec<PathBuf> = self
+            .outbounds
+            .iter()
+            .flat_map(|outbound| outbound.referenced_paths())
+            .filter(|path| path.is_file())
+            .cloned()
+            .collect();
+        let mut v: Vec<PathBuf> = outbound_paths;
         let mut add = |p: &Option<PathBuf>| {
             if let Some(p) = p {
                 v.push(p.clone());
@@ -609,10 +328,6 @@ impl Config {
         };
         for i in &self.inbounds {
             add(&i.auth_file);
-        }
-        for o in &self.outbounds {
-            add(&o.link_file);
-            add(&o.ca_file);
         }
         for s in &self.subscriptions {
             add(&s.url_file);
@@ -679,8 +394,7 @@ impl Config {
             opt(&mut i.auth_file, f);
         }
         for o in &mut self.outbounds {
-            opt(&mut o.link_file, f);
-            opt(&mut o.ca_file, f);
+            o.for_each_path(f);
         }
         for sub in &mut self.subscriptions {
             opt(&mut sub.url_file, f);
@@ -893,7 +607,7 @@ mod tests {
         // proxy, direct, block + скрытый выход для hijack-dns.
         let tags: Vec<&str> = c.outbounds.iter().map(|o| o.tag.as_str()).collect();
         assert_eq!(tags, ["proxy", "direct", "block", "__hijack_dns"]);
-        let link = c.outbounds[0].link.as_deref().unwrap();
+        let link = c.outbounds[0].vless().unwrap().link.read().unwrap();
         let v = crate::vless::VlessConfig::parse(link).unwrap();
         assert_eq!(v.host, "server.example.com");
         assert_eq!(v.security, crate::vless::Security::Reality);
@@ -920,7 +634,9 @@ mod tests {
         );
         let tags: Vec<&str> = c.outbounds.iter().map(|o| o.tag.as_str()).collect();
         assert_eq!(tags, ["proxy", "direct", "block"]);
-        let v = crate::vless::VlessConfig::parse(c.outbounds[0].link.as_deref().unwrap()).unwrap();
+        let v =
+            crate::vless::VlessConfig::parse(&c.outbounds[0].vless().unwrap().link.read().unwrap())
+                .unwrap();
         assert_eq!(v.port, 443);
         assert_eq!(v.security, crate::vless::Security::Reality);
         assert_eq!(c.route.rules.len(), 4);
@@ -964,9 +680,11 @@ mod tests {
         )
         .unwrap();
         let out = &c.outbounds[0];
-        assert_eq!(out.kind, OutboundKind::Socks5);
-        assert_eq!(out.proxy_server.as_deref(), Some("proxy.example"));
-        assert_eq!(out.proxy_port, Some(1080));
+        assert_eq!(out.kind(), OutboundKind::Socks5);
+        assert!(out.vless().is_none());
+        let socks = out.socks5().unwrap();
+        assert_eq!(socks.server, "proxy.example");
+        assert_eq!(socks.port, 1080);
         let debug = format!("{out:?}");
         assert!(!debug.contains("private-user"));
         assert!(!debug.contains("private-pass"));
@@ -979,11 +697,38 @@ mod tests {
             r#"{"outbounds":[{"type":"socks","tag":"proxy","server":"proxy.example","server_port":1080,"network":"tcp","username":"user","password_file":"proxy.pass"}]}"#,
         )
         .unwrap();
-        assert_eq!(c.outbounds[0].proxy_password, None);
-        assert_eq!(
-            c.outbounds[0].proxy_password_file.as_deref(),
-            Some(std::path::Path::new("proxy.pass"))
+        let socks = c.outbounds[0].socks5().unwrap();
+        let auth = socks.auth.as_ref().unwrap();
+        assert_eq!(auth.username, "user");
+        assert!(matches!(
+            &auth.password,
+            super::outbound::SecretSource::File(path)
+                if path == std::path::Path::new("proxy.pass")
+        ));
+    }
+
+    #[test]
+    fn outbound_file_secrets_are_confined_and_listed_as_inputs() {
+        let filename = format!(
+            "vpn-core-proxy-password-{}.txt",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
         );
+        let temp_dir = std::env::temp_dir();
+        let path = temp_dir.join(&filename);
+        std::fs::write(&path, "not-a-real-password").unwrap();
+        let config = format!(
+            r#"{{"outbounds":[{{"type":"socks","tag":"proxy","server":"proxy.example","server_port":1080,"network":"tcp","username":"user","password_file":"{filename}"}}]}}"#
+        );
+        let parsed = Config::parse_at(&config, &temp_dir).unwrap();
+        assert!(parsed.input_files().contains(&path));
+        std::fs::remove_file(&path).unwrap();
+
+        let unsafe_config = r#"{"outbounds":[{"type":"socks","tag":"proxy","server":"proxy.example","server_port":1080,"network":"tcp","username":"user","password_file":"../outside.txt"}]}"#;
+        let mut parsed = Config::parse(unsafe_config).unwrap();
+        assert!(parsed.check_paths_confined().is_err());
     }
 
     #[test]
@@ -992,8 +737,8 @@ mod tests {
             r#"{"outbounds":[{"type":"socks","tag":"first","server":"socks.example","server_port":1080,"network":"tcp"},{"type":"http","tag":"second","server":"http.example","server_port":8080,"detour":"first"}]}"#,
         )
         .unwrap();
-        assert_eq!(c.outbounds[0].detour, None);
-        assert_eq!(c.outbounds[1].detour.as_deref(), Some("first"));
+        assert_eq!(c.outbounds[0].detour(), None);
+        assert_eq!(c.outbounds[1].detour(), Some("first"));
     }
 
     #[test]
@@ -1052,13 +797,14 @@ mod tests {
         )
         .unwrap();
         let out = &c.outbounds[0];
-        assert_eq!(out.kind, OutboundKind::HttpConnect);
-        assert_eq!(out.proxy_server.as_deref(), Some("proxy.example"));
-        assert_eq!(out.proxy_port, Some(8443));
-        assert!(out.proxy_tls);
-        assert_eq!(out.proxy_tls_server_name.as_deref(), Some("tls.example"));
+        assert_eq!(out.kind(), OutboundKind::HttpConnect);
+        let http = out.http_connect().unwrap();
+        assert_eq!(http.proxy.server, "proxy.example");
+        assert_eq!(http.proxy.port, 8443);
+        assert!(http.tls);
+        assert_eq!(http.tls_server_name.as_deref(), Some("tls.example"));
         assert_eq!(
-            out.ca_file.as_deref(),
+            http.ca_file.as_deref(),
             Some(std::path::Path::new("proxy-ca.pem"))
         );
         let debug = format!("{out:?}");
@@ -1114,10 +860,11 @@ mod tests {
         )
         .unwrap();
         let g = c.outbounds.iter().find(|o| o.tag == "auto").unwrap();
-        assert_eq!(g.kind, OutboundKind::Urltest);
-        assert_eq!(g.outbounds, ["de", "fi"]);
-        assert_eq!(g.url.as_deref(), Some("https://cp.example/204"));
-        assert_eq!(g.interval, Some(60));
+        assert_eq!(g.kind(), OutboundKind::Urltest);
+        let urltest = g.urltest().unwrap();
+        assert_eq!(urltest.outbounds, ["de", "fi"]);
+        assert_eq!(urltest.url.as_deref(), Some("https://cp.example/204"));
+        assert_eq!(urltest.interval, Some(60));
         assert_eq!(
             c.outbounds[0].tag, "de",
             "первый выход — как у Xray, по умолчанию"
