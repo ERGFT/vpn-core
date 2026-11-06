@@ -607,7 +607,7 @@ mod tests {
         // proxy, direct, block + скрытый выход для hijack-dns.
         let tags: Vec<&str> = c.outbounds.iter().map(|o| o.tag.as_str()).collect();
         assert_eq!(tags, ["proxy", "direct", "block", "__hijack_dns"]);
-        let link = c.outbounds[0].vless().unwrap().link.read().unwrap();
+        let link = c.outbounds[0].as_vless().unwrap().link.read().unwrap();
         let v = crate::vless::VlessConfig::parse(link).unwrap();
         assert_eq!(v.host, "server.example.com");
         assert_eq!(v.security, crate::vless::Security::Reality);
@@ -634,9 +634,10 @@ mod tests {
         );
         let tags: Vec<&str> = c.outbounds.iter().map(|o| o.tag.as_str()).collect();
         assert_eq!(tags, ["proxy", "direct", "block"]);
-        let v =
-            crate::vless::VlessConfig::parse(&c.outbounds[0].vless().unwrap().link.read().unwrap())
-                .unwrap();
+        let v = crate::vless::VlessConfig::parse(
+            &c.outbounds[0].as_vless().unwrap().link.read().unwrap(),
+        )
+        .unwrap();
         assert_eq!(v.port, 443);
         assert_eq!(v.security, crate::vless::Security::Reality);
         assert_eq!(c.route.rules.len(), 4);
@@ -681,7 +682,7 @@ mod tests {
         .unwrap();
         let out = &c.outbounds[0];
         assert_eq!(out.kind(), OutboundKind::Socks5);
-        assert!(out.vless().is_none());
+        assert!(out.as_vless().is_none());
         let socks = out.socks5().unwrap();
         assert_eq!(socks.server, "proxy.example");
         assert_eq!(socks.port, 1080);

@@ -237,13 +237,6 @@ impl OutboundConfig {
         self.selector().and_then(|v| v.default.as_deref())
     }
 
-    pub(crate) fn urltest(&self) -> Option<&UrltestConfig> {
-        match &self.settings {
-            OutboundSettings::Urltest(v) => Some(v),
-            _ => None,
-        }
-    }
-
     pub(crate) fn detour(&self) -> Option<&str> {
         match &self.settings {
             OutboundSettings::Socks5(v) => v.detour.as_deref(),
