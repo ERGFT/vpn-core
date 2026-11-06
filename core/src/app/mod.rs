@@ -362,7 +362,7 @@ fn secret(
 }
 
 fn build_vless(o: &config::OutboundConfig) -> Result<VlessOutbound> {
-    let cfg = o.vless().expect("VLESS settings match outbound kind");
+    let cfg = o.as_vless().expect("VLESS settings match outbound kind");
     let link = cfg.link.read()?;
     let roots = match &cfg.ca_file {
         Some(ca) => Some(Arc::new(config::load_ca(ca)?)),

@@ -182,7 +182,7 @@ impl OutboundConfig {
         }
     }
 
-    pub(crate) fn vless(&self) -> Option<&VlessConfig> {
+    pub(crate) fn as_vless(&self) -> Option<&VlessConfig> {
         match &self.settings {
             OutboundSettings::Vless(v) => Some(v),
             _ => None,
@@ -276,27 +276,28 @@ impl OutboundConfig {
     }
 
     pub(crate) fn for_each_path(&mut self, f: &mut dyn FnMut(&mut PathBuf)) {
-        let mut visit = |path: &mut Option<PathBuf>| {
-            if let Some(path) = path {
-                f(path);
-            }
-        };
         match &mut self.settings {
             OutboundSettings::Vless(v) => {
                 visit_secret_path(&mut v.link, f);
-                visit(&mut v.ca_file);
+                visit_optional_path(&mut v.ca_file, f);
             }
             OutboundSettings::Trojan(v) => {
                 visit_secret_path(&mut v.link, f);
-                visit(&mut v.ca_file);
+                visit_optional_path(&mut v.ca_file, f);
             }
             OutboundSettings::Socks5(v) => visit_proxy_auth_path(v.auth.as_mut(), f),
             OutboundSettings::HttpConnect(v) => {
                 visit_proxy_auth_path(v.proxy.auth.as_mut(), f);
-                visit(&mut v.ca_file);
+                visit_optional_path(&mut v.ca_file, f);
             }
             _ => {}
         }
+    }
+}
+
+fn visit_optional_path(path: &mut Option<PathBuf>, f: &mut dyn FnMut(&mut PathBuf)) {
+    if let Some(path) = path {
+        f(path);
     }
 }
 
@@ -769,7 +770,7 @@ impl RawOutboundConfig {
             server,
             port,
             auth,
-            detour: self.detour,
+            detour: self.detour.take(),
         })
     }
 }
