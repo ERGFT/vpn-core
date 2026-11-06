@@ -361,35 +361,51 @@ fn secret(
     }
 }
 
+#[allow(
+    clippy::expect_used,
+    reason = "инвариант: вызывается только для выхода типа VLESS"
+)]
 fn build_vless(o: &config::OutboundConfig) -> Result<VlessOutbound> {
-    let link = secret(&o.link, &o.link_file, &format!("выход {}", o.tag))?
-        .ok_or_else(|| Error::Config(format!("выход {}: не задан сервер", o.tag)))?;
-    let roots = match &o.ca_file {
+    let cfg = o.as_vless().expect("VLESS settings match outbound kind");
+    let link = cfg.link.read()?;
+    let roots = match &cfg.ca_file {
         Some(ca) => Some(Arc::new(config::load_ca(ca)?)),
         None => None,
     };
-    let frag = build_fragment(o)?;
-    let v = vless_from_link(&o.tag, &link, o.xudp, o.allow_insecure, roots, false, frag)?;
-    match o.mux {
+    let frag = build_fragment(&o.tag, cfg.fragment.as_ref())?;
+    let v = vless_from_link(
+        &o.tag,
+        &link,
+        cfg.xudp,
+        cfg.allow_insecure,
+        roots,
+        false,
+        frag,
+    )?;
+    match cfg.mux {
         Some(n) => v.with_mux(n),
         None => Ok(v),
     }
 }
 
+#[allow(
+    clippy::expect_used,
+    reason = "инвариант: вызывается только для выхода типа Trojan"
+)]
 fn build_trojan(o: &config::OutboundConfig) -> Result<trojan_out::TrojanOutbound> {
-    let link = secret(&o.link, &o.link_file, &format!("выход {}", o.tag))?
-        .ok_or_else(|| Error::Config(format!("выход {}: не задан сервер", o.tag)))?;
-    let roots = match &o.ca_file {
+    let cfg = o.trojan().expect("Trojan settings match outbound kind");
+    let link = cfg.link.read()?;
+    let roots = match &cfg.ca_file {
         Some(ca) => Some(Arc::new(config::load_ca(ca)?)),
         None => None,
     };
     trojan_from_link(
         &o.tag,
         &link,
-        o.allow_insecure,
+        cfg.allow_insecure,
         roots,
         false,
-        build_fragment(o)?,
+        build_fragment(&o.tag, cfg.fragment.as_ref())?,
     )
 }
 
@@ -494,25 +510,30 @@ fn vless_from_link(
 }
 
 fn build_fragment(
-    o: &config::OutboundConfig,
+    tag: &str,
+    fragment: Option<&crate::transport::fragment::FragmentConfig>,
 ) -> Result<Option<Arc<crate::transport::fragment::Fragment>>> {
-    o.fragment
-        .as_ref()
+    fragment
         .map(|f| {
             f.build()
                 .map(Arc::new)
-                .map_err(|e| Error::Config(format!("выход {}: {e}", o.tag)))
+                .map_err(|e| Error::Config(format!("выход {tag}: {e}")))
         })
         .transpose()
 }
 
+#[allow(
+    clippy::expect_used,
+    reason = "инвариант: вызывается только для выхода типа direct"
+)]
 fn build_direct(o: &config::OutboundConfig, dns: Option<DnsSlot>) -> Result<DirectOutbound> {
+    let cfg = o.direct().expect("direct settings match outbound kind");
     let mut d = match dns {
         Some(slot) => DirectOutbound::with_dns(o.tag.clone(), slot),
         None => DirectOutbound::new(o.tag.clone()),
     };
-    d = d.with_fragment(build_fragment(o)?);
-    let noises = o
+    d = d.with_fragment(build_fragment(&o.tag, cfg.fragment.as_ref())?);
+    let noises = cfg
         .noises
         .iter()
         .map(|n| n.build())
@@ -525,15 +546,19 @@ fn build_direct(o: &config::OutboundConfig, dns: Option<DnsSlot>) -> Result<Dire
 pub const DEFAULT_PROBE_URL: &str = "https://www.gstatic.com/generate_204";
 
 fn group_settings(o: &config::OutboundConfig) -> Result<GroupSettings> {
-    let strategy = match o.kind {
-        OutboundKind::Selector => Strategy::Selector,
-        OutboundKind::Urltest => Strategy::UrlTest,
-        OutboundKind::Fallback => Strategy::Fallback,
+    let (strategy, url, interval, tolerance) = match &o.settings {
+        config::OutboundSettings::Selector(_) => (Strategy::Selector, None, None, None),
+        config::OutboundSettings::Urltest(g) => {
+            (Strategy::UrlTest, g.url.as_deref(), g.interval, g.tolerance)
+        }
+        config::OutboundSettings::Fallback(g) => {
+            (Strategy::Fallback, g.url.as_deref(), g.interval, None)
+        }
         _ => unreachable!("только группы"),
     };
-    let url = http_client::Url::parse(o.url.as_deref().unwrap_or(DEFAULT_PROBE_URL))
+    let url = http_client::Url::parse(url.unwrap_or(DEFAULT_PROBE_URL))
         .map_err(|e| Error::Config(format!("выход {}: {e}", o.tag)))?;
-    let interval = o.interval.unwrap_or(180);
+    let interval = interval.unwrap_or(180);
     if interval < 10 {
         return Err(Error::Config(format!(
             "выход {}: interval меньше 10 секунд — слишком частые проверки заметны",
@@ -544,7 +569,7 @@ fn group_settings(o: &config::OutboundConfig) -> Result<GroupSettings> {
         strategy,
         url,
         interval: std::time::Duration::from_secs(interval),
-        tolerance: std::time::Duration::from_millis(o.tolerance.unwrap_or(50)),
+        tolerance: std::time::Duration::from_millis(tolerance.unwrap_or(50)),
         timeout: std::time::Duration::from_secs(5),
     })
 }
@@ -554,7 +579,7 @@ fn check_group_cycles(outs: &[config::OutboundConfig]) -> Result<()> {
     use std::collections::HashMap;
     let groups: HashMap<&str, &config::OutboundConfig> = outs
         .iter()
-        .filter(|o| o.kind.is_group())
+        .filter(|o| o.kind().is_group())
         .map(|o| (o.tag.as_str(), o))
         .collect();
     // 0 — не посещена, 1 — в пути, 2 — проверена.
@@ -577,7 +602,10 @@ fn check_group_cycles(outs: &[config::OutboundConfig]) -> Result<()> {
         }
         state.insert(t, 1);
         path.push(t);
-        for m in &groups[t].outbounds {
+        let Some((members, _)) = groups[t].group_members() else {
+            unreachable!("group kind has group settings")
+        };
+        for m in members {
             if groups.contains_key(m.as_str()) {
                 visit(m, groups, state, path)?;
             }
@@ -602,7 +630,7 @@ fn check_outbound_detours(outs: &[config::OutboundConfig]) -> Result<()> {
     let by_tag: HashMap<&str, &config::OutboundConfig> =
         outs.iter().map(|o| (o.tag.as_str(), o)).collect();
     for o in outs {
-        let Some(detour) = o.detour.as_deref() else {
+        let Some(detour) = o.detour() else {
             continue;
         };
         let target = by_tag.get(detour).ok_or_else(|| {
@@ -611,7 +639,8 @@ fn check_outbound_detours(outs: &[config::OutboundConfig]) -> Result<()> {
                 o.tag
             ))
         })?;
-        if target.kind.is_group() || matches!(target.kind, OutboundKind::Block | OutboundKind::Dns)
+        if target.kind().is_group()
+            || matches!(target.kind(), OutboundKind::Block | OutboundKind::Dns)
         {
             return Err(Error::Config(format!(
                 "выход {}: detour должен указывать на TCP outbound, а не «{detour}»",
@@ -639,7 +668,7 @@ fn check_outbound_detours(outs: &[config::OutboundConfig]) -> Result<()> {
         }
         state.insert(tag, 1);
         path.push(tag);
-        if let Some(next) = by_tag[tag].detour.as_deref() {
+        if let Some(next) = by_tag[tag].detour() {
             visit(next, by_tag, state, path)?;
         }
         path.pop();
@@ -650,7 +679,7 @@ fn check_outbound_detours(outs: &[config::OutboundConfig]) -> Result<()> {
     let mut state = HashMap::new();
     let mut tags: Vec<&str> = outs
         .iter()
-        .filter(|o| o.detour.is_some())
+        .filter(|o| o.detour().is_some())
         .map(|o| o.tag.as_str())
         .collect();
     tags.sort_unstable();
@@ -988,7 +1017,7 @@ fn router_pinned_servers(
     outs: &[config::OutboundConfig],
 ) -> Vec<Option<(String, u16)>> {
     outs.iter()
-        .map(|o| match o.kind {
+        .map(|o| match o.kind() {
             OutboundKind::Vless
             | OutboundKind::Trojan
             | OutboundKind::Socks5
@@ -1034,7 +1063,7 @@ fn preset_rules(cfg: &Config) -> Result<Vec<config::RuleConfig>> {
     let find = |kind: OutboundKind, preset: &str| {
         cfg.outbounds
             .iter()
-            .find(|o| o.kind == kind)
+            .find(|o| o.kind() == kind)
             .map(|o| o.tag.clone())
             .ok_or_else(|| {
                 Error::Config(format!(
@@ -1094,15 +1123,16 @@ fn preset_rules(cfg: &Config) -> Result<Vec<config::RuleConfig>> {
 }
 
 /// Выходы, группы, подписки, DNS и маршрутизатор.
+#[allow(
+    clippy::expect_used,
+    reason = "инвариант: настройки выбираются по тому же типу выхода"
+)]
 fn build_core(
     cfg: &Config,
     tags: &[String],
     tracker: Arc<Tracker>,
     prev_dns: Option<&Arc<Dns>>,
 ) -> Result<(Router, Core)> {
-    for o in &cfg.outbounds {
-        o.check_fields()?;
-    }
     check_group_cycles(&cfg.outbounds)?;
     check_outbound_detours(&cfg.outbounds)?;
     let mut route = cfg.route.clone();
@@ -1119,75 +1149,47 @@ fn build_core(
     let dns_slot: DnsSlot = Arc::new(std::sync::OnceLock::new());
     // Группа GLOBAL — как у Clash: выход режима global (выбирается через
     // API); создаётся, если в настройках нет своего выхода с таким tag.
-    let global_cfg = config::OutboundConfig::new(GLOBAL, OutboundKind::Selector);
+    let global_cfg = config::OutboundConfig::global_selector();
     let mut outbounds: Vec<Arc<dyn Outbound>> = Vec::new();
     let mut groups: Vec<(&config::OutboundConfig, Arc<Group>)> = Vec::new();
     let detour_slots: std::collections::HashMap<String, outbound::OutboundSlot> = cfg
         .outbounds
         .iter()
-        .filter(|o| o.detour.is_some())
+        .filter(|o| o.detour().is_some())
         .map(|o| (o.tag.clone(), Arc::new(std::sync::OnceLock::new())))
         .collect();
     for o in &cfg.outbounds {
-        let built: Arc<dyn Outbound> = match o.kind {
+        let built: Arc<dyn Outbound> = match o.kind() {
             OutboundKind::Vless => Arc::new(build_vless(o)?),
             OutboundKind::Trojan => Arc::new(build_trojan(o)?),
             OutboundKind::Socks5 => {
-                let password = match (&o.proxy_password, &o.proxy_password_file) {
-                    (Some(value), None) => Some(value.clone()),
-                    (None, Some(path)) => Some(config::read_secret_file(path)?),
-                    (None, None) => None,
-                    (Some(_), Some(_)) => {
-                        return Err(Error::Config(format!(
-                            "выход {}: SOCKS5 password и password_file взаимоисключающие",
-                            o.tag
-                        )))
-                    }
-                };
-                let server = o.proxy_server.clone().ok_or_else(|| {
-                    Error::Config(format!("выход {}: SOCKS5 требует server", o.tag))
-                })?;
-                let port = o.proxy_port.ok_or_else(|| {
-                    Error::Config(format!("выход {}: SOCKS5 требует server_port", o.tag))
-                })?;
+                let proxy = o.socks5().expect("SOCKS5 settings match outbound kind");
+                let (username, password) = proxy.credentials()?;
                 Arc::new(
                     socks_out::Socks5Outbound::new(
                         o.tag.clone(),
-                        server,
-                        port,
-                        o.proxy_username.clone(),
+                        proxy.server.clone(),
+                        proxy.port,
+                        username,
                         password,
                     )?
                     .with_detour(detour_slots.get(&o.tag).cloned()),
                 )
             }
             OutboundKind::HttpConnect => {
-                let password = match (&o.proxy_password, &o.proxy_password_file) {
-                    (Some(value), None) => Some(value.clone()),
-                    (None, Some(path)) => Some(config::read_secret_file(path)?),
-                    (None, None) => None,
-                    (Some(_), Some(_)) => {
-                        return Err(Error::Config(format!(
-                            "выход {}: HTTP CONNECT password и password_file взаимоисключающие",
-                            o.tag
-                        )))
-                    }
-                };
-                let server = o.proxy_server.clone().ok_or_else(|| {
-                    Error::Config(format!("выход {}: HTTP CONNECT требует server", o.tag))
-                })?;
-                let port = o.proxy_port.ok_or_else(|| {
-                    Error::Config(format!("выход {}: HTTP CONNECT требует server_port", o.tag))
-                })?;
-                let roots = o.ca_file.as_deref().map(config::load_ca).transpose()?;
+                let cfg = o
+                    .http_connect()
+                    .expect("HTTP CONNECT settings match outbound kind");
+                let (username, password) = cfg.proxy.credentials()?;
+                let roots = cfg.ca_file.as_deref().map(config::load_ca).transpose()?;
                 let outbound = http_connect_out::HttpConnectOutbound::new(
                     o.tag.clone(),
-                    server,
-                    port,
-                    o.proxy_username.clone(),
+                    cfg.proxy.server.clone(),
+                    cfg.proxy.port,
+                    username,
                     password,
-                    o.proxy_tls,
-                    o.proxy_tls_server_name.clone(),
+                    cfg.tls,
+                    cfg.tls_server_name.clone(),
                 )?
                 .with_roots(roots)
                 .with_detour(detour_slots.get(&o.tag).cloned());
@@ -1212,7 +1214,7 @@ fn build_core(
                 let g = Group::new(
                     o.tag.clone(),
                     group_settings(o)?,
-                    o.default.clone(),
+                    o.group_default().map(str::to_owned),
                     tracker.clone(),
                 );
                 groups.push((o, g.clone()));
@@ -1225,12 +1227,15 @@ fn build_core(
     let find_out = |t: &str| outbounds.iter().find(|o| o.tag() == t).cloned();
     for (o, g) in &groups {
         let mut members = Vec::new();
-        for t in &o.outbounds {
+        let Some((outbound_members, subscription_members)) = o.group_members() else {
+            unreachable!("groups contain typed group settings")
+        };
+        for t in outbound_members {
             let m = find_out(t)
                 .ok_or_else(|| Error::Config(format!("группа {}: нет выхода «{t}»", o.tag)))?;
             members.push(m);
         }
-        for s in &o.subscriptions {
+        for s in subscription_members {
             if !cfg.subscriptions.iter().any(|c| &c.tag == s) {
                 return Err(Error::Config(format!(
                     "группа {}: нет подписки «{s}» (раздел subscriptions)",
@@ -1238,12 +1243,11 @@ fn build_core(
                 )));
             }
         }
-        if let Some(d) = &o.default {
-            let from_sub = o
-                .subscriptions
+        if let Some(d) = o.group_default() {
+            let from_sub = subscription_members
                 .iter()
                 .any(|s| d.starts_with(&format!("{s}/")));
-            if !o.outbounds.contains(d) && !from_sub {
+            if !outbound_members.iter().any(|member| member == d) && !from_sub {
                 return Err(Error::Config(format!(
                     "группа {}: default = «{d}» — не участник группы",
                     o.tag
@@ -1253,7 +1257,7 @@ fn build_core(
         g.set_fixed(members);
     }
     for o in &cfg.outbounds {
-        let Some(detour_tag) = &o.detour else {
+        let Some(detour_tag) = o.detour() else {
             continue;
         };
         let target = find_out(detour_tag).ok_or_else(|| {
@@ -1286,7 +1290,10 @@ fn build_core(
             .ok_or_else(|| Error::Config(format!("подписка {t}: нужен url или url_file")))?;
         let members: Vec<std::sync::Weak<Group>> = groups
             .iter()
-            .filter(|(o, _)| o.subscriptions.contains(t))
+            .filter(|(o, _)| {
+                o.group_members()
+                    .is_some_and(|(_, subscriptions)| subscriptions.iter().any(|item| item == t))
+            })
             .map(|(_, g)| Arc::downgrade(g))
             .collect();
         if members.is_empty() {
@@ -1391,7 +1398,7 @@ fn build_core(
     let direct = cfg
         .outbounds
         .iter()
-        .find(|o| o.kind == OutboundKind::Direct)
+        .find(|o| o.kind() == OutboundKind::Direct)
         .and_then(|o| outbounds.iter().find(|x| x.tag() == o.tag))
         .cloned()
         .unwrap_or_else(|| Arc::new(DirectOutbound::new("direct".to_string())));
