@@ -361,6 +361,10 @@ fn secret(
     }
 }
 
+#[allow(
+    clippy::expect_used,
+    reason = "инвариант: вызывается только для выхода типа VLESS"
+)]
 fn build_vless(o: &config::OutboundConfig) -> Result<VlessOutbound> {
     let cfg = o.as_vless().expect("VLESS settings match outbound kind");
     let link = cfg.link.read()?;
@@ -384,6 +388,10 @@ fn build_vless(o: &config::OutboundConfig) -> Result<VlessOutbound> {
     }
 }
 
+#[allow(
+    clippy::expect_used,
+    reason = "инвариант: вызывается только для выхода типа Trojan"
+)]
 fn build_trojan(o: &config::OutboundConfig) -> Result<trojan_out::TrojanOutbound> {
     let cfg = o.trojan().expect("Trojan settings match outbound kind");
     let link = cfg.link.read()?;
@@ -514,6 +522,10 @@ fn build_fragment(
         .transpose()
 }
 
+#[allow(
+    clippy::expect_used,
+    reason = "инвариант: вызывается только для выхода типа direct"
+)]
 fn build_direct(o: &config::OutboundConfig, dns: Option<DnsSlot>) -> Result<DirectOutbound> {
     let cfg = o.direct().expect("direct settings match outbound kind");
     let mut d = match dns {
@@ -1111,6 +1123,10 @@ fn preset_rules(cfg: &Config) -> Result<Vec<config::RuleConfig>> {
 }
 
 /// Выходы, группы, подписки, DNS и маршрутизатор.
+#[allow(
+    clippy::expect_used,
+    reason = "инвариант: настройки выбираются по тому же типу выхода"
+)]
 fn build_core(
     cfg: &Config,
     tags: &[String],
