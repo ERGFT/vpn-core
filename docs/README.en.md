@@ -29,6 +29,7 @@ and first run. This is the detailed reference.
 | [ARCHITECTURE.en.md](ARCHITECTURE.en.md) | how the core works inside |
 | [REPOSITORY.en.md](REPOSITORY.en.md) | where things are in the repository |
 | [TESTING.en.md](TESTING.en.md) | how the project is tested, comparison with Xray-core, performance |
+| [PROTOCOL_ARCHITECTURE_AUDIT.en.md](PROTOCOL_ARCHITECTURE_AUDIT.en.md) | architecture baseline and preparation plan for new protocols |
 | [RUSTLS_PATCH.en.md](RUSTLS_PATCH.en.md) | what was changed in rustls and why |
 | [stage5-crypto-review-and-interop.en.md](stage5-crypto-review-and-interop.en.md) | checklist for a future independent REALITY cryptographic review |
 | [RELEASING.en.md](RELEASING.en.md) | preflight builds, artifact verification, and tag publishing |

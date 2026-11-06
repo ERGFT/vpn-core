@@ -29,6 +29,7 @@
 | [ARCHITECTURE.md](ARCHITECTURE.md) | как устроено ядро изнутри |
 | [REPOSITORY.md](REPOSITORY.md) | где что лежит в репозитории |
 | [TESTING.md](TESTING.md) | как проверяется проект, сравнение с Xray-core, производительность |
+| [PROTOCOL_ARCHITECTURE_AUDIT.md](PROTOCOL_ARCHITECTURE_AUDIT.md) | исходное состояние архитектуры и план подготовки новых протоколов |
 | [RUSTLS_PATCH.md](RUSTLS_PATCH.md) | что изменено в rustls и почему |
 | [stage5-crypto-review-and-interop.md](stage5-crypto-review-and-interop.md) | чек-лист для будущего независимого крипто-ревью REALITY |
 | [RELEASING.md](RELEASING.md) | предварительная сборка, проверка артефактов и публикация тега |
