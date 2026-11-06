@@ -608,7 +608,7 @@ mod tests {
         let tags: Vec<&str> = c.outbounds.iter().map(|o| o.tag.as_str()).collect();
         assert_eq!(tags, ["proxy", "direct", "block", "__hijack_dns"]);
         let link = c.outbounds[0].as_vless().unwrap().link.read().unwrap();
-        let v = crate::vless::VlessConfig::parse(link).unwrap();
+        let v = crate::vless::VlessConfig::parse(link.as_str()).unwrap();
         assert_eq!(v.host, "server.example.com");
         assert_eq!(v.security, crate::vless::Security::Reality);
         assert!(v.flow.is_vision());
@@ -862,7 +862,7 @@ mod tests {
         .unwrap();
         let g = c.outbounds.iter().find(|o| o.tag == "auto").unwrap();
         assert_eq!(g.kind(), OutboundKind::Urltest);
-        let urltest = g.urltest().unwrap();
+        let urltest = g.as_urltest().unwrap();
         assert_eq!(urltest.outbounds, ["de", "fi"]);
         assert_eq!(urltest.url.as_deref(), Some("https://cp.example/204"));
         assert_eq!(urltest.interval, Some(60));
