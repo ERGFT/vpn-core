@@ -233,13 +233,6 @@ impl OutboundConfig {
         }
     }
 
-    pub(crate) fn as_urltest(&self) -> Option<&UrltestConfig> {
-        match &self.settings {
-            OutboundSettings::Urltest(v) => Some(v),
-            _ => None,
-        }
-    }
-
     pub(crate) fn group_default(&self) -> Option<&str> {
         self.selector().and_then(|v| v.default.as_deref())
     }

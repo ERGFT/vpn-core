@@ -862,7 +862,9 @@ mod tests {
         .unwrap();
         let g = c.outbounds.iter().find(|o| o.tag == "auto").unwrap();
         assert_eq!(g.kind(), OutboundKind::Urltest);
-        let urltest = g.as_urltest().unwrap();
+        let OutboundSettings::Urltest(urltest) = &g.settings else {
+            panic!("Xray balancer must normalize to urltest");
+        };
         assert_eq!(urltest.outbounds, ["de", "fi"]);
         assert_eq!(urltest.url.as_deref(), Some("https://cp.example/204"));
         assert_eq!(urltest.interval, Some(60));
