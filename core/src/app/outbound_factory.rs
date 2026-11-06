@@ -139,7 +139,7 @@ mod tests {
         let config = config::Config::parse(
             r#"{
               "outbounds": [
-                {"type":"socks","tag":"socks","server":"127.0.0.1","server_port":1080},
+                {"type":"socks","tag":"socks","server":"127.0.0.1","server_port":1080,"network":"tcp"},
                 {"type":"http","tag":"http","server":"proxy.example","server_port":8080}
               ]
             }"#,
