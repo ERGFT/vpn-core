@@ -120,7 +120,7 @@ SDK позволяет встроить `vpn-core` как сетевое ядр�
 | Экспериментально | `fragment`, `noises` и интеграция с правилами приложений |
 | Не поддерживается | Транспорт KCP; ICMP/ping через TUN |
 Импорт конфигурации Xray-core или sing-box не означает поддержку каждого параметра этих форматов.
-Hysteria 2 TCP/UDP runtime подключён к outbound factory, sing-box-конфигурации и URI-подпискам. Реальная совместимость с официальным сервером, production readiness, смена сети и восстановление соединения пока не подтверждены; см. [план Hysteria 2](docs/HYSTERIA2_IMPLEMENTATION_PLAN.md).
+Hysteria 2 TCP/UDP runtime подключён к outbound factory, sing-box-конфигурации и URI-подпискам. Локальный Windows-прогон TCP/UDP echo с официальным сервером v2.13.0 прошёл на head PR #201 `fdc24a8` с пользовательским CA. Это ограниченный loopback smoke test: общая production readiness, смена сети и восстановление соединения пока не подтверждены; см. [план Hysteria 2](docs/HYSTERIA2_IMPLEMENTATION_PLAN.md).
 
 Полный перечень возможностей, их зрелость и конкретные проверки приведены в [матрице возможностей](docs/FEATURES.md). Сценарии и результаты тестирования описаны в [руководстве по тестированию](docs/TESTING.md).
 

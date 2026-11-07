@@ -759,10 +759,16 @@ mod tests {
     #[test]
     fn singbox_hysteria2_outbound_parses_with_redacted_secret() {
         let config = Config::parse(
-            r#"{"outbounds":[{"type":"hysteria2","tag":"hy2","server":"example.com","server_port":443,"password":"secret","tls":{}}]}"#,
+            r#"{"outbounds":[{"type":"hysteria2","tag":"hy2","server":"example.com","server_port":443,"password":"secret","tls":{},"ca_file":"certs/hy2-root.pem"}]}"#,
         )
         .unwrap();
         assert_eq!(config.outbounds[0].kind(), OutboundKind::Hysteria2);
+        assert_eq!(
+            config.outbounds[0]
+                .hysteria2_ca_file()
+                .map(std::path::PathBuf::as_path),
+            Some(std::path::Path::new("certs/hy2-root.pem"))
+        );
         let debug = format!("{:?}", config.outbounds[0]);
         assert!(!debug.contains("secret"), "{debug}");
     }

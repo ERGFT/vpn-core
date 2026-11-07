@@ -70,6 +70,10 @@ pub(crate) struct Hysteria2Connection {
     udp_driver: JoinHandle<()>,
     next_udp_session_id: AtomicU64,
     driver: JoinHandle<()>,
+    // Keep the H3 request sender alive for the lifetime of the authenticated
+    // QUIC connection. Dropping it closes the H3 connection, which also closes
+    // the QUIC connection used by Hysteria TCP/UDP relays.
+    _h3_sender: h3::client::SendRequest<h3_quinn::OpenStreams, bytes::Bytes>,
     hop_task: Option<JoinHandle<()>>,
 }
 
@@ -148,12 +152,15 @@ fn allocate_udp_session_id(next: &AtomicU64) -> Result<u32> {
 
 /// Connect securely to a Hysteria 2 server and authenticate it. Port hopping
 /// starts after authentication and uses the protocol's default 30-second interval.
-pub(crate) async fn connect(config: &Hysteria2Config) -> Result<Hysteria2Connection> {
+pub(crate) async fn connect(
+    config: &Hysteria2Config,
+    roots: Option<rustls::RootCertStore>,
+) -> Result<Hysteria2Connection> {
     validate_supported_options(config)?;
     let port = quic::random_hysteria2_port(&config.ports)?;
     let addrs = tcp_tls::resolve_server(&config.server, port).await?;
     let tls_name = config.sni.as_deref().unwrap_or(&config.server);
-    let client_config = quic::hysteria2_client_config(None, vec![b"h3".to_vec()])?;
+    let client_config = quic::hysteria2_client_config(roots, vec![b"h3".to_vec()])?;
     let mut last_error = None;
 
     for addr in addrs {
@@ -235,6 +242,7 @@ pub(crate) async fn connect(config: &Hysteria2Config) -> Result<Hysteria2Connect
             udp_driver,
             next_udp_session_id: AtomicU64::new(0),
             driver,
+            _h3_sender: sender,
             hop_task,
         });
     }

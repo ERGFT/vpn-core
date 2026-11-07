@@ -86,10 +86,11 @@ fn build_hysteria2(config: &config::OutboundConfig) -> Result<hysteria2_out::Hys
         .read()?;
     let hysteria = crate::hysteria2::Hysteria2Config::parse(&link)?;
     crate::hysteria2_transport::validate_supported_options(&hysteria)?;
-    Ok(hysteria2_out::Hysteria2Outbound::new(
-        config.tag.clone(),
-        hysteria,
-    ))
+    let roots = config
+        .hysteria2_ca_file()
+        .map(|path| config::load_ca(path))
+        .transpose()?;
+    Ok(hysteria2_out::Hysteria2Outbound::new(config.tag.clone(), hysteria).with_roots(roots))
 }
 
 #[allow(
@@ -199,5 +200,52 @@ mod tests {
             outbound.capabilities(),
             outbound::OutboundCapabilities::TCP_UDP_TERMINAL
         );
+    }
+
+    #[test]
+    fn factory_rejects_unreadable_hysteria2_ca_file() {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let ca_path =
+            std::env::temp_dir().join(format!("vpn-core-hysteria2-missing-ca-{nonce}.pem"));
+        let config = config::Config::parse(&format!(
+            r#"{{"outbounds":[{{"type":"hysteria2","tag":"hy2","server":"example.com","server_port":443,"password":"secret","tls":{{}},"ca_file":{}}}]}}"#,
+            serde_json::to_string(&ca_path).unwrap()
+        ))
+        .unwrap();
+
+        let error = build_proxy(&config.outbounds[0], &HashMap::new())
+            .err()
+            .expect("invalid CA path must fail outbound construction");
+        assert!(
+            error.to_string().contains("hysteria2-missing-ca"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn factory_loads_custom_hysteria2_ca_file() {
+        let key_pair = rcgen::KeyPair::generate_for(&rcgen::PKCS_ECDSA_P256_SHA256).unwrap();
+        let cert = rcgen::CertificateParams::new(vec!["test-ca.local".into()])
+            .unwrap()
+            .self_signed(&key_pair)
+            .unwrap();
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let ca_path = std::env::temp_dir().join(format!("vpn-core-hysteria2-ca-{nonce}.pem"));
+        std::fs::write(&ca_path, cert.pem()).unwrap();
+        let config = config::Config::parse(&format!(
+            r#"{{"outbounds":[{{"type":"hysteria2","tag":"hy2","server":"example.com","server_port":443,"password":"secret","tls":{{}},"ca_file":{}}}]}}"#,
+            serde_json::to_string(&ca_path).unwrap()
+        ))
+        .unwrap();
+
+        let outbound = build_proxy(&config.outbounds[0], &HashMap::new()).unwrap();
+        assert_eq!(outbound.clash_type(), "Hysteria2");
+        std::fs::remove_file(ca_path).unwrap();
     }
 }

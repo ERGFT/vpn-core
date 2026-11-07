@@ -686,6 +686,18 @@ mod tests {
         let invalid = parse_typed(b"hy2://secret@example.com:bad#node").unwrap();
         assert!(invalid.servers.is_empty());
         assert_eq!(invalid.invalid, 1);
+
+        let custom_ca = parse_typed(
+            br#"{"outbounds":[{"type":"hysteria2","tag":"hy2","server":"example.com","server_port":443,"password":"secret","tls":{},"ca_file":"root.pem"}]}"#,
+        )
+        .unwrap();
+        assert!(custom_ca.servers.is_empty());
+        assert_eq!(
+            custom_ca
+                .skipped
+                .get("hysteria2 (unsupported sing-box options)"),
+            Some(&1)
+        );
     }
 
     #[test]

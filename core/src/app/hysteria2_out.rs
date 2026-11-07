@@ -16,6 +16,7 @@ use crate::transport::AsyncStream;
 pub struct Hysteria2Outbound {
     tag: String,
     config: Hysteria2Config,
+    roots: Option<rustls::RootCertStore>,
     connection: Mutex<Option<Arc<Hysteria2Connection>>>,
 }
 
@@ -24,8 +25,14 @@ impl Hysteria2Outbound {
         Self {
             tag: tag.into(),
             config,
+            roots: None,
             connection: Mutex::new(None),
         }
+    }
+
+    pub(crate) fn with_roots(mut self, roots: Option<rustls::RootCertStore>) -> Self {
+        self.roots = roots;
+        self
     }
 
     async fn connection(&self) -> Result<Arc<Hysteria2Connection>> {
@@ -37,7 +44,8 @@ impl Hysteria2Outbound {
             return Ok(connection.clone());
         }
 
-        let connection = Arc::new(hysteria2_transport::connect(&self.config).await?);
+        let connection =
+            Arc::new(hysteria2_transport::connect(&self.config, self.roots.clone()).await?);
         *current = Some(connection.clone());
         Ok(connection)
     }

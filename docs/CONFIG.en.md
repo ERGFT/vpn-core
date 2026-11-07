@@ -108,6 +108,11 @@ themselves (sing-box and Xray will not accept them):
   a Trojan password is also sent in plaintext. This field does not disable
   TLS certificate verification; keys for that purpose are unsupported;
   `mux` — Mux.Cool (in sing-box: `"mux": 8`); `fragment`;
+- on a `hysteria2` outbound: `ca_file` — a PEM file containing trusted TLS
+  root certificates. Certificate verification remains enabled; the supplied
+  CA set replaces the built-in roots. This key works with `link`/`link_file`
+  and with sing-box server fields. A local path cannot be represented in a
+  subscription, so such records are skipped as unsupported;
 - on `direct` (sing-box): `fragment`, `noises` — as on `freedom` in Xray;
 - the `fallback` outbound (first working) and `subscriptions` on groups;
 - at the root: `subscriptions` — panel subscriptions;

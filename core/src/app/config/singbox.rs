@@ -309,10 +309,16 @@ fn outbound(o: Obj<'_>) -> Result<OutboundConfig> {
         OutboundKind::Hysteria2 => {
             out.link = o.str("link")?;
             out.link_file = o.str("link_file")?.map(PathBuf::from);
+            out.ca_file = o.str("ca_file")?.map(PathBuf::from);
+            o.ignore(&["ca_file"]);
             if out.link.is_some() || out.link_file.is_some() {
                 o.ignore(&["link", "link_file"]);
             } else {
-                let uri = crate::app::subscription::formats::singbox_hysteria2_uri(&o.to_value())?
+                let mut value = o.to_value();
+                if let Some(object) = value.as_object_mut() {
+                    object.remove("ca_file");
+                }
+                let uri = crate::app::subscription::formats::singbox_hysteria2_uri(&value)?
                     .ok_or_else(|| {
                         o.err(
                             "type",
