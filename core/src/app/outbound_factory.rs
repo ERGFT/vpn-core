@@ -237,7 +237,7 @@ mod tests {
 
     #[test]
     fn shadowsocks_rejects_legacy_ciphers() {
-        for method in ["aes-256-cfb"] {
+        for method in ["aes-256-cfb", "rc4-md5"] {
             let text = format!(
                 r#"{{"outbounds":[{{"type":"shadowsocks","tag":"ss","server":"ss.example","server_port":8388,"method":"{method}","password":"secret"}}]}}"#
             );

@@ -418,6 +418,42 @@ impl ReplayWindow {
     }
 }
 
+fn from_shadowsocks_address(address: ShadowsocksAddress) -> Result<(Address, u16)> {
+    match address {
+        ShadowsocksAddress::SocketAddress(SocketAddr::V4(sa)) => {
+            Ok((Address::Ipv4(*sa.ip()), sa.port()))
+        }
+        ShadowsocksAddress::SocketAddress(SocketAddr::V6(sa)) => {
+            Ok((Address::Ipv6(*sa.ip()), sa.port()))
+        }
+        ShadowsocksAddress::DomainNameAddress(host, port) => Ok((Address::Domain(host), port)),
+    }
+}
+
+impl UdpSession for ShadowsocksUdp {
+    fn send(&self, dst: Address, port: u16, data: Vec<u8>) -> BoxFuture<'_, Result<()>> {
+        Box::pin(async move {
+            if data.len() > MAX_UDP_PAYLOAD {
+                tracing::debug!(
+                    length = data.len(),
+                    "shadowsocks UDP: oversized datagram dropped"
+                );
+                return Ok(());
+            }
+            match self.tx.try_send((dst, port, data)) {
+                Ok(()) | Err(mpsc::error::TrySendError::Full(_)) => Ok(()),
+                Err(mpsc::error::TrySendError::Closed(_)) => {
+                    Err(Error::Protocol("shadowsocks UDP session is closed".into()))
+                }
+            }
+        })
+    }
+
+    fn recv(&self) -> BoxFuture<'_, Result<Option<Packet>>> {
+        Box::pin(async move { Ok(self.rx.lock().await.recv().await) })
+    }
+}
+
 #[cfg(test)]
 mod replay_tests {
     use super::{ReplayProtection, ReplayWindow, SIP022_REPLAY_WINDOW, SIP022_SERVER_SESSION_TTL};
@@ -469,41 +505,5 @@ mod replay_tests {
             &control(41, 100, 2),
             start + SIP022_SERVER_SESSION_TTL + Duration::from_secs(2)
         ));
-    }
-}
-
-fn from_shadowsocks_address(address: ShadowsocksAddress) -> Result<(Address, u16)> {
-    match address {
-        ShadowsocksAddress::SocketAddress(SocketAddr::V4(sa)) => {
-            Ok((Address::Ipv4(*sa.ip()), sa.port()))
-        }
-        ShadowsocksAddress::SocketAddress(SocketAddr::V6(sa)) => {
-            Ok((Address::Ipv6(*sa.ip()), sa.port()))
-        }
-        ShadowsocksAddress::DomainNameAddress(host, port) => Ok((Address::Domain(host), port)),
-    }
-}
-
-impl UdpSession for ShadowsocksUdp {
-    fn send(&self, dst: Address, port: u16, data: Vec<u8>) -> BoxFuture<'_, Result<()>> {
-        Box::pin(async move {
-            if data.len() > MAX_UDP_PAYLOAD {
-                tracing::debug!(
-                    length = data.len(),
-                    "shadowsocks UDP: oversized datagram dropped"
-                );
-                return Ok(());
-            }
-            match self.tx.try_send((dst, port, data)) {
-                Ok(()) | Err(mpsc::error::TrySendError::Full(_)) => Ok(()),
-                Err(mpsc::error::TrySendError::Closed(_)) => {
-                    Err(Error::Protocol("shadowsocks UDP session is closed".into()))
-                }
-            }
-        })
-    }
-
-    fn recv(&self) -> BoxFuture<'_, Result<Option<Packet>>> {
-        Box::pin(async move { Ok(self.rx.lock().await.recv().await) })
     }
 }
