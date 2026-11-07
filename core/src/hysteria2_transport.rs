@@ -70,6 +70,10 @@ pub(crate) struct Hysteria2Connection {
     udp_driver: JoinHandle<()>,
     next_udp_session_id: AtomicU64,
     driver: JoinHandle<()>,
+    // Keep the H3 request sender alive for the lifetime of the authenticated
+    // QUIC connection. Dropping it closes the H3 connection, which also closes
+    // the QUIC connection used by Hysteria TCP/UDP relays.
+    _h3_sender: h3::client::SendRequest<h3_quinn::OpenStreams, bytes::Bytes>,
     hop_task: Option<JoinHandle<()>>,
 }
 
@@ -238,6 +242,7 @@ pub(crate) async fn connect(
             udp_driver,
             next_udp_session_id: AtomicU64::new(0),
             driver,
+            _h3_sender: sender,
             hop_task,
         });
     }
