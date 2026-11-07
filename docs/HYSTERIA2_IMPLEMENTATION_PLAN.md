@@ -1,6 +1,6 @@
 # План интеграции Hysteria 2
 
-**Статус:** этапы 1–2 завершены (PR #187 и #188); этап 3 реализован в PR #189; этап 4 (TCP relay) реализован в PR #190; этап 5 (UDP relay и unit tests) реализован в PR #192. Все 8 CI jobs PR #192 прошли на commit `a93b890`; PR остаётся открытым поверх #190. Эталонная interop и production outbound ещё не выполнены.
+**Статус:** этапы 1–2 завершены (PR #187 и #188); этап 3 реализован в PR #189; этап 4 (TCP relay) реализован в PR #190; этап 5 (UDP relay и unit tests) реализован в PR #192. Все 8 CI jobs PR #192 прошли на commit `f0c8456`; PR остаётся открытым поверх #190. Подэтап 6.1 (Salamander) реализуется в `codex/hysteria2-salamander`, поверх #192; CI и interop этого подэтапа ещё не выполнены. Production outbound и reference interop ещё не готовы.
 **Срез кода:** `main`, commit `e43066b` (PR #188).
 **Область:** только клиентский прокси-выход в существующем ядре.
 
@@ -33,7 +33,7 @@ Hysteria 2 — QUIC-протокол с TCP-потоками и UDP datagrams. �
 3. **QUIC и аутентификация.** Общий owner endpoint/connection, ALPN, TLS validation (без insecure по умолчанию), HTTP/3 auth, статус 233, rate negotiation, timeout и отмена задач. Не менять поведение уже существующих DNS/XHTTP клиентов `quinn`/`h3`.
 4. **TCP relay и закрытие.** Каждый TCP dial открывает отдельный bidirectional QUIC stream на общей аутентифицированной connection. Отправить QUIC-varint `0x401`, длину и строку назначения `host:port`, случайный padding; строго разобрать ограниченные TCPResponse status/message/padding и отдавать поток приложению только после status 0. Проверить параллельные потоки, half-close, сбросы, отмену и таймауты. Не включать outbound в factory до отдельного этапа интеграции.
 5. **UDP relay.** Datagram codec, per-association IDs, packet ID wrap handling, фрагментация/сборка с пределами памяти, очереди и idle cleanup. Никакого неограниченного состояния на данных сервера.
-6. **Опции транспорта.** Salamander; алгоритмы congestion/rate, порт-хоппинг с корректной DNS/IPv4/IPv6 и сменой сети. Проверить доступность QUIC congestion-controller интерфейсов `quinn`; BBR/Brutal нельзя заявлять, пока контроллер действительно не подключён и не протестирован. Gecko — отдельная оценка: официально experimental, включать только отдельным этапом с лимитами и совместимостью.
+6. **Опции транспорта — отдельными подэтапами.** 6.1 Salamander на сокете QUIC с учётом 8-byte overhead в UDP datagram limit. 6.2 rate negotiation и congestion controller: проверить API `quinn`; BBR/Brutal нельзя заявлять, пока выбранный алгоритм действительно не подключён и не протестирован. 6.3 port hopping с корректными DNS/IPv4/IPv6 и сменой сети. Gecko требует отдельной оценки: он официально experimental и должен разрабатываться отдельно с лимитами и interop.
 7. **Интеграция и совместимость.** Группы, router, учёт, обновление конфигурации, subscription formats и C ABI; синхронное обновление русской и английской документации и feature matrix.
 
 Каждый PR должен оставаться небольшим, иметь адресные тесты и обновлять обе версии документов. Не объединять отдельные этапы в одно изменение «готового протокола» без полного набора проверок.
@@ -59,6 +59,8 @@ PR #187 добавил типизированную модель и строги
 Этап 4 реализован в PR #190 (`codex/hysteria2-tcp-relay`), stacked on #189: TCPRequest с QUIC-varint ID `0x401`, ограниченный TCPResponse, таймауты и bidirectional stream на назначение. В последней попытке CI все 8 jobs прошли; первый coverage запуск упал на интеграционном тесте `app_groups`, его повтор прошёл. Код пока не подключён к `Outbound`/production factory.
 
 Этап 5 реализован в PR #192 (`codex/hysteria2-udp-relay`), stacked on #190. Добавлены UDPMessage, QUIC unreliable datagrams, возрастающие Session ID на QUIC connection, wrapping Packet ID, фрагментация по `max_datagram_size`, сборка переставленных фрагментов и пределы состояния: до 128 незавершённых пакетов, до 256 KiB буфера сборки и TTL 5 секунд. UDP association имеет очередь до 256 ответов и idle timeout 120 секунд; payload ограничен 4096 байтами. Все 8 CI jobs прошли на `a93b890`, включая workspace tests, coverage и платформенные проверки. Эталонная server/client interop ещё не выполнена; PR остаётся открытым. TCP и UDP не доступны через production outbound.
+
+Подэтап 6.1 реализуется в `codex/hysteria2-salamander`, stacked on #192: отдельный QUIC UDP socket добавляет к каждому пакету случайную 8-byte соль и XOR-маску BLAKE2b-256(`key || salt`), а UDPMessage framing уменьшает доступный datagram budget на 8 байт. Реализация использует Tokio UDP без GSO/ECN. Это не аутентифицированное шифрование: неверный ключ приводит к пакетам, которые QUIC отбросит. До CI и interop реализация остаётся непроверенной; factory по-прежнему не подключена.
 
 Внешний Android-телефон не требуется для разработки parser/codec и локального interop. Он станет полезен для финального device-level прогона Android VPN/TUN, Wi-Fi↔cellular handover и восстановления после sleep; одна Android cross-build этого поведения не доказывает.
 
