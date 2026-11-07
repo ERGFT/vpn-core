@@ -11,6 +11,8 @@
 //!                   ML-DSA-65), хук в ClientHello патченного rustls
 //!   `fingerprint` — ClientHello как у Chrome 133, разбор, JA3/JA4
 //!   `trojan`      — протокол Trojan (поверх тех же транспортов)
+//!   `hysteria2`   — типизированный разбор URI Hysteria 2 (сам транспорт
+//!                   пока не подключён)
 //!   `socks5`      — локальный SOCKS5: CONNECT, UDP ASSOCIATE, логин/пароль
 //!   `relay`       — двусторонний релей, один буфер на направление
 //!   `app`         — клиент целиком: входы (SOCKS5/HTTP/DNS/TUN) →
@@ -35,6 +37,7 @@ pub mod fingerprint;
 pub mod fsutil;
 pub mod hostname;
 pub mod http1;
+pub mod hysteria2;
 pub mod net_protect;
 pub mod reality;
 pub mod redact;

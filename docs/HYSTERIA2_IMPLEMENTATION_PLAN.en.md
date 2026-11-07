@@ -1,7 +1,7 @@
 # Hysteria 2 Integration Plan
 
-**Status:** preparation for implementation; `vpn-core` does not support Hysteria 2 yet.
-**Code snapshot:** `main`, commit `53ec432` (PR #185).
+**Status:** Stage 1 has started: URI model and parsing; a working Hysteria 2 outbound is not available yet.
+**Code snapshot:** `main`, commit `b7fb39b` (PR #186).
 **Scope:** client proxy outbound in the existing core only.
 
 ## Architectural decision
@@ -28,12 +28,13 @@ Out of scope for `vpn-core`: Hysteria's local SOCKS/HTTP listeners, server-side 
 
 ## Small PR sequence
 
-1. **Model and input formats.** Typed `Hysteria2Config`, secret redaction, strict validation; sing-box outbound and `hysteria2://` link/subscription parser. Do not add the type to the production factory before the transport is ready; otherwise return a clear error that does not imply a working protocol.
-2. **QUIC and authentication.** Shared endpoint/connection owner, ALPN, TLS validation (insecure disabled by default), HTTP/3 auth, status 233, rate negotiation, timeouts, and task cancellation. Do not change existing DNS/XHTTP `quinn`/`h3` behavior.
-3. **TCP relay and shutdown.** TCPRequest/Response codec, stream forwarding, concurrent streams, cancellation on either side closing and when `Running` stops.
-4. **UDP relay.** Datagram codec, per-association IDs, packet-ID wrap handling, bounded-memory fragmentation/reassembly, queues, and idle cleanup. Never retain unbounded state based on server traffic.
-5. **Transport options.** Salamander; congestion/rate algorithms; port hopping with correct DNS/IPv4/IPv6 and network-change handling. Verify the available `quinn` congestion-controller APIs; do not claim BBR/Brutal until a controller is actually wired and tested. Gecko needs a separate assessment: it is officially experimental and should only be included in its own bounded, interoperable stage.
-6. **Integration and compatibility.** Groups, router, accounting, config reload, subscription formats, and C ABI; update Russian and English docs and the feature matrix together.
+1. **Model and URI parsing.** Typed `Hysteria2Config`, secret redaction, strict validation of `hysteria2://`/`hy2://`, SNI/TLS, Salamander/Gecko, and multi-port addresses. This layer does not create a working connection and must not be presented as outbound support.
+2. **Input formats.** Explicit conversion for applicable sing-box outbounds and URI subscriptions. If runtime support is unavailable, return a specific error or skip with an accurate count; do not add the type to the production factory before the transport is ready.
+3. **QUIC and authentication.** Shared endpoint/connection owner, ALPN, TLS validation (insecure disabled by default), HTTP/3 auth, status 233, rate negotiation, timeouts, and task cancellation. Do not change existing DNS/XHTTP `quinn`/`h3` behavior.
+4. **TCP relay and shutdown.** TCPRequest/Response codec, stream forwarding, concurrent streams, cancellation on either side closing and when `Running` stops.
+5. **UDP relay.** Datagram codec, per-association IDs, packet-ID wrap handling, bounded-memory fragmentation/reassembly, queues, and idle cleanup. Never retain unbounded state based on server traffic.
+6. **Transport options.** Salamander; congestion/rate algorithms; port hopping with correct DNS/IPv4/IPv6 and network-change handling. Verify the available `quinn` congestion-controller APIs; do not claim BBR/Brutal until a controller is actually wired and tested. Gecko needs a separate assessment: it is officially experimental and should only be included in its own bounded, interoperable stage.
+7. **Integration and compatibility.** Groups, router, accounting, config reload, subscription formats, and C ABI; update Russian and English docs and the feature matrix together.
 
 Each PR should remain small, carry focused tests, and update both languages. Do not combine separate steps into a claim of a completed protocol without the full verification set.
 
@@ -53,6 +54,7 @@ An external Android phone is not needed for parser/codec development or local in
 
 ## Sources
 
+- [Hysteria 2 URI scheme](https://v2.hysteria.network/docs/developers/URI-Scheme/)
 - [Hysteria 2 protocol specification](https://v2.hysteria.network/docs/developers/Protocol/)
 - [Hysteria 2 full client configuration](https://v2.hysteria.network/docs/advanced/Full-Client-Config/)
 - [Hysteria 2 changelog](https://v2.hysteria.network/docs/Changelog/)

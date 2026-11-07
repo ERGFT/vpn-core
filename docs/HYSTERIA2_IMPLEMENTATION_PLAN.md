@@ -1,7 +1,7 @@
 # План интеграции Hysteria 2
 
-**Статус:** подготовка к реализации; поддержка в `vpn-core` отсутствует.
-**Срез кода:** `main`, commit `53ec432` (PR #185).
+**Статус:** начат этап 1 — модель и разбор URI; рабочий Hysteria 2 outbound пока отсутствует.
+**Срез кода:** `main`, commit `b7fb39b` (PR #186).
 **Область:** только клиентский прокси-выход в существующем ядре.
 
 ## Решение по архитектуре
@@ -28,12 +28,13 @@ Hysteria 2 — QUIC-протокол с TCP-потоками и UDP datagrams. �
 
 ## План небольших PR
 
-1. **Модель и входные форматы.** Типизированный `Hysteria2Config`, редактирование/маскирование секретов, строгая валидация; sing-box outbound и `hysteria2://` link/subscription parser. Пока не включать тип в производственный factory до готовности транспорта либо выдавать чёткую ошибку, не обещающую рабочий протокол.
-2. **QUIC и аутентификация.** Общий owner endpoint/connection, ALPN, TLS validation (без insecure по умолчанию), HTTP/3 auth, статус 233, rate negotiation, timeout и отмена задач. Не менять поведение уже существующих DNS/XHTTP клиентов `quinn`/`h3`.
-3. **TCP relay и закрытие.** TCPRequest/Response codec, передача потока, одновременные потоки, отмена при закрытии стороны и при остановке `Running`.
-4. **UDP relay.** Datagram codec, per-association IDs, packet ID wrap handling, фрагментация/сборка с пределами памяти, очереди и idle cleanup. Никакого неограниченного состояния на данных сервера.
-5. **Опции транспорта.** Salamander; алгоритмы congestion/rate, порт-хоппинг с корректной DNS/IPv4/IPv6 и сменой сети. Проверить доступность QUIC congestion-controller интерфейсов `quinn`; BBR/Brutal нельзя заявлять, пока контроллер действительно не подключён и не протестирован. Gecko — отдельная оценка: официально experimental, включать только отдельным этапом с лимитами и совместимостью.
-6. **Интеграция и совместимость.** Группы, router, учёт, обновление конфигурации, subscription formats и C ABI; синхронное обновление русской и английской документации и feature matrix.
+1. **Модель и разбор URI.** Типизированный `Hysteria2Config`, маскирование секретов, строгая валидация `hysteria2://`/`hy2://`, SNI/TLS, Salamander/Gecko и multi-port. Этот слой не создаёт рабочее соединение и не должен заявляться как поддержка outbound.
+2. **Входные форматы.** Явное преобразование применимых sing-box outbound и URI-подписок. Неподдерживаемый runtime должен выдавать конкретную ошибку или пропускаться с точным счётчиком; не включать тип в производственный factory до готовности транспорта.
+3. **QUIC и аутентификация.** Общий owner endpoint/connection, ALPN, TLS validation (без insecure по умолчанию), HTTP/3 auth, статус 233, rate negotiation, timeout и отмена задач. Не менять поведение уже существующих DNS/XHTTP клиентов `quinn`/`h3`.
+4. **TCP relay и закрытие.** TCPRequest/Response codec, передача потока, одновременные потоки, отмена при закрытии стороны и при остановке `Running`.
+5. **UDP relay.** Datagram codec, per-association IDs, packet ID wrap handling, фрагментация/сборка с пределами памяти, очереди и idle cleanup. Никакого неограниченного состояния на данных сервера.
+6. **Опции транспорта.** Salamander; алгоритмы congestion/rate, порт-хоппинг с корректной DNS/IPv4/IPv6 и сменой сети. Проверить доступность QUIC congestion-controller интерфейсов `quinn`; BBR/Brutal нельзя заявлять, пока контроллер действительно не подключён и не протестирован. Gecko — отдельная оценка: официально experimental, включать только отдельным этапом с лимитами и совместимостью.
+7. **Интеграция и совместимость.** Группы, router, учёт, обновление конфигурации, subscription formats и C ABI; синхронное обновление русской и английской документации и feature matrix.
 
 Каждый PR должен оставаться небольшим, иметь адресные тесты и обновлять обе версии документов. Не объединять отдельные этапы в одно изменение «готового протокола» без полного набора проверок.
 
@@ -53,6 +54,7 @@ Hysteria 2 — QUIC-протокол с TCP-потоками и UDP datagrams. �
 
 ## Источники
 
+- [Hysteria 2 URI scheme](https://v2.hysteria.network/docs/developers/URI-Scheme/)
 - [Hysteria 2 protocol specification](https://v2.hysteria.network/docs/developers/Protocol/)
 - [Hysteria 2 full client configuration](https://v2.hysteria.network/docs/advanced/Full-Client-Config/)
 - [Hysteria 2 changelog](https://v2.hysteria.network/docs/Changelog/)
