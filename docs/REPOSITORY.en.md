@@ -10,7 +10,7 @@ in [README.en.md](README.en.md).
 
 | Path | Purpose |
 |---|---|
-| `core/` | Rust `reality-core` library: inbounds, routing, DNS, TUN, proxy outbounds, VLESS/Trojan, transports, and REALITY |
+| `core/` | Rust `reality-core` library: inbounds, routing, DNS, TUN, VLESS/Trojan/Hysteria 2 proxy outbounds, transports, and REALITY |
 | `bin/client/` | `reality-client`: CLI, core startup, Windows service, and system proxy |
 | `bin/fpcheck/` | utility for capturing and analyzing JA3/JA4 ClientHellos |
 | `ffi/` | `reality-ffi`: C ABI, `reality.h`, examples, and ABI baseline for app integration |

@@ -56,7 +56,7 @@ What each format supports:
 | | sing-box | Xray-core |
 |---|---|---|
 | Inbounds | `socks`, `http`, `mixed`, `tun`; `direct` + a `hijack-dns` rule — DNS server | `socks`, `http`, `mixed`, `tun`; `dokodemo-door` (or `tunnel`, only in the DNS-server role) routed to a `dns` outbound |
-| Outbounds | `vless`, `trojan`, TCP `socks` and `http` (HTTP CONNECT), `direct`, `block`, `dns`, `selector`, `urltest`; `fallback` is a vpn-core extension | `vless`, `trojan`, `freedom` (with `fragment`, `noises`), `blackhole`, `dns`; `balancers` with `leastPing`/`leastLoad` are converted to `urltest` (checks from `observatory`) |
+| Outbounds | `vless`, `trojan`, `hysteria2` (limited URI-representable subset), TCP `socks` and `http` (HTTP CONNECT), `direct`, `block`, `dns`, `selector`, `urltest`; `fallback` is a vpn-core extension | `vless`, `trojan`, `freedom` (with `fragment`, `noises`), `blackhole`, `dns`; `balancers` with `leastPing`/`leastLoad` are converted to `urltest` (checks from `observatory`) |
 | Transport and TLS | `tls` (`reality`, `utls`, `alpn`, `certificate_path`), `transport`: `ws`, `grpc`, `httpupgrade`; core extension `type: xhttp` | `streamSettings`: `raw`/`tcp`, `ws`, `grpc`, `httpupgrade`, `xhttp` (also the legacy alias `splithttp`); `tls`/`reality`; `mux` (Mux.Cool) |
 | Rules | `domain`, `domain_suffix`, `domain_keyword`, `domain_regex`, `geosite`, `geoip`, `ip_cidr`, `ip_is_private`, `port`, `port_range`, `network`, `inbound`, `rule_set`, `user_id`, `invert`, `protocol: dns`; actions `route`, `reject`, `sniff`, `hijack-dns` | `domain` (`geosite:`, `domain:`, `full:`, `regexp:`, `keyword:`, plain substring), `ip` (`geoip:`, addresses), `port`, `network`, `inboundTag`, `outboundTag`/`balancerTag`; `domainStrategy` `AsIs`/`IPIfNonMatch` |
 | DNS | `servers` (with `type`, and the legacy form with `address`), `rules`, `final`, `strategy`, `fakeip` | `servers` (strings and objects with `domains`; `+local` — direct), `queryStrategy`, `fakedns` |
@@ -101,9 +101,9 @@ the file next to the config.
 **Extensions of this core** — keys that are not part of the formats
 themselves (sing-box and Xray will not accept them):
 
-- on `vless`/`trojan` outbounds: `link` or `link_file` — a
-  `vless://`/`trojan://` link instead of fields (the secret can live in a
-  separate file); `allow_insecure` — explicitly allow `security=none` for
+- on `vless`/`trojan`/`hysteria2` outbounds: `link` or `link_file` — a link
+  with the corresponding URI scheme instead of fields (the secret can live in
+  a separate file); `allow_insecure` — explicitly allow `security=none` for
   VLESS or Trojan. The connection to the server is unencrypted in this mode;
   a Trojan password is also sent in plaintext. This field does not disable
   TLS certificate verification; keys for that purpose are unsupported;
@@ -193,11 +193,12 @@ strategy and `observatory` (check URL and interval).
   considered down until the next check. Switching does not drop open
   connections.
 - Subscription: a base64 list of links (3x-ui, Marzban, Remnawave), plain
-  text, sing-box JSON, Clash YAML — only VLESS and Trojan are taken, the rest
-  is counted in the log. HTTPS only, with certificate verification
-  (`ca_file` — for a panel's self-signed certificate); `security=none`
-  servers are skipped without `allow_insecure`. Downloads go through the
-  group, and while the list is empty — through `direct` (or `detour`). The
+  text, sing-box JSON, Clash YAML — VLESS and Trojan are taken, while Hysteria
+  2 is accepted only from supported URI and sing-box records; other protocols
+  are counted in the log. HTTPS only, with certificate verification
+  (`ca_file` — for a panel's self-signed certificate); VLESS/Trojan
+  `security=none` servers are skipped without `allow_insecure`. Downloads go
+  through the group, or through `direct` (or `detour`) while the list is empty. The
   last list is saved to `<tag>.subscription` next to the config. On Unix, the
   file is created with mode `0600`; on Windows, permissions are inherited from
   the directory. The service directory under `%ProgramData%` is not writable by

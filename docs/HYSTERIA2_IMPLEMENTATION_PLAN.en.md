@@ -1,7 +1,7 @@
 # Hysteria 2 Integration Plan
 
-**Status:** Stages 1–2 are complete (PRs #187 and #188); Stages 3–5 and substages 6.1–6.3 are merged (PRs #189, #190, #192, #193, #196, and #197), with CI #759 and #761 passing 8/8 jobs. The unmerged Stage 7 branch wires Hysteria 2 into the outbound factory, sing-box config, and URI subscriptions; its CI and reference interoperability have not run. Production readiness, network changes, and recovery remain unverified.
-**Code snapshot:** base `main` after PR #198 (`c295ede`); Stage 7 work is on `codex/hysteria2-outbound-factory`.
+**Status:** Stages 1–2 are complete (PRs #187 and #188); Stages 3–5 and substages 6.1–6.3 are merged (PRs #189, #190, #192, #193, #196, and #197/#198). Stage 7 outbound integration was merged in PR #199; 16 checks passed and 1 was skipped. Interoperability with the official server, network handover, and recovery remain unverified, so Hysteria 2 remains experimental.
+**Code snapshot:** `main` after PR #199 (`8ec829c`).
 **Scope:** client proxy outbound in the existing core only.
 
 ## Architectural decision
@@ -66,7 +66,7 @@ Stage 6.2 was implemented and merged in PR #196: Hysteria uses a dedicated Quinn
 
 Stage 6.3 was implemented and merged in PR #197: the initial server port is selected randomly from the configured ranges, and periodic hopping starts 30 seconds after successful authentication. Each hop creates a fresh protected UDP socket; the previous socket remains available for inbound packets for 2 seconds. CI #761 passed all 8 jobs for head `37620742be9e1d9f9f83c5bdb22f810c6ebeeb0b`. The focused local test could not start because MSVC `link.exe` is missing; CI ran the checks on supported runners. Reference-server interoperability, network-interface changes, and connection recovery have not been verified.
 
-The current Stage 7 branch adds `Hysteria2Outbound` with a lazy shared QUIC connection for TCP/UDP and reconnect after a closed connection. The factory accepts sing-box outbounds, `link`/`link_file`, and URI subscriptions now build outbounds that can join groups. The branch is unmerged and has not passed CI. Remaining checks include capabilities/detour behavior, reload and shutdown, TCP/UDP against the official server, real subscription/group flows, network handover/recovery, and unchanged C ABI. Hysteria 2 remains experimental until these checks pass.
+Stage 7 adds `Hysteria2Outbound` with a lazy shared QUIC connection for TCP/UDP and reconnect after a closed connection. The factory accepts sing-box outbounds and `link`/`link_file`; URI subscriptions build outbounds that can join groups. The integration was merged in PR #199; CI completed with 16 successful checks and 1 skipped check. CI covers builds and automated tests, but does not establish interoperability with the official server. Practical TCP/UDP interoperability, network handover, and recovery still need validation. Hysteria 2 remains experimental until those checks pass.
 
 An external Android phone is not needed for parser/codec development or local interop. It will help with the final device-level Android VPN/TUN run, Wi-Fi↔cellular handover, and wake-from-sleep recovery; an Android cross-build alone does not prove that behavior.
 

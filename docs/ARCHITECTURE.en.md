@@ -820,10 +820,11 @@ current member.
 - **Formats**:
   - base64 link lists (3x-ui, Marzban, Remnawave), plain text, sing-box
     JSON, Clash YAML;
-  - VLESS and Trojan are taken; everything else is counted in the log;
-  - format decoders normalize servers into a shared internal typed
-    VLESS/Trojan model; the public `parse()` keeps its previous result shape
-    for compatibility;
+  - VLESS and Trojan are accepted; Hysteria 2 is accepted from supported URI
+    and sing-box records; other protocols are counted in the log;
+  - records retain a canonical link and protocol kind; the factory builds the
+    corresponding outbound. The public `parse()` keeps its previous result
+    shape for compatibility;
   - `include`/`exclude` are regular expressions on the server name;
   - `security=none` servers are skipped without `allow_insecure`.
 - **Applying**:
@@ -1017,10 +1018,10 @@ implementation:
     UDP session, so QUIC can run over VLESS.
 - **Hysteria 2** (`hysteria2_transport.rs`, `hysteria2_udp.rs`, `hysteria2_obfs.rs`):
   - separate QUIC/authentication, TCP stream, and UDP datagram layers; PRs
-    #189, #190, #192, #193, #196, and #197 are merged into `main`; the current
-    Stage 7 branch wires a shared `Hysteria2Outbound`, factory, sing-box config,
-    and subscriptions; that branch is unmerged and its CI and reference
-    interoperability have not run;
+    #189, #190, #192, #193, #196, #197, and #198 are merged into `main`; PR
+    #199 wired a shared `Hysteria2Outbound`, factory, sing-box config, and
+    subscriptions. PR #199 CI passed 16 checks and skipped 1; reference
+    interoperability and network recovery remain unverified;
   - Stage 6.1 adds a Salamander socket wrapper: each QUIC UDP packet receives
     an 8-byte salt and BLAKE2b-256 mask; PSKs shorter than 4 UTF-8 bytes are
     rejected to match the reference implementation, and short or salt-only

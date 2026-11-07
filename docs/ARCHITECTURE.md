@@ -774,9 +774,10 @@ SOCKS5 задаётся отдельным sing-box выходом `type: "socks
 - **Форматы**:
   - base64-список ссылок (3x-ui, Marzban, Remnawave), обычный текст, JSON
     sing-box, YAML Clash;
-  - берутся VLESS и Trojan, остальное в журнале счётчиком;
-  - декодеры форматов сводят серверы к общей внутренней типизированной
-    модели VLESS/Trojan; публичный `parse()` сохраняет прежний формат
+  - берутся VLESS и Trojan, а Hysteria 2 принимается для поддерживаемых URI
+    и sing-box записей; остальные протоколы учитываются в журнале счётчиком;
+  - записи хранят каноническую ссылку и тип протокола; фабрика строит для них
+    соответствующий outbound. Публичный `parse()` сохраняет прежний формат
     результата для совместимости;
   - `include`/`exclude` — регулярные выражения по имени сервера;
   - серверы с `security=none` пропускаются без `allow_insecure`.
@@ -961,9 +962,10 @@ flow. `transport::open(&TransportConfig)` открывает только тра
     есть QUIC может идти через VLESS.
 - **Hysteria 2** (`hysteria2_transport.rs`, `hysteria2_udp.rs`, `hysteria2_obfs.rs`):
   - отдельные QUIC/auth, TCP stream и UDP datagram слои; PR #189, #190,
-    #192, #193, #196 и #197 слиты в `main`; текущая ветка этапа 7 подключает
-    общий `Hysteria2Outbound`, factory, sing-box config и подписки; ветка не
-    слита, CI и reference interop интеграции ещё не выполнены;
+    #192, #193, #196, #197 и #198 слиты в `main`; PR #199 подключил общий
+    `Hysteria2Outbound`, factory, sing-box config и подписки. CI PR #199 прошёл
+    16 проверок, 1 проверка пропущена; reference interop и сетевое восстановление
+    пока не подтверждены;
   - Stage 6.1 добавляет Salamander socket wrapper: каждый QUIC UDP packet
     получает 8-byte salt и BLAKE2b-256 mask; PSK короче 4 UTF-8 байт
     отклоняется для совместимости с официальной реализацией, короткие и

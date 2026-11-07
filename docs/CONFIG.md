@@ -56,7 +56,7 @@ reality-client --config config.json
 | | sing-box | Xray-core |
 |---|---|---|
 | Входы | `socks`, `http`, `mixed`, `tun`; `direct` + правило `hijack-dns` — DNS-сервер | `socks`, `http`, `mixed`, `tun`; `dokodemo-door` (или `tunnel`, только в роли DNS-сервера), отданный маршрутизацией выходу `dns` |
-| Выходы | `vless`, `trojan`, TCP `socks` и `http` (HTTP CONNECT), `direct`, `block`, `dns`, `selector`, `urltest`; `fallback` — расширение vpn-core | `vless`, `trojan`, `freedom` (с `fragment`, `noises`), `blackhole`, `dns`; `balancers` с `leastPing`/`leastLoad` преобразуются в `urltest` (проверка — из `observatory`) |
+| Выходы | `vless`, `trojan`, `hysteria2` (ограниченное URI-представимое подмножество), TCP `socks` и `http` (HTTP CONNECT), `direct`, `block`, `dns`, `selector`, `urltest`; `fallback` — расширение vpn-core | `vless`, `trojan`, `freedom` (с `fragment`, `noises`), `blackhole`, `dns`; `balancers` с `leastPing`/`leastLoad` преобразуются в `urltest` (проверка — из `observatory`) |
 | Транспорт и TLS | `tls` (`reality`, `utls`, `alpn`, `certificate_path`), `transport`: `ws`, `grpc`, `httpupgrade`; расширение ядра `type: xhttp` | `streamSettings`: `raw`/`tcp`, `ws`, `grpc`, `httpupgrade`, `xhttp` (также старое имя `splithttp`); `tls`/`reality`; `mux` (Mux.Cool) |
 | Правила | `domain`, `domain_suffix`, `domain_keyword`, `domain_regex`, `geosite`, `geoip`, `ip_cidr`, `ip_is_private`, `port`, `port_range`, `network`, `inbound`, `rule_set`, `user_id`, `invert`, `protocol: dns`; действия `route`, `reject`, `sniff`, `hijack-dns` | `domain` (`geosite:`, `domain:`, `full:`, `regexp:`, `keyword:`, просто подстрока), `ip` (`geoip:`, адреса), `port`, `network`, `inboundTag`, `outboundTag`/`balancerTag`; `domainStrategy` `AsIs`/`IPIfNonMatch` |
 | DNS | `servers` (с `type` и старые с `address`), `rules`, `final`, `strategy`, `fakeip` | `servers` (строки и объекты с `domains`; `+local` — напрямую), `queryStrategy`, `fakedns` |
@@ -102,8 +102,8 @@ MetaCubeX/meta-rules-dat) и исходный `.json`, только `type: local
 **Расширения этого ядра** — ключи, которых нет в самих форматах (sing-box
 и Xray их не примут):
 
-- у выходов `vless`/`trojan`: `link` или `link_file` — ссылка
-  `vless://`/`trojan://` вместо полей (секрет можно держать в отдельном
+- у выходов `vless`/`trojan`/`hysteria2`: `link` или `link_file` — ссылка
+  соответствующей схемы вместо полей (секрет можно держать в отдельном
   файле); `allow_insecure` — явно разрешить `security=none` для VLESS или
   Trojan. В этом режиме соединение с сервером не шифруется; пароль Trojan
   также передаётся открытым текстом. Это поле не отключает проверку
@@ -193,11 +193,12 @@ SOCKS5 outbound поддерживает только TCP и не поддерж
   следующий участник (до трёх), неудачник считается упавшим до проверки.
   Переключение не рвёт открытых соединений.
 - Подписка: base64-список ссылок (3x-ui, Marzban, Remnawave), обычный
-  текст, JSON sing-box, YAML Clash — берутся только VLESS и Trojan,
-  остальное в журнале счётчиком. Только https с проверкой сертификата
-  (`ca_file` — для самоподписанного сертификата панели); серверы с
-  `security=none` пропускаются без `allow_insecure`. Загрузка — через
-  группу, а пока список пуст — через `direct` (или через `detour`).
+  текст, JSON sing-box, YAML Clash — берутся VLESS и Trojan, а Hysteria 2 —
+  только из поддерживаемых URI- и sing-box-записей; остальные протоколы
+  учитываются в журнале. Только https с проверкой сертификата (`ca_file` —
+  для самоподписанного сертификата панели); VLESS/Trojan с `security=none`
+  пропускаются без `allow_insecure`. Загрузка — через группу или через
+  `direct` (либо `detour`), пока список пуст.
   Последний список — в `<tag>.subscription` рядом с настройками: на Unix
   файл создаётся с режимом `0600`; на Windows права наследуются от каталога.
   Каталог службы в `%ProgramData%` закрыт для записи обычным пользователям,
