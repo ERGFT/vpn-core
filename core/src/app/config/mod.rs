@@ -764,7 +764,9 @@ mod tests {
         .unwrap();
         assert_eq!(config.outbounds[0].kind(), OutboundKind::Hysteria2);
         assert_eq!(
-            config.outbounds[0].hysteria2_ca_file(),
+            config.outbounds[0]
+                .hysteria2_ca_file()
+                .map(std::path::PathBuf::as_path),
             Some(std::path::Path::new("certs/hy2-root.pem"))
         );
         let debug = format!("{:?}", config.outbounds[0]);
