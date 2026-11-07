@@ -690,7 +690,7 @@ mod tests {
         let debug = format!("{parsed:?}");
         assert!(!debug.contains("uri-secret"), "{debug}");
         assert!(!debug.contains("obfs-secret"), "{debug}");
-        assert!(debug.contains("[REDACTED]"), "{debug}");
+        assert!(debug.contains("***"), "{debug}");
 
         let public = super::parse(
             b"hy2://uri-secret@example.com:443?obfs=salamander&obfs-password=obfs-secret#node",
