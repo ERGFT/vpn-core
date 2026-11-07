@@ -32,10 +32,10 @@ fn salamander_wrap_with_salt(
 
 /// Remove the salt and XOR mask in place. Returns the resulting packet length.
 pub(crate) fn salamander_unwrap(key: &[u8], datagram: &mut [u8]) -> io::Result<usize> {
-    if datagram.len() < SALAMANDER_OVERHEAD {
+    if datagram.len() <= SALAMANDER_OVERHEAD {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
-            "Salamander packet is shorter than its salt",
+            "Salamander packet contains no payload after its salt",
         ));
     }
     let mut salt = [0u8; SALAMANDER_OVERHEAD];
@@ -82,8 +82,10 @@ mod tests {
     }
 
     #[test]
-    fn rejects_datagrams_shorter_than_the_salt() {
-        let mut frame = [0u8; SALAMANDER_OVERHEAD - 1];
-        assert!(salamander_unwrap(b"key", &mut frame).is_err());
+    fn rejects_datagrams_without_a_payload() {
+        for length in [SALAMANDER_OVERHEAD - 1, SALAMANDER_OVERHEAD] {
+            let mut frame = vec![0u8; length];
+            assert!(salamander_unwrap(b"key", &mut frame).is_err());
+        }
     }
 }

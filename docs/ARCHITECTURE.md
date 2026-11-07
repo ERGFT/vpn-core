@@ -964,7 +964,8 @@ flow. `transport::open(&TransportConfig)` открывает только тра
     пока не подключена, а PR #189–#192 остаются открытыми;
   - Stage 6.1 добавляет Salamander socket wrapper: каждый QUIC UDP packet
     получает 8-byte salt и BLAKE2b-256 mask; PSK короче 4 UTF-8 байт
-    отклоняется для совместимости с официальной реализацией. UDP payload
+    отклоняется для совместимости с официальной реализацией, короткие и
+    salt-only кадры отбрасываются. UDP payload
     budget уменьшается на размер соли. Wrapper использует Tokio UDP без
     GSO/ECN; CI прошёл на предыдущем head, проверка границы PSK ожидает CI;
     interop и производительность ещё не измерялись.

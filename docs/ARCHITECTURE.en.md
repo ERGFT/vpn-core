@@ -1020,7 +1020,8 @@ implementation:
     production factory is not wired, and PRs #189–#192 remain open;
   - Stage 6.1 adds a Salamander socket wrapper: each QUIC UDP packet receives
     an 8-byte salt and BLAKE2b-256 mask; PSKs shorter than 4 UTF-8 bytes are
-    rejected to match the reference implementation. The UDP payload budget is
+    rejected to match the reference implementation, and short or salt-only
+    frames are discarded. The UDP payload budget is
     reduced by the salt length. The wrapper uses Tokio UDP without GSO/ECN; CI
     passed on the previous head, and the PSK-boundary check is awaiting CI.
     Reference interoperability and performance have not been measured.
