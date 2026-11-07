@@ -450,6 +450,12 @@ impl TunInbound {
             }
         }
         let outbound = router.route(&mut meta).await?;
+        if outbound.capabilities().udp == Some(false) {
+            return Err(crate::error::Error::Protocol(format!(
+                "выход {} не поддерживает UDP",
+                outbound.tag()
+            )));
+        }
         if self.settings.sniff_override && !matches!(meta.target, Address::Domain(_)) {
             if let Some(d) = &meta.sniffed {
                 meta.target = Address::Domain(d.clone());

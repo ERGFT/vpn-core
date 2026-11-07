@@ -498,6 +498,10 @@ async fn udp_associate(
                         continue;
                     }
                 };
+                if outbound.capabilities().udp == Some(false) {
+                    tracing::debug!(outbound = %outbound.tag(), "SOCKS5 UDP: выход не поддерживает UDP");
+                    continue;
+                }
                 // Адрес был fake-IP (маршрутизатор подставил имя).
                 let reply_as = (meta.target != original).then_some(original);
                 let tag = match &reply_as {

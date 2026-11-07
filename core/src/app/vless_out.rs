@@ -150,6 +150,10 @@ impl Outbound for VlessOutbound {
         "VLESS"
     }
 
+    fn capabilities(&self) -> super::outbound::OutboundCapabilities {
+        super::outbound::OutboundCapabilities::TCP_UDP
+    }
+
     fn server(&self) -> Option<(String, u16)> {
         Some(self.server_addr())
     }

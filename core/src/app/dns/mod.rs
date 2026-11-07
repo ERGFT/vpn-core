@@ -204,6 +204,25 @@ impl Dns {
                     s.tag
                 )));
             }
+            if let Some(detour) = detour.as_ref().filter(|_| needs_detour) {
+                let capabilities = detour.capabilities();
+                let needs_tcp = matches!(
+                    kind,
+                    upstream::Kind::Udp
+                        | upstream::Kind::Tcp
+                        | upstream::Kind::Tls
+                        | upstream::Kind::Https { .. }
+                );
+                let needs_udp = matches!(kind, upstream::Kind::Udp | upstream::Kind::Quic);
+                if (needs_tcp && capabilities.tcp == Some(false))
+                    || (needs_udp && capabilities.udp == Some(false))
+                {
+                    return Err(Error::Config(format!(
+                        "dns-сервер {}: detour «{detour_tag}» не поддерживает нужные TCP/UDP-пути",
+                        s.tag
+                    )));
+                }
+            }
             if needs_detour && detour.as_ref().is_some_and(|d| d.is_dns()) {
                 return Err(Error::Config(format!(
                     "dns-сервер {}: detour не может быть выходом dns (петля)",
@@ -621,6 +640,16 @@ mod bootstrap_tests {
             &|tag| match tag {
                 "direct" => Some(Arc::new(DirectOutbound::new("direct")) as Arc<dyn Outbound>),
                 "blocked" => Some(Arc::new(BlockOutbound::new("blocked")) as Arc<dyn Outbound>),
+                "socks" => Some(Arc::new(
+                    crate::app::socks_out::Socks5Outbound::new(
+                        "socks".into(),
+                        "127.0.0.1".into(),
+                        1080,
+                        None,
+                        None,
+                    )
+                    .unwrap(),
+                ) as Arc<dyn Outbound>),
                 _ => None,
             },
             "blocked",
@@ -641,6 +670,14 @@ mod bootstrap_tests {
         ] {
             assert!(build_bootstrap(address, detour, BOOTSTRAP_DNS).is_err());
         }
+    }
+
+    #[test]
+    fn quic_dns_rejects_a_tcp_only_detour_before_startup() {
+        let err = build_bootstrap("quic://1.1.1.1", "socks", "quic")
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("не поддерживает нужные TCP/UDP-пути"));
     }
 
     #[test]

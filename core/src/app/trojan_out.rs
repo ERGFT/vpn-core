@@ -71,6 +71,10 @@ impl Outbound for TrojanOutbound {
         "Trojan"
     }
 
+    fn capabilities(&self) -> super::outbound::OutboundCapabilities {
+        super::outbound::OutboundCapabilities::TCP_UDP
+    }
+
     fn server(&self) -> Option<(String, u16)> {
         Some((self.cfg.transport.host.clone(), self.cfg.transport.port))
     }

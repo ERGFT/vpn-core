@@ -128,6 +128,10 @@ impl Outbound for HttpConnectOutbound {
         "HTTP"
     }
 
+    fn capabilities(&self) -> super::outbound::OutboundCapabilities {
+        super::outbound::OutboundCapabilities::TCP
+    }
+
     fn server(&self) -> Option<(String, u16)> {
         Some((self.server.clone(), self.port))
     }
@@ -139,6 +143,12 @@ impl Outbound for HttpConnectOutbound {
                     let detour = slot.get().cloned().ok_or_else(|| {
                         Error::Config(format!("выход {}: detour ещё не инициализирован", self.tag))
                     })?;
+                    if detour.capabilities().tcp_detour == Some(false) {
+                        return Err(Error::Config(format!(
+                            "выход {}: detour не поддерживает TCP-цепочку",
+                            self.tag
+                        )));
+                    }
                     detour
                         .connect(&detour_metadata(&self.server, self.port, meta))
                         .await?

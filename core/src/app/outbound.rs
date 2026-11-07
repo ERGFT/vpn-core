@@ -27,6 +27,65 @@ use crate::vless::Address;
 /// Lazy reference used to connect an outbound through another outbound.
 pub(crate) type OutboundSlot = Arc<OnceLock<Arc<dyn Outbound>>>;
 
+/// Data-plane capabilities of a connection-oriented outbound.
+///
+/// This contract describes TCP/UDP forwarding and whether the outbound can
+/// carry the TCP connection used to reach another proxy. Packet-mode VPNs
+/// need a separate interface; they are not represented by these flags.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct OutboundCapabilities {
+    /// `None` means the implementation has not declared this capability.
+    pub tcp: Option<bool>,
+    pub udp: Option<bool>,
+    pub tcp_detour: Option<bool>,
+}
+
+impl OutboundCapabilities {
+    pub const UNKNOWN: Self = Self {
+        tcp: None,
+        udp: None,
+        tcp_detour: None,
+    };
+
+    pub const TCP: Self = Self {
+        tcp: Some(true),
+        udp: Some(false),
+        tcp_detour: Some(true),
+    };
+
+    pub const TCP_UDP: Self = Self {
+        tcp: Some(true),
+        udp: Some(true),
+        tcp_detour: Some(true),
+    };
+
+    pub const TCP_UDP_TERMINAL: Self = Self {
+        tcp: Some(true),
+        udp: Some(true),
+        tcp_detour: Some(false),
+    };
+
+    /// Aggregate a conditional group: supported when at least one member
+    /// supports the mode, unsupported only when every member says no.
+    pub fn any_member(values: impl IntoIterator<Item = Option<bool>>) -> Option<bool> {
+        let mut saw_unknown = false;
+        let mut saw_member = false;
+        for value in values {
+            saw_member = true;
+            match value {
+                Some(true) => return Some(true),
+                Some(false) => {}
+                None => saw_unknown = true,
+            }
+        }
+        if !saw_member || saw_unknown {
+            None
+        } else {
+            Some(false)
+        }
+    }
+}
+
 /// Metadata for the TCP connection an outbound opens to its own proxy server.
 pub(crate) fn detour_metadata(server: &str, port: u16, parent: &Metadata) -> Metadata {
     let target = match server.parse::<IpAddr>() {
@@ -65,6 +124,11 @@ pub trait Outbound: Send + Sync {
     fn tag(&self) -> &str;
     /// Тип выхода, как его называет Clash API: `Direct`, `Reject`, `VLESS`…
     fn clash_type(&self) -> &'static str;
+    /// Actual forwarding modes implemented by this outbound. The default is
+    /// conservative for downstream implementations which do not report them.
+    fn capabilities(&self) -> OutboundCapabilities {
+        OutboundCapabilities::UNKNOWN
+    }
     /// TCP-соединение с `meta.target:meta.port`.
     fn connect<'a>(&'a self, meta: &'a Metadata) -> BoxFuture<'a, Result<Box<dyn AsyncStream>>>;
     /// UDP-сессия для ассоциации, которую открыл `meta.source`.
@@ -202,6 +266,10 @@ impl Outbound for DirectOutbound {
 
     fn clash_type(&self) -> &'static str {
         "Direct"
+    }
+
+    fn capabilities(&self) -> OutboundCapabilities {
+        OutboundCapabilities::TCP_UDP
     }
 
     fn connect<'a>(&'a self, meta: &'a Metadata) -> BoxFuture<'a, Result<Box<dyn AsyncStream>>> {
@@ -448,6 +516,10 @@ impl Outbound for BlockOutbound {
         "Reject"
     }
 
+    fn capabilities(&self) -> OutboundCapabilities {
+        OutboundCapabilities::TCP_UDP_TERMINAL
+    }
+
     fn connect<'a>(&'a self, _meta: &'a Metadata) -> BoxFuture<'a, Result<Box<dyn AsyncStream>>> {
         Box::pin(async move { Err(Error::Blocked) })
     }
@@ -506,6 +578,10 @@ impl Outbound for DnsOutbound {
 
     fn clash_type(&self) -> &'static str {
         "DNS"
+    }
+
+    fn capabilities(&self) -> OutboundCapabilities {
+        OutboundCapabilities::TCP_UDP_TERMINAL
     }
 
     fn is_dns(&self) -> bool {
@@ -598,6 +674,20 @@ impl UdpSession for DnsUdp {
 mod tests {
     use super::*;
     use crate::app::Network;
+
+    #[test]
+    fn group_capability_aggregation_preserves_unknowns() {
+        assert_eq!(
+            OutboundCapabilities::any_member([Some(false), Some(true)]),
+            Some(true)
+        );
+        assert_eq!(
+            OutboundCapabilities::any_member([Some(false), Some(false)]),
+            Some(false)
+        );
+        assert_eq!(OutboundCapabilities::any_member([Some(false), None]), None);
+        assert_eq!(OutboundCapabilities::any_member([]), None);
+    }
 
     fn meta(source: &str, target: Address, port: u16, network: Network) -> Metadata {
         Metadata {

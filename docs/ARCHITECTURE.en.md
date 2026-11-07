@@ -166,9 +166,19 @@ Key types:
   IPv4, IPv6 or domain), port, and the domain found by sniffing.
 - `Outbound` (trait) — an outbound: `connect(meta) → stream` and
   `udp(meta) → UdpSession`. Also `server()` (the server address, so it can
-  be resolved in advance) and `as_group()`.
+  be resolved in advance), `as_group()`, and `capabilities()`.
 - `UdpSession` — `send(address, port, data)` and
   `recv() → (source, data)`.
+
+`OutboundCapabilities` reports TCP, UDP, and whether an outbound can serve as
+a TCP detour. `None` means the implementation has not declared that capability;
+older downstream implementations therefore keep their previous behavior.
+A group reports networks supported by at least one member, without promising
+that its currently selected member supports them. Packet mode is outside the
+`Outbound` contract: WireGuard needs a separate IP/TUN integration point.
+Network changes are currently handled at the application level by
+`Running::network_changed()` and shared DNS caches; outbounds have no
+protocol-specific network-change action today.
 - `AsyncStream` — any `AsyncRead + AsyncWrite + Send + Unpin`, so
   transports and outbounds do not need each other's concrete types.
 - `Router` — outbounds by tag, compiled rules, `final`, DNS.
@@ -738,7 +748,14 @@ Conditions within one rule, as in sing-box:
 | `vless` | a VLESS stream over the transport; with `mux` — Mux.Cool | XUDP or one stream per destination |
 | `trojan` | a Trojan stream over the same transports | one stream with the UDP command |
 | `socks` | RFC 1928 CONNECT through the proxy (`network: "tcp"` required), up to 30 s for connect and handshake | error: UDP is not supported |
+| `http` | HTTP CONNECT, optional TLS and Basic auth | error: UDP is not supported |
 | groups | a member by strategy; on error, the next one (up to three) | the same |
+
+`OutboundCapabilities` reflects these modes and is used when selecting a UDP
+outbound and validating TCP/UDP DNS detours and proxy chains. `direct`, VLESS,
+and Trojan support TCP and UDP; SOCKS5 and HTTP CONNECT declare TCP only.
+`block` handles both network types by rejecting or dropping traffic, while the
+DNS outbound accepts both only for DNS queries.
 
 - **`direct` and this computer's addresses.** A network client cannot
   reach `127.0.0.1`, `localhost` or the "any" address through `direct`.
