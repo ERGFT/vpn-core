@@ -93,9 +93,9 @@ Change the order of PRs 1–5 if evidence shows an extraction does not reduce th
 
 PRs #178–#183 are merged into `main`: typed settings, the static factory,
 shared transport configuration, outbound capabilities, typed subscription
-normalization, and a test protocol behind `cfg(test)` only. Stage 2 is not
-accepted yet: the failure matrix still needs direct checks for interruption of
-an active connection and core shutdown during an active session.
+normalization, and a test protocol behind `cfg(test)` only. Stage 2 is complete:
+PR #184 added direct checks for interruption of an active connection and core
+shutdown during an active session, and the full CI passed before merge.
 
 | Stage 2 requirement | Existing evidence | Status |
 |---|---|---|
@@ -104,16 +104,17 @@ an active connection and core shutdown during an active session.
 | Reload preserves current sessions and applies new rules to new ones | `core/tests/app_api.rs::reload_keeps_open_connections_and_applies_new_rules`; fixture also replaces the router | Verified in CI |
 | Groups, subscriptions, and configuration formats | `core/tests/app_groups.rs`, `core/src/app/subscription.rs`, and parser tests | Verified in CI |
 | Public C ABI start/request/reload/stop | `ffi/tests/c_abi.rs::start_request_reload_stop` and CI ABI/SDK jobs | Verified in CI |
-| UDP queue byte limit under concurrent sends | `core/src/app/vless_out.rs::queue_budget_tests`; atomic reservation added in this change | Awaiting CI; local run stopped because MSVC `link.exe` is unavailable |
-| Active proxy connection interruption and core shutdown with an active session | Added `remote_interruption_ends_the_active_proxy_session` and `dropping_running_closes_an_active_proxy_session` in `core/tests/app_api.rs`; `Running::drop` now cancels tracked connections | Awaiting CI |
+| UDP queue byte limit under concurrent sends | `core/src/app/vless_out.rs::queue_budget_tests`; atomic compare-exchange reservation | Verified in PR #184 CI |
+| Active proxy connection interruption and core shutdown with an active session | `remote_interruption_ends_the_active_proxy_session` and `dropping_running_closes_an_active_proxy_session` in `core/tests/app_api.rs`; `Running::drop` cancels tracked connections | Verified in PR #184 CI |
 
 VLESS queue-budget reservation is now atomic: concurrent senders cannot both
 pass a stale-value check and collectively exceed the 4 MiB session budget. The
 lifecycle check found that dropping `Running` stopped listeners but did not
 signal cancellation to already tracked connections. `Running::drop` now calls
 `Tracker::close_all`; integration tests check remote interruption and closure
-of an active session during shutdown. These changes need CI; start Hysteria 2
-only after the complete matrix passes.
+of an active session during shutdown. [CI run #709](https://github.com/ERGFT/vpn-core/actions/runs/42360534173)
+passed all eight job groups on the current commit: Linux interop/TUN, Windows,
+Android, iOS, MSRV, coverage, audit, and secrets. PR #184 is merged into `main`.
 
 ## Baseline checks
 
