@@ -1032,9 +1032,10 @@ implementation:
     Brutal are not supported;
   - Stage 6.3 implements a random initial port from the configured ranges
     and a port hop every 30 seconds after authentication. A fresh protected
-    UDP socket starts before the previous one is retired so it can receive
-    late packets. This stage is rebased onto the current `main`; CI, reference
-    interoperability and network-interface changes have not been verified.
+    UDP socket starts before the previous one is retired, and the previous
+    socket remains available for 2 seconds. PR #197 is merged; CI #761 passed
+    all 8 jobs on head `3762074`. Reference interoperability, performance,
+    network-interface changes, and recovery have not been verified.
 
 ## 14. Protocols: VLESS, Vision, XUDP, Mux.Cool, Trojan
 
