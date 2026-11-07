@@ -269,6 +269,50 @@ async fn reload_keeps_open_connections_and_applies_new_rules() {
 }
 
 #[tokio::test]
+async fn remote_interruption_ends_the_active_proxy_session() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let target = listener.local_addr().unwrap();
+    let (accepted_tx, accepted_rx) = tokio::sync::oneshot::channel();
+    tokio::spawn(async move {
+        let (stream, _) = listener.accept().await.unwrap();
+        let _ = accepted_tx.send(());
+        drop(stream);
+    });
+
+    let running = start(&base("direct", "")).await;
+    let (mut client, rep) = socks_connect(running.listen_addrs[0], target).await;
+    assert_eq!(rep, 0);
+    tokio::time::timeout(T, accepted_rx)
+        .await
+        .expect("target did not accept the proxy connection")
+        .expect("target task ended before accepting");
+
+    let mut byte = [0u8; 1];
+    let read = tokio::time::timeout(T, client.read(&mut byte))
+        .await
+        .expect("remote interruption did not reach the client")
+        .expect("reading interrupted session failed");
+    assert_eq!(read, 0, "remote close must terminate the proxy stream");
+}
+
+#[tokio::test]
+async fn dropping_running_closes_an_active_proxy_session() {
+    let target = tcp_echo().await;
+    let running = start(&base("direct", "")).await;
+    let (mut client, rep) = socks_connect(running.listen_addrs[0], target).await;
+    assert_eq!(rep, 0);
+    assert!(echo_ok(&mut client, b"before shutdown").await);
+
+    drop(running);
+    let mut byte = [0u8; 1];
+    let read = tokio::time::timeout(T, client.read(&mut byte))
+        .await
+        .expect("dropping Running did not close the active proxy session")
+        .expect("reading closed session failed");
+    assert_eq!(read, 0, "shutdown must close the client-facing stream");
+}
+
+#[tokio::test]
 async fn reload_via_api_from_file() {
     let echo = tcp_echo().await;
     let dir = std::env::temp_dir().join(format!("vpn-core-api-{}", std::process::id()));

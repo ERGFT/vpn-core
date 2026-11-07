@@ -308,8 +308,9 @@ impl Running {
 
 impl Drop for Running {
     fn drop(&mut self) {
-        // Сначала остановить входы, потом снять маршруты (поле routes
-        // уничтожится после этого метода).
+        // Сначала отменить активные соединения и остановить входы, потом
+        // снять маршруты (поле routes уничтожится после этого метода).
+        self.ctl.tracker.close_all();
         if let Some(a) = &self.api_task {
             a.abort();
         }
