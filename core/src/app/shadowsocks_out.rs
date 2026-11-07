@@ -1,14 +1,16 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! Classic Shadowsocks AEAD outbound over the existing protected socket path.
+//! Shadowsocks AEAD outbounds over the existing protected socket path.
 
+use std::collections::HashSet;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use futures_util::future::BoxFuture;
 use shadowsocks::config::{ServerAddr, ServerConfig, ServerType};
 use shadowsocks::context::{Context, SharedContext};
 use shadowsocks::relay::socks5::Address as ShadowsocksAddress;
+use shadowsocks::relay::udprelay::options::UdpSocketControlData;
 use shadowsocks::relay::udprelay::proxy_socket::{ProxySocket, UdpSocketType};
 use shadowsocks::relay::udprelay::{DatagramReceive, DatagramSend, DatagramSocket};
 use tokio::io::ReadBuf;
@@ -27,6 +29,8 @@ const QUEUE: usize = 64;
 const UDP_BUFFER: usize = 65_536;
 const MAX_UDP_PAYLOAD: usize = 65_000;
 const DIAL_TIMEOUT: Duration = Duration::from_secs(30);
+const SIP022_REPLAY_WINDOW: u64 = 8_192;
+const SIP022_SERVER_SESSION_TTL: Duration = Duration::from_secs(60);
 
 pub struct ShadowsocksOutbound {
     tag: String,
@@ -39,7 +43,7 @@ impl ShadowsocksOutbound {
         let config = ServerConfig::from_url(link).map_err(|_| {
             Error::Config("shadowsocks: некорректная ссылка ss:// или учётные данные".into())
         })?;
-        crate::shadowsocks_protocol::validate_classic(&config)?;
+        crate::shadowsocks_protocol::validate_supported(&config)?;
         Ok(Self {
             tag: tag.into(),
             config: Arc::new(config),
@@ -192,6 +196,8 @@ impl ShadowsocksUdp {
     fn start(config: Arc<ServerConfig>, context: SharedContext) -> Self {
         let (tx, mut up_rx) = mpsc::channel::<Packet>(QUEUE);
         let (down_tx, down_rx) = mpsc::channel::<Packet>(QUEUE);
+        let is_sip022 = config.method().is_aead_2022();
+        let client_session_id = if is_sip022 { random_session_id() } else { 0 };
         tokio::spawn(async move {
             let run = async {
                 let addr = config.udp_external_addr();
@@ -213,22 +219,52 @@ impl ShadowsocksUdp {
                     ProtectedUdpSocket(socket),
                 );
                 let mut buffer = vec![0u8; UDP_BUFFER];
+                let mut packet_id = 0u64;
+                let mut replay = ReplayProtection::new(client_session_id);
                 loop {
                     let event = tokio::time::timeout(UDP_IDLE, async {
                         tokio::select! {
                             packet = up_rx.recv() => {
                                 match packet {
                                     Some((dst, port, data)) => {
-                                        socket.send_to(remote, &target_address(dst, port), &data).await
-                                            .map(|_| false)
+                                        if is_sip022 && packet_id == u64::MAX {
+                                            return Err(Error::Protocol(
+                                                "shadowsocks 2022 UDP packet counter exhausted".into(),
+                                            ));
+                                        }
+                                        let target = target_address(dst, port);
+                                        let sent = if is_sip022 {
+                                            let mut control = UdpSocketControlData::default();
+                                            control.client_session_id = client_session_id;
+                                            control.packet_id = packet_id;
+                                            socket.send_to_with_ctrl(remote, &target, &control, &data).await
+                                        } else {
+                                            socket.send_to(remote, &target, &data).await
+                                        };
+                                        sent
+                                            .map(|_| {
+                                                if is_sip022 {
+                                                    packet_id += 1;
+                                                }
+                                                false
+                                            })
                                             .map_err(|error| Error::Protocol(format!("shadowsocks UDP: {error}")))
                                     }
                                     None => Ok(true),
                                 }
                             }
-                            received = socket.recv(&mut buffer) => {
+                            received = socket.recv_with_ctrl(&mut buffer) => {
                                 match received {
-                                    Ok((len, source, _)) => {
+                                    Ok((len, source, _, control)) => {
+                                        if is_sip022 {
+                                            let accepted = control.as_ref().is_some_and(|control| {
+                                                replay.accept(control, Instant::now())
+                                            });
+                                            if !accepted {
+                                                tracing::debug!("shadowsocks 2022 UDP: wrong session or replayed packet dropped");
+                                                return Ok(false);
+                                            }
+                                        }
                                         let (dst, port) = from_shadowsocks_address(source)?;
                                         let packet = (dst, port, buffer[..len].to_vec());
                                         match down_tx.try_send(packet) {
@@ -257,6 +293,128 @@ impl ShadowsocksUdp {
             tx,
             rx: Mutex::new(down_rx),
         }
+    }
+}
+
+fn random_session_id() -> u64 {
+    loop {
+        let mut bytes = [0u8; 8];
+        rand::Rng::fill_bytes(&mut rand::rng(), &mut bytes);
+        let session_id = u64::from_be_bytes(bytes);
+        if session_id != 0 {
+            return session_id;
+        }
+    }
+}
+
+struct ServerSessionReplay {
+    id: u64,
+    last_seen: Instant,
+    window: ReplayWindow,
+}
+
+/// Tracks server restarts while keeping at most the current and previous
+/// session, as permitted by SIP022. Each packet window has a fixed upper bound.
+struct ReplayProtection {
+    client_session_id: u64,
+    current: Option<ServerSessionReplay>,
+    previous: Option<ServerSessionReplay>,
+}
+
+impl ReplayProtection {
+    fn new(client_session_id: u64) -> Self {
+        Self {
+            client_session_id,
+            current: None,
+            previous: None,
+        }
+    }
+
+    fn accept(&mut self, control: &UdpSocketControlData, now: Instant) -> bool {
+        if control.client_session_id != self.client_session_id {
+            return false;
+        }
+
+        if let Some(session) = self
+            .current
+            .as_mut()
+            .filter(|s| s.id == control.server_session_id)
+        {
+            return session.accept(control.packet_id, now);
+        }
+        if let Some(session) = self
+            .previous
+            .as_mut()
+            .filter(|s| s.id == control.server_session_id)
+        {
+            return session.accept(control.packet_id, now);
+        }
+
+        if self.current.is_none() {
+            let mut session = ServerSessionReplay::new(control.server_session_id, now);
+            let accepted = session.accept(control.packet_id, now);
+            self.current = Some(session);
+            return accepted;
+        }
+
+        if self
+            .previous
+            .as_ref()
+            .is_some_and(|s| now.saturating_duration_since(s.last_seen) < SIP022_SERVER_SESSION_TTL)
+        {
+            return false;
+        }
+
+        self.previous = self.current.take();
+        let mut session = ServerSessionReplay::new(control.server_session_id, now);
+        let accepted = session.accept(control.packet_id, now);
+        self.current = Some(session);
+        accepted
+    }
+}
+
+impl ServerSessionReplay {
+    fn new(id: u64, now: Instant) -> Self {
+        Self {
+            id,
+            last_seen: now,
+            window: ReplayWindow::default(),
+        }
+    }
+
+    fn accept(&mut self, packet_id: u64, now: Instant) -> bool {
+        if !self.window.accept(packet_id) {
+            return false;
+        }
+        self.last_seen = now;
+        true
+    }
+}
+
+#[derive(Default)]
+struct ReplayWindow {
+    highest: Option<u64>,
+    seen: HashSet<u64>,
+}
+
+impl ReplayWindow {
+    fn accept(&mut self, packet_id: u64) -> bool {
+        if let Some(highest) = self.highest {
+            if packet_id > highest {
+                self.highest = Some(packet_id);
+            } else if highest.saturating_sub(packet_id) >= SIP022_REPLAY_WINDOW {
+                return false;
+            }
+        } else {
+            self.highest = Some(packet_id);
+        }
+
+        let floor = self
+            .highest
+            .unwrap_or(packet_id)
+            .saturating_sub(SIP022_REPLAY_WINDOW - 1);
+        self.seen.retain(|seen| *seen >= floor);
+        self.seen.insert(packet_id)
     }
 }
 
@@ -293,5 +451,59 @@ impl UdpSession for ShadowsocksUdp {
 
     fn recv(&self) -> BoxFuture<'_, Result<Option<Packet>>> {
         Box::pin(async move { Ok(self.rx.lock().await.recv().await) })
+    }
+}
+
+#[cfg(test)]
+mod replay_tests {
+    use super::{ReplayProtection, ReplayWindow, SIP022_REPLAY_WINDOW, SIP022_SERVER_SESSION_TTL};
+    use shadowsocks::relay::udprelay::options::UdpSocketControlData;
+    use std::time::{Duration, Instant};
+
+    fn control(client: u64, server: u64, packet: u64) -> UdpSocketControlData {
+        let mut control = UdpSocketControlData::default();
+        control.client_session_id = client;
+        control.server_session_id = server;
+        control.packet_id = packet;
+        control
+    }
+
+    #[test]
+    fn replay_window_accepts_reordering_once_and_rejects_old_packets() {
+        let mut window = ReplayWindow::default();
+        assert!(window.accept(10));
+        assert!(window.accept(12));
+        assert!(window.accept(11));
+        assert!(!window.accept(11));
+        let high = SIP022_REPLAY_WINDOW + 20;
+        assert!(window.accept(high));
+        assert!(window.seen.len() <= SIP022_REPLAY_WINDOW as usize);
+        assert!(!window.accept(high - SIP022_REPLAY_WINDOW));
+        assert!(window.accept(high + 1));
+        assert!(!window.accept(high + 1));
+    }
+
+    #[test]
+    fn replay_protection_tracks_two_server_sessions_with_a_bounded_ttl() {
+        let start = Instant::now();
+        let mut replay = ReplayProtection::new(41);
+        assert!(replay.accept(&control(41, 100, 0), start));
+        assert!(!replay.accept(&control(41, 100, 0), start));
+        assert!(replay.accept(&control(41, 200, 0), start));
+        assert!(replay.accept(&control(41, 100, 1), start));
+        assert!(!replay.accept(&control(41, 300, 0), start + Duration::from_secs(10)));
+        assert!(!replay.accept(&control(42, 200, 1), start + SIP022_SERVER_SESSION_TTL));
+        assert!(replay.accept(
+            &control(41, 300, 0),
+            start + SIP022_SERVER_SESSION_TTL + Duration::from_secs(1)
+        ));
+        assert!(replay.accept(
+            &control(41, 200, 1),
+            start + SIP022_SERVER_SESSION_TTL + Duration::from_secs(2)
+        ));
+        assert!(!replay.accept(
+            &control(41, 100, 2),
+            start + SIP022_SERVER_SESSION_TTL + Duration::from_secs(2)
+        ));
     }
 }

@@ -12,8 +12,10 @@
 - Добавлен классический Shadowsocks AEAD outbound для TCP и нативного UDP;
   поддерживаются `aes-128-gcm`, `aes-256-gcm` и
   `chacha20-ietf-poly1305`. Импортируются ссылки SIP002 и записи sing-box,
-  Xray и Clash YAML. SIP003 plugins, UDP-over-TCP, legacy stream ciphers и
-  Shadowsocks 2022 не поддерживаются.
+  Xray и Clash YAML. В отдельной ветке добавлены SIP022/2022 AES-128/256-GCM
+  через TCP и нативный UDP с защитой от повторов; полный CI и Xray interop
+  прошли на head `2c0d14e`, включение в main ожидает PR. SIP003 plugins,
+  UDP-over-TCP и legacy stream ciphers не поддерживаются.
 
 ### Hysteria 2
 - TCP/UDP runtime подключён к outbound factory, sing-box config и URI-подпискам; один outbound переиспользует аутентифицированное QUIC-соединение. Поддерживаемые поля sing-box преобразуются через URI-модель, неподдерживаемые опции отклоняются. Интеграция слита в PR #199; CI прошёл 16 проверок, 1 проверка пропущена. Совместимость с официальным сервером и смена сети пока не проверены, поэтому функция остаётся экспериментальной.
@@ -270,7 +272,10 @@ stage-by-stage decision history is in [PLAN.md](PLAN.md) (in Russian).
 - Added a classic Shadowsocks AEAD outbound for TCP and native UDP, supporting
   `aes-128-gcm`, `aes-256-gcm`, and `chacha20-ietf-poly1305`. SIP002 links and
   sing-box, Xray, and Clash YAML records are imported. SIP003 plugins,
-  UDP-over-TCP, legacy stream ciphers, and Shadowsocks 2022 are unsupported.
+  UDP-over-TCP, and legacy stream ciphers are unsupported. A separate branch
+  adds SIP022/2022 AES-128/256-GCM over TCP and native UDP with replay
+  protection; full CI and Xray interop passed on head `2c0d14e`, and inclusion
+  in main awaits the target PR.
 
 ### Hysteria 2
 - Wired the TCP/UDP runtime into the outbound factory, sing-box config, and URI subscriptions; each outbound reuses its authenticated QUIC connection. Supported sing-box fields are converted through the URI model, and unsupported options are rejected. PR #199 merged with 16 checks passed and 1 skipped. Official-server interoperability and network handover remain unverified, so the integration is experimental.

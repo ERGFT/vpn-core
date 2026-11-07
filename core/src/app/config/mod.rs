@@ -689,6 +689,21 @@ mod tests {
     }
 
     #[test]
+    fn xray_shadowsocks_2022_accepts_psk_and_rejects_invalid_key_length() {
+        let valid = Config::parse(
+            r#"{"outbounds":[{"protocol":"shadowsocks","tag":"ss22","settings":{"servers":[{"address":"ss.example","port":8388,"method":"2022-blake3-aes-128-gcm","password":"AAAAAAAAAAAAAAAAAAAAAA=="}]}}]}"#,
+        )
+        .unwrap();
+        assert_eq!(valid.outbounds[0].kind(), OutboundKind::Shadowsocks);
+        assert!(!format!("{:?}", valid.outbounds[0]).contains("AAAAAAAA"));
+
+        let invalid = Config::parse(
+            r#"{"outbounds":[{"protocol":"shadowsocks","tag":"ss22","settings":{"servers":[{"address":"ss.example","port":8388,"method":"2022-blake3-aes-128-gcm","password":"c2hvcnQ="}]}}]}"#,
+        );
+        assert!(invalid.is_err());
+    }
+
+    #[test]
     fn singbox_socks_outbound_is_tcp_only_and_redacts_credentials() {
         let c = Config::parse(
             r#"{"outbounds":[{"type":"socks","tag":"proxy","server":"proxy.example","server_port":1080,"network":"tcp","username":"private-user","password":"private-pass"}]}"#,

@@ -151,7 +151,7 @@ fn parse_lines(text: &str, out: &mut NormalizedSubscription) {
         }
         if scheme == "ss" {
             match shadowsocks::config::ServerConfig::from_url(line) {
-                Ok(config) if crate::shadowsocks_protocol::validate_classic(&config).is_ok() => {
+                Ok(config) if crate::shadowsocks_protocol::validate_supported(&config).is_ok() => {
                     let name = config
                         .remarks()
                         .filter(|name| !name.is_empty())
@@ -790,6 +790,40 @@ mod tests {
         let parsed = parse_typed(clash).unwrap();
         assert_eq!(parsed.servers.len(), 1);
         assert_eq!(parsed.servers[0].protocol, NormalizedProtocol::Shadowsocks);
+    }
+
+    #[test]
+    fn imports_sip022_singbox_record_without_changing_legacy_uri_parsing() {
+        let singbox = br#"{"outbounds":[{"type":"shadowsocks","tag":"ss22","server":"ss.example","server_port":8388,"method":"2022-blake3-aes-128-gcm","password":"AAAAAAAAAAAAAAAAAAAAAA=="}]}"#;
+        let parsed = parse_typed(singbox).unwrap();
+        assert_eq!(parsed.servers.len(), 1);
+        let config = shadowsocks::config::ServerConfig::from_url(&parsed.servers[0].link).unwrap();
+        assert_eq!(config.method().to_string(), "2022-blake3-aes-128-gcm");
+
+        let invalid_key = br#"{"outbounds":[{"type":"shadowsocks","tag":"ss22","server":"ss.example","server_port":8388,"method":"2022-blake3-aes-128-gcm","password":"c2hvcnQ="}]}"#;
+        let parsed = parse_typed(invalid_key).unwrap();
+        assert!(parsed.servers.is_empty());
+        assert_eq!(parsed.invalid, 1);
+
+        let uri = crate::shadowsocks_protocol::uri_from_fields(
+            "ss.example",
+            8388,
+            "2022-blake3-aes-256-gcm",
+            "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+        )
+        .unwrap();
+        let parsed = parse_typed(uri.as_bytes()).unwrap();
+        assert_eq!(parsed.servers.len(), 1);
+        let config = shadowsocks::config::ServerConfig::from_url(&parsed.servers[0].link).unwrap();
+        assert_eq!(config.method().to_string(), "2022-blake3-aes-256-gcm");
+
+        let clash = br#"proxies:
+  - {name: ss22, type: ss, server: ss.example, port: 8388, cipher: 2022-blake3-aes-128-gcm, password: "AAAAAAAAAAAAAAAAAAAAAA=="}
+"#;
+        let parsed = parse_typed(clash).unwrap();
+        assert_eq!(parsed.servers.len(), 1);
+        let config = shadowsocks::config::ServerConfig::from_url(&parsed.servers[0].link).unwrap();
+        assert_eq!(config.method().to_string(), "2022-blake3-aes-128-gcm");
     }
 
     #[test]

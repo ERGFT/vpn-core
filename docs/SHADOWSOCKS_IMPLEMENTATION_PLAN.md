@@ -8,16 +8,15 @@ Shadowsocks AEAD и Shadowsocks 2022 — разные режимы; поддер
 
 ## Текущее состояние: классический AEAD
 
-Реализация находится в PR [#204](https://github.com/ERGFT/vpn-core/pull/204)
-из ветки `codex/shadowsocks-aead-outbound`. CI выполняется; его результаты и
-ограничения реализации видны в PR. Поэтому нижеследующее описывает код PR, а
-не завершённую и выпущенную поддержку.
+Классический outbound влит в `main` через PR
+[#204](https://github.com/ERGFT/vpn-core/pull/204). Требуемый CI завершился
+успешно; ограничения реализации перечислены ниже и в матрице возможностей.
 
 | Область | Реализация ветки | Проверка/ограничение |
 |---|---|---|
 | Протокол | Официальный Rust crate `shadowsocks-rust`; только `aes-128-gcm`, `aes-256-gcm`, `chacha20-ietf-poly1305` | Проверка ссылок отклоняет stream ciphers и Shadowsocks 2022 |
-| TCP | Подключение через общий resolver и защищённый TCP dialer | Независимый Xray TCP echo тест добавлен, ожидает CI |
-| UDP | Нативный Shadowsocks UDP через адаптер защищённого UDP-сокета; очереди ограничены | Независимый Xray UDP echo тест добавлен, ожидает CI; потери при переполнении очереди намеренные |
+| TCP | Подключение через общий resolver и защищённый TCP dialer | Xray TCP echo прошёл в CI |
+| UDP | Нативный Shadowsocks UDP через адаптер защищённого UDP-сокета; очереди ограничены | Xray UDP echo прошёл в CI; потери при переполнении очереди намеренные |
 | Конфигурация | `ss://`, поля sing-box, одна запись Xray; общий outbound и factory | Plugin, UDP-over-TCP, network restriction, detour и неподдерживаемые transport security параметры отклоняются |
 | Подписки | SIP002, sing-box JSON, Clash YAML Shadowsocks nodes | Непредставимые записи пропускаются и отражаются в счётчиках |
 | Секреты | Используется `SecretSource`, debug-вывод настроек маскирует ссылку | Проверки redaction включены в unit tests |
@@ -33,23 +32,48 @@ Shadowsocks AEAD и Shadowsocks 2022 — разные режимы; поддер
 - RU/EN README, CONFIG, FEATURES, ARCHITECTURE, TESTING и этот план совпадают
   по поддержанным форматам, методам, транспорту и ограничениям.
 
-## Следующий подэтап: Shadowsocks 2022 / SIP022
+Критерии выхода classic AEAD выполнены: PR #204 влит после успешного CI, а
+Xray подтвердил TCP/UDP echo. Ограничения плагинов и дополнительных транспортов
+остаются намеренными и описаны выше.
 
-Не включать 2022 в классический decoder. Перед реализацией отдельно проверить
-актуальную спецификацию SIP022 и официальный независимый reference code, затем
-спроектировать и покрыть тестами:
+## Shadowsocks 2022 / SIP022 — реализация и interop проверены
 
-1. Имена методов, формат ключей и минимальную длину PSK для всех целевых
-   вариантов `2022-blake3-*`.
-2. Потоковый TCP framing, длины salt/chunk, nonce и аутентификацию кадра.
-3. UDP nonce и replay filter с ограничением памяти/времени и корректным
-   состоянием на каждую ассоциацию.
-4. Отличающиеся формы SIP002 URI и поля sing-box/Xray/подписок, не меняя
-   семантику классических ссылок.
-5. Interop против независимой реализации по TCP и UDP, векторы протокола,
-   некорректные/повторные кадры и проверки секретов.
+Спецификация [SIP022](https://shadowsocks.org/doc/sip022.html) сверена с
+закреплённым официальным crate `shadowsocks-rust` 1.24.0. В ней обязательны
+AES-128/256-GCM, фиксированные base64 PSK в 16/32 байта, отдельные TCP stream
+salts/chunks и UDP session/packet IDs со sliding-window replay protection.
+Криптографию и протокольный codec не дублируем в ядре: используем клиентские
+TCP/UDP пути этого crate.
 
-Не заявлять поддержку Shadowsocks 2022 до прохождения этих критериев и отдельной
-сверки двуязычной документации. SIP003 plugins и другие transport plugins
-остаются отдельным решением: их жизненный цикл процесса, platform support,
-UDP и безопасная передача секретов должны быть спроектированы заранее.
+В отдельной ветке от классического outbound реализованы методы
+`2022-blake3-aes-128-gcm` и `2022-blake3-aes-256-gcm`. Включён AEAD-2022
+feature официального `shadowsocks-rust`; добавлены раздельная allowlist
+методов, валидация PSK через `ServerConfig` и покрытие URI/factory/import
+unit-тестами. UDP-адаптер назначает случайный client session ID, монотонный
+packet ID, проверяет ID ответной сессии и держит bounded replay window вместе
+с текущей/предыдущей server session в течение 60 секунд. Добавлен Xray TCP/UDP
+interop для обоих методов и параллельных повторяющихся датаграмм. На точном
+head `2c0d14e` GitHub CI завершил все 16 непубликационных jobs успешно
+(публикационный job пропущен для PR); Linux прогон выполнил 28 Xray interop
+тестов, включая `shadowsocks_2022_tcp_udp_against_xray`. Локальные Rust tests и
+interop здесь не запускались: Windows-среде недостаёт MSVC `link.exe`.
+
+Не включать 2022 в классический validator/decoder. Проверенное покрытие:
+
+1. Тесты проверяют оба имени метода, base64 PSK и неверную длину ключа через
+   `ServerConfig`.
+2. Реализация передаёт TCP framing, salts/chunks, nonce и AEAD официальному
+   crate; Xray TCP echo interop прошёл для обоих методов.
+3. Unit tests проверяют session IDs, повторы, порядок packet IDs, ограниченное
+   replay window и срок жизни server sessions; Xray проверяет UDP echo и
+   параллельные одинаковые датаграммы.
+4. Тесты конфигурации и subscription import проверяют sing-box и Xray поля,
+   SIP002 URI и Clash YAML, сохраняя классические методы и ограничения.
+5. Redaction покрыта общими secret-handling тестами; полный CI и все 28 Xray
+   interop tests прошли на указанном head.
+
+Кодовые критерии этой реализации и двуязычная документация проверены; для
+включения в `main` требуется зелёный CI целевого PR. SIP003 plugins и другие
+transport plugins остаются отдельным решением: их жизненный цикл процесса,
+platform support, UDP и безопасная передача секретов должны быть спроектированы
+заранее.

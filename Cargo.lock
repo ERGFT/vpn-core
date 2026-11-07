@@ -1848,6 +1848,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4050469837a6ff301cd14c1f8f24f88549e6d548f24f64e2148eb0f72cebc51f"
 
 [[package]]
+name = "lru_time_cache"
+version = "0.11.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9106e1d747ffd48e6be5bb2d97fa706ed25b144fbee4d5c02eae110cd8d6badd"
+
+[[package]]
 name = "managed"
 version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2978,6 +2984,7 @@ version = "1.24.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "482831bf9d55acf3c98e211b6c852c3dfdf1d1b0d23fdf1d887c5a4b2acad4e4"
 dependencies = [
+ "aes 0.8.4",
  "base64 0.22.1",
  "blake3",
  "byte_string",
@@ -2987,8 +2994,10 @@ dependencies = [
  "futures",
  "libc",
  "log",
+ "lru_time_cache",
  "percent-encoding",
  "pin-project",
+ "rand 0.9.5",
  "sealed",
  "sendfd",
  "serde",
@@ -3011,7 +3020,10 @@ version = "0.6.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3d038a3d17586f1c1ab3c1c3b9e4d5ef8fba98fb3890ad740c8487038b2e2ca5"
 dependencies = [
+ "aes 0.8.4",
  "aes-gcm 0.10.3",
+ "blake3",
+ "bytes",
  "cfg-if",
  "chacha20poly1305",
  "hkdf 0.12.4",
