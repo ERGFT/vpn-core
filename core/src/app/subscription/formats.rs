@@ -216,7 +216,7 @@ fn singbox_hysteria2_uri(o: &serde_json::Value) -> Result<Option<String>> {
     ];
     if unsupported
         .iter()
-        .any(|key| o.get(key).is_some_and(&configured))
+        .any(|key| o.get(key).is_some_and(configured))
     {
         return Ok(None);
     }
@@ -304,7 +304,14 @@ fn singbox_hysteria2_uri(o: &serde_json::Value) -> Result<Option<String>> {
         }
         normalized.join(",")
     } else {
-        port.unwrap().to_string()
+        match port {
+            Some(port) => port.to_string(),
+            None => {
+                return Err(Error::Config(
+                    "Hysteria 2 sing-box: missing or invalid server_port/server_ports".into(),
+                ));
+            }
+        }
     };
     if port_text.is_empty() {
         return Err(Error::Config(
