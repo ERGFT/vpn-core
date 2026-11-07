@@ -11,6 +11,7 @@ use crate::error::{Error, Result};
 
 /// Bound the number of port groups accepted from a URI or subscription.
 const MAX_PORT_RANGES: usize = 128;
+const SALAMANDER_MIN_PSK_LEN: usize = 4;
 
 /// One port or an inclusive range from a Hysteria port-hopping address.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -197,6 +198,13 @@ impl Hysteria2Config {
             (Some(_), None) => return Err(invalid("для obfs требуется obfs-password".into())),
             (Some(_), Some(password)) if password.is_empty() => {
                 return Err(invalid("obfs-password не может быть пустым".into()))
+            }
+            (Some("salamander"), Some(password))
+                if password.len() < SALAMANDER_MIN_PSK_LEN =>
+            {
+                return Err(invalid(format!(
+                    "Salamander obfs-password должен содержать не менее {SALAMANDER_MIN_PSK_LEN} байт"
+                )))
             }
             (Some(_), Some(password)) if password.chars().any(char::is_control) => {
                 return Err(invalid("obfs-password содержит управляющие символы".into()))
@@ -417,5 +425,29 @@ mod tests {
         ] {
             assert!(Hysteria2Config::parse(uri).is_err(), "{uri}");
         }
+    }
+
+    #[test]
+    fn enforces_reference_salamander_minimum_psk_length_in_bytes() {
+        for password in ["a", "abc"] {
+            let uri = format!("hy2://pass@host?obfs=salamander&obfs-password={password}");
+            assert!(Hysteria2Config::parse(&uri).is_err(), "{uri}");
+        }
+
+        let ascii =
+            Hysteria2Config::parse("hy2://pass@host?obfs=salamander&obfs-password=abcd").unwrap();
+        assert!(matches!(
+            ascii.obfuscation,
+            Some(Obfuscation::Salamander { .. })
+        ));
+
+        // The reference Go implementation measures the UTF-8 byte slice.
+        let unicode =
+            Hysteria2Config::parse("hy2://pass@host?obfs=salamander&obfs-password=%C3%A9%C3%A9")
+                .unwrap();
+        assert!(matches!(
+            unicode.obfuscation,
+            Some(Obfuscation::Salamander { .. })
+        ));
     }
 }
