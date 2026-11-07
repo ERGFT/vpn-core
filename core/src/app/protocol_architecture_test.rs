@@ -15,10 +15,10 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream, UdpSocket};
 
 use super::config::RouteConfig;
-use super::geo::GeoFiles;
 use super::outbound::{Outbound, OutboundCapabilities, Packet, UdpSession};
 use super::router::{Router, RouterHandle};
 use super::{Metadata, Network};
+use crate::app::rules::GeoFiles;
 use crate::error::{Error, Result};
 use crate::transport::AsyncStream;
 use crate::vless::Address;
