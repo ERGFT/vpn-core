@@ -24,6 +24,7 @@ use crate::vless::Address;
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const AUTH_TIMEOUT: Duration = Duration::from_secs(10);
+const PORT_HOP_INTERVAL: Duration = Duration::from_secs(30);
 const TCP_OPEN_TIMEOUT: Duration = Duration::from_secs(10);
 const MAX_AUTH_RESPONSE_BODY: usize = 16 * 1024;
 const TCP_REQUEST_ID: u64 = 0x401;
@@ -68,6 +69,7 @@ pub(crate) struct Hysteria2Connection {
     udp_driver: JoinHandle<()>,
     next_udp_session_id: AtomicU64,
     driver: JoinHandle<()>,
+    hop_task: Option<JoinHandle<()>>,
 }
 
 impl Hysteria2Connection {
@@ -126,6 +128,9 @@ impl Drop for Hysteria2Connection {
     fn drop(&mut self) {
         self.connection.close(0u32.into(), b"client shutdown");
         self.driver.abort();
+        if let Some(task) = &self.hop_task {
+            task.abort();
+        }
         // Closing QUIC wakes read_datagram(); let it clear per-session routes.
     }
 }
@@ -140,32 +145,27 @@ fn allocate_udp_session_id(next: &AtomicU64) -> Result<u32> {
     .map_err(|_| Error::Protocol("Hysteria 2: UDP session ID space is exhausted".into()))
 }
 
-/// Connect securely to a single-port Hysteria 2 server and authenticate it.
-/// Salamander packet obfuscation is supported; other advanced options remain
-/// rejected until their dedicated transport stages are implemented.
+/// Connect securely to a Hysteria 2 server and authenticate it. Port hopping
+/// starts after authentication and uses the protocol's default 30-second interval.
 #[allow(
     dead_code,
     reason = "wired into the production outbound in a later stage"
 )]
 pub(crate) async fn connect(config: &Hysteria2Config) -> Result<Hysteria2Connection> {
     validate_supported_options(config)?;
-    let port = config
-        .ports
-        .first()
-        .map(|range| range.first)
-        .ok_or_else(|| Error::Config("Hysteria 2: не задан порт сервера".into()))?;
+    let port = quic::random_hysteria2_port(&config.ports)?;
     let addrs = tcp_tls::resolve_server(&config.server, port).await?;
     let tls_name = config.sni.as_deref().unwrap_or(&config.server);
     let client_config = quic::hysteria2_client_config(None, vec![b"h3".to_vec()])?;
     let mut last_error = None;
 
     for addr in addrs {
-        let endpoint = match config.obfuscation.as_ref() {
-            Some(Obfuscation::Salamander { password }) => {
-                quic::salamander_endpoint(addr.is_ipv6(), password.as_bytes())?
-            }
-            _ => quic::direct_endpoint(addr.is_ipv6())?,
+        let salamander_key = match config.obfuscation.as_ref() {
+            Some(Obfuscation::Salamander { password }) => Some(password.as_bytes()),
+            _ => None,
         };
+        let (endpoint, hop_state) =
+            quic::hysteria2_endpoint(addr.is_ipv6(), config.ports.clone(), port, salamander_key)?;
         let connecting = endpoint
             .connect_with(client_config.clone(), addr, tls_name)
             .map_err(|error| quic::connect_error("Hysteria 2", error))?;
@@ -229,6 +229,7 @@ pub(crate) async fn connect(config: &Hysteria2Config) -> Result<Hysteria2Connect
         };
         let udp_mux = UdpDatagramMux::new(connection.clone(), datagram_overhead);
         let udp_driver = udp_mux.clone().spawn();
+        let hop_task = hop_state.and_then(|state| state.start(PORT_HOP_INTERVAL, addr.is_ipv6()));
         return Ok(Hysteria2Connection {
             _endpoint: endpoint,
             connection,
@@ -237,6 +238,7 @@ pub(crate) async fn connect(config: &Hysteria2Config) -> Result<Hysteria2Connect
             udp_driver,
             next_udp_session_id: AtomicU64::new(0),
             driver,
+            hop_task,
         });
     }
 
@@ -246,9 +248,14 @@ pub(crate) async fn connect(config: &Hysteria2Config) -> Result<Hysteria2Connect
 }
 
 fn validate_supported_options(config: &Hysteria2Config) -> Result<()> {
-    if config.ports.len() != 1 || config.ports[0].first != config.ports[0].last {
+    if config.ports.is_empty()
+        || config
+            .ports
+            .iter()
+            .any(|range| range.first == 0 || range.first > range.last)
+    {
         return Err(Error::Config(
-            "Hysteria 2: port hopping is not supported yet".into(),
+            "Hysteria 2: port range is empty or invalid".into(),
         ));
     }
     if config.insecure {
@@ -592,9 +599,8 @@ mod tests {
     }
 
     #[test]
-    fn rejects_transport_options_until_their_stages_are_implemented() {
+    fn accepts_port_hopping_and_rejects_unsupported_transport_options() {
         for uri in [
-            "hy2://secret@example.com:443,444",
             "hy2://secret@example.com:443?sni=front.example&insecure=1",
             "hy2://secret@example.com:443?pinSHA256=abcd",
             "hy2://secret@example.com:443?ech=YWJj",
@@ -603,6 +609,8 @@ mod tests {
             let config = Hysteria2Config::parse(uri).unwrap();
             assert!(validate_supported_options(&config).is_err(), "{uri}");
         }
+        let hopping = Hysteria2Config::parse("hy2://secret@example.com:443,444-446").unwrap();
+        assert!(validate_supported_options(&hopping).is_ok());
         let secure =
             Hysteria2Config::parse("hy2://secret@example.com:443?sni=front.example").unwrap();
         assert!(validate_supported_options(&secure).is_ok());
