@@ -1139,10 +1139,14 @@ A separate work branch enables the official crate's `aead-cipher-2022`
 feature, and the validator allows only SIP022's two required methods:
 `2022-blake3-aes-128-gcm` and `2022-blake3-aes-256-gcm`. `ServerConfig`
 validates the base64 PSK and exact key length; classic AEAD passwords still
-pass only through the classic allowlist. TCP chunk framing, BLAKE3 subkeys,
-UDP session IDs, and replay windows remain in the reference crate. A separate
-Xray TCP/UDP echo test covers both methods; its result is unverified until CI
-passes. This describes the work branch, not a released capability.
+pass only through the classic allowlist. TCP/UDP codecs and cryptography remain
+in the reference crate. The UDP adapter assigns a random client session ID and
+monotonic packet IDs, validates client/server session IDs on replies, and drops
+replays with a fixed-size window; it remembers the current and previous server
+sessions for at least 60 seconds. Unit and Xray TCP/UDP echo tests cover both
+methods, including concurrent identical UDP datagrams. Results remain
+unverified until CI passes; this describes the work branch, not a released
+capability.
 
 ## 15. REALITY and TLS fingerprints
 

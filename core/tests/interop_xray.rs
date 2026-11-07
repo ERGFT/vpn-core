@@ -2134,16 +2134,18 @@ async fn shadowsocks_2022_tcp_udp_against_xray() {
         let mut metadata = meta(udp_echo);
         metadata.network = Network::Udp;
         let session = outbound.udp(&metadata).await.unwrap();
-        for i in 0..5u8 {
-            let payload = vec![i; 100 + i as usize * 200];
-            session
-                .send(
-                    Address::Ipv4("127.0.0.1".parse().unwrap()),
-                    udp_echo,
-                    payload.clone(),
-                )
-                .await
-                .unwrap();
+        let payload = vec![0x5a; 512];
+        let sends = (0..5).map(|_| {
+            session.send(
+                Address::Ipv4("127.0.0.1".parse().unwrap()),
+                udp_echo,
+                payload.clone(),
+            )
+        });
+        for result in futures_util::future::join_all(sends).await {
+            result.unwrap();
+        }
+        for _ in 0..5 {
             let (source, port, received) =
                 tokio::time::timeout(Duration::from_secs(10), session.recv())
                     .await
@@ -2155,7 +2157,7 @@ async fn shadowsocks_2022_tcp_udp_against_xray() {
                 (
                     Address::Ipv4("127.0.0.1".parse().unwrap()),
                     udp_echo,
-                    payload
+                    payload.clone()
                 )
             );
         }

@@ -48,8 +48,12 @@ Implementation has started in a separate worktree based on PR #204 for
 `shadowsocks-rust` AEAD-2022 feature is enabled; separate method validation,
 PSK validation through `ServerConfig`, and URI/factory/import unit tests have
 been added. This is not verified support yet: TCP/UDP interoperability, full
-CI, and review of all input formats remain required. The local build is
-currently blocked by the missing MSVC `link.exe`.
+CI, and review of all input formats remain required. The UDP adapter assigns a
+random client session ID and monotonic packet IDs, validates response session
+IDs, and retains bounded replay windows for the current and previous server
+sessions for 60 seconds. Xray TCP/UDP interop covers both methods and concurrent
+repeated datagrams. Support remains unverified until CI/interoperability pass;
+the local build is blocked by the missing MSVC `link.exe`.
 
 Do not add 2022 to the classic validator/decoder. Next, satisfy these criteria:
 

@@ -1080,10 +1080,13 @@ Shadowsocks пока отклоняются. Старые stream ciphers и Shad
 crate, а validator разрешает только два обязательных метода SIP022:
 `2022-blake3-aes-128-gcm` и `2022-blake3-aes-256-gcm`. `ServerConfig`
 проверяет base64 PSK и точную длину ключа; пароли classic AEAD по-прежнему
-проходят только через классический allowlist. TCP chunk framing, BLAKE3
-subkeys, UDP session IDs и replay window остаются в reference crate. Добавлен
-отдельный Xray TCP/UDP echo test для обоих методов; до зелёного CI его результат
-не подтверждён. Это состояние ветки, а не уже выпущенная возможность.
+проходят только через классический allowlist. TCP/UDP codec и криптография
+остаются в reference crate. Для UDP обёртка назначает случайный client session
+ID и монотонные packet IDs, проверяет client/server session при ответе и
+отбрасывает повторы фиксированным окном; хранит текущую и предыдущую server
+session не менее 60 секунд. Добавлены unit и Xray TCP/UDP echo tests для обоих
+методов, включая параллельные одинаковые UDP-датаграммы. До зелёного CI
+результат не подтверждён; это состояние ветки, а не уже выпущенная возможность.
 
 ## 15. REALITY и TLS-отпечатки
 
