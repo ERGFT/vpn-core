@@ -32,9 +32,12 @@ class MetadataGeneration(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             stage = Path(temporary) / "vpn-core-sdk"
             (stage / "lib").mkdir(parents=True)
-            for name in ("reality.dll", "reality.dll.lib", "reality.lib"):
+            for name in (
+                "reality.dll", "reality.dll.lib", "reality.lib", "windows.0.53.0.lib"
+            ):
                 (stage / "lib" / name).touch()
             generate_metadata(stage, "windows-x86_64", "68/merge", [
+                "windows.0.53.0.lib", "kernel32.lib",
                 "/DEFAULTLIB:ws2_32", "/defaultlib:msvcrt",
             ])
 
@@ -46,6 +49,8 @@ class MetadataGeneration(unittest.TestCase):
             self.assertIn("reality.dll.lib", config)
             self.assertIn("reality.lib", config)
             self.assertIn("INTERFACE_LINK_OPTIONS", config)
+            self.assertIn('"${_VPN_CORE_PREFIX}/lib/windows.0.53.0.lib"', config)
+            self.assertIn("[=[kernel32.lib]=]", config)
             self.assertIn("/DEFAULTLIB:ws2_32", config)
             self.assertIn("/defaultlib:msvcrt", config)
             self.assertNotIn("_VPN_CORE_STATIC_LINK_LIBRARIES\n  [[/DEFAULTLIB:", config)

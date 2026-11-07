@@ -81,7 +81,10 @@ cmake --build build --config Release
 Поэтому `vpn-core::shared` на iOS отсутствует, а универсальная цель выбирает
 там static. Статический target получает native зависимости из того же
 `rustc --print=native-static-libs` вывода, который записан в manifest. iOS ZIP
-содержит обычную `libreality.a`, не XCFramework.
+содержит обычную `libreality.a`, не XCFramework. Windows SDK дополнительно
+включает версионированные import libraries, сгенерированные crate `windows`;
+CMake подключает их по пути внутри SDK, поэтому архив остаётся переносимым
+после распаковки в каталог с пробелами.
 Для Android и iOS передайте путь SDK проекту с подходящим NDK/iOS CMake
 toolchain; `NO_CMAKE_FIND_ROOT_PATH` не даёт Android NDK перенаправить явный
 поиск SDK в sysroot. Cross-link проверка не подтверждает запуск на устройстве.

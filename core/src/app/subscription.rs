@@ -477,10 +477,10 @@ mod tests {
            "transport":{"type":"ws","path":"/p","headers":{"Host":"h.example"}}},
           {"type":"trojan","tag":"TJ","server":"tj.example","server_port":443,"password":"pw",
            "tls":{"enabled":true,"server_name":"tj.example"},"transport":{"type":"ws","path":"/t"}},
-          {"type":"shadowsocks","tag":"ss"},
+          {"type":"shadowsocks","tag":"ss","server":"ss.example","server_port":8388,"method":"aes-256-gcm","password":"ss-secret"},
           {"type":"direct","tag":"direct"}]}"#;
         let p = parse(j.as_bytes()).unwrap();
-        assert_eq!(p.servers.len(), 3);
+        assert_eq!(p.servers.len(), 4);
         let t = crate::trojan::TrojanConfig::parse(&p.servers[2].1).unwrap();
         assert_eq!(t.password, "pw");
         assert_eq!(t.transport.network, crate::vless::NetworkType::Ws);
@@ -500,7 +500,10 @@ mod tests {
         let v = crate::vless::VlessConfig::parse(link).unwrap();
         assert_eq!(v.host, "nl.example");
         assert!(p.servers[1].1.contains("path=%2Fp") && p.servers[1].1.contains("host=h.example"));
-        assert_eq!(p.skipped["shadowsocks"], 1);
+        assert_eq!(
+            p.servers[3].1.split_once('@').unwrap().0,
+            "ss://YWVzLTI1Ni1nY206c3Mtc2VjcmV0"
+        );
     }
 
     #[test]

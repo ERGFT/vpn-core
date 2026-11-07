@@ -53,6 +53,7 @@ pub mod net_protect;
 pub mod reality;
 pub mod redact;
 pub mod relay;
+pub(crate) mod shadowsocks_protocol;
 pub mod socks5;
 pub mod transport;
 pub mod trojan;

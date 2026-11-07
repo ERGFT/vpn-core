@@ -56,7 +56,7 @@ reality-client --config config.json
 | | sing-box | Xray-core |
 |---|---|---|
 | Входы | `socks`, `http`, `mixed`, `tun`; `direct` + правило `hijack-dns` — DNS-сервер | `socks`, `http`, `mixed`, `tun`; `dokodemo-door` (или `tunnel`, только в роли DNS-сервера), отданный маршрутизацией выходу `dns` |
-| Выходы | `vless`, `trojan`, `hysteria2` (ограниченное URI-представимое подмножество), TCP `socks` и `http` (HTTP CONNECT), `direct`, `block`, `dns`, `selector`, `urltest`; `fallback` — расширение vpn-core | `vless`, `trojan`, `freedom` (с `fragment`, `noises`), `blackhole`, `dns`; `balancers` с `leastPing`/`leastLoad` преобразуются в `urltest` (проверка — из `observatory`) |
+| Выходы | `vless`, `trojan`, `hysteria2` (ограниченное URI-представимое подмножество), classic AEAD `shadowsocks` (ссылка или поля sing-box), TCP `socks` и `http` (HTTP CONNECT), `direct`, `block`, `dns`, `selector`, `urltest`; `fallback` — расширение vpn-core | `vless`, `trojan`, classic AEAD `shadowsocks` (одна запись `settings.servers`), `freedom` (с `fragment`, `noises`), `blackhole`, `dns`; `balancers` с `leastPing`/`leastLoad` преобразуются в `urltest` (проверка — из `observatory`) |
 | Транспорт и TLS | `tls` (`reality`, `utls`, `alpn`, `certificate_path`), `transport`: `ws`, `grpc`, `httpupgrade`; расширение ядра `type: xhttp` | `streamSettings`: `raw`/`tcp`, `ws`, `grpc`, `httpupgrade`, `xhttp` (также старое имя `splithttp`); `tls`/`reality`; `mux` (Mux.Cool) |
 | Правила | `domain`, `domain_suffix`, `domain_keyword`, `domain_regex`, `geosite`, `geoip`, `ip_cidr`, `ip_is_private`, `port`, `port_range`, `network`, `inbound`, `rule_set`, `user_id`, `invert`, `protocol: dns`; действия `route`, `reject`, `sniff`, `hijack-dns` | `domain` (`geosite:`, `domain:`, `full:`, `regexp:`, `keyword:`, просто подстрока), `ip` (`geoip:`, адреса), `port`, `network`, `inboundTag`, `outboundTag`/`balancerTag`; `domainStrategy` `AsIs`/`IPIfNonMatch` |
 | DNS | `servers` (с `type` и старые с `address`), `rules`, `final`, `strategy`, `fakeip` | `servers` (строки и объекты с `domains`; `+local` — напрямую), `queryStrategy`, `fakedns` |
@@ -114,6 +114,14 @@ MetaCubeX/meta-rules-dat) и исходный `.json`, только `type: local
   используется вместо встроенного. Ключ подходит и вместе с `link`/`link_file`,
   и при описании сервера полями sing-box. В подписках локальный путь задать
   нельзя: такие записи пропускаются как неподдерживаемые;
+- у выхода `shadowsocks`: `link` или `link_file` содержит классическую
+  ссылку `ss://`. Без расширения sing-box принимает `server`, `server_port`,
+  `method` и `password`, Xray — одну запись `settings.servers`.
+  Поддерживаются `aes-128-gcm`, `aes-256-gcm` и
+  `chacha20-ietf-poly1305`, TCP и нативный UDP. Shadowsocks 2022,
+  устаревшие stream-cipher методы, SIP003 plugins, UDP-over-TCP и ограничения
+  `network` явно отклоняются; неподдерживаемые записи подписки пропускаются
+  и учитываются в счётчике;
 - у `direct` (sing-box): `fragment`, `noises` — как у `freedom` в Xray;
 - выход `fallback` (первый работающий) и `subscriptions` у групп;
 - в корне: `subscriptions` — подписки с панели;

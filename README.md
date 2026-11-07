@@ -109,17 +109,17 @@ SDK позволяет встроить `vpn-core` как сетевое ядр�
 
 | Слой | Возможности |
 |---|---|
-| Протоколы и flow | VLESS, Trojan и XTLS Vision |
+| Протоколы и flow | VLESS, Trojan, Hysteria 2, классический Shadowsocks AEAD и XTLS Vision |
 | Защита соединения | REALITY и TLS |
 | Транспорты | TCP, WebSocket, gRPC, HTTPUpgrade и XHTTP |
 | Входы | SOCKS5, HTTP и mixed |
-| Выходы | Включают VLESS, Trojan, direct, block, DNS и группы серверов. SOCKS5 и HTTP CONNECT поддерживаются только для TCP и только в формате sing-box; там же доступны цепочки `detour` |
+| Выходы | Включают VLESS, Trojan, Hysteria 2, классический Shadowsocks, direct, block, DNS и группы серверов. SOCKS5 и HTTP CONNECT поддерживаются только для TCP и только в формате sing-box; там же доступны цепочки `detour` |
 | Конфигурация | Поддерживаемые подмножества форматов Xray-core и sing-box; правила, группы серверов и подписки |
-| Сеть и маршрутизация | UDP в VLESS через XUDP, DNS (DoH/DoT/DoQ), TUN, kill switch и выбор IPv4/IPv6 (Happy Eyeballs) |
+| Сеть и маршрутизация | UDP в VLESS через XUDP, Hysteria 2 и классическом Shadowsocks, DNS (DoH/DoT/DoQ), TUN, kill switch и выбор IPv4/IPv6 (Happy Eyeballs) |
 | Управление и платформенная интеграция | Локальный Clash API, панели metacubexd и yacd, systemd и служба Windows; Android/iOS через C ABI остаются экспериментальными, адаптер iOS `NEPacketTunnelFlow` не поставляется |
 | Экспериментально | `fragment`, `noises` и интеграция с правилами приложений |
 | Не поддерживается | Транспорт KCP; ICMP/ping через TUN |
-Импорт конфигурации Xray-core или sing-box не означает поддержку каждого параметра этих форматов.
+Импорт конфигурации Xray-core или sing-box не означает поддержку каждого параметра этих форматов. Классический Shadowsocks принимает TCP и нативный UDP с AEAD-методами; Shadowsocks 2022 и plugins пока не поддерживаются. См. [план Shadowsocks](docs/SHADOWSOCKS_IMPLEMENTATION_PLAN.md).
 Hysteria 2 TCP/UDP runtime подключён к outbound factory, sing-box-конфигурации и URI-подпискам. Локальный Windows-прогон TCP/UDP echo с официальным сервером v2.13.0 прошёл на head PR #201 `fdc24a8` с пользовательским CA. Это ограниченный loopback smoke test: общая production readiness, смена сети и восстановление соединения пока не подтверждены; см. [план Hysteria 2](docs/HYSTERIA2_IMPLEMENTATION_PLAN.md).
 
 Полный перечень возможностей, их зрелость и конкретные проверки приведены в [матрице возможностей](docs/FEATURES.md). Сценарии и результаты тестирования описаны в [руководстве по тестированию](docs/TESTING.md).

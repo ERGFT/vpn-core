@@ -289,11 +289,12 @@ fn outbound(o: Obj<'_>) -> Result<OutboundConfig> {
         "urltest" => OutboundKind::Urltest,
         "fallback" => OutboundKind::Fallback,
         "hysteria2" => OutboundKind::Hysteria2,
+        "shadowsocks" => OutboundKind::Shadowsocks,
         other => {
             return Err(o.err(
                 "type",
                 format!(
-                    "выход «{other}» не поддерживается (есть: vless, trojan, direct, block, \
+                    "выход «{other}» не поддерживается (есть: vless, trojan, shadowsocks, direct, block, \
                      socks, selector, urltest; расширение — fallback)"
                 ),
             ))
@@ -306,6 +307,25 @@ fn outbound(o: Obj<'_>) -> Result<OutboundConfig> {
     }
     match kind {
         OutboundKind::Vless | OutboundKind::Trojan => server(&o, &mut out)?,
+        OutboundKind::Shadowsocks => {
+            out.link = o.str("link")?;
+            out.link_file = o.str("link_file")?.map(PathBuf::from);
+            if out.link.is_some() || out.link_file.is_some() {
+                o.ignore(&["link", "link_file"]);
+            } else {
+                let uri = crate::app::subscription::formats::singbox_shadowsocks_uri(&o.to_value())?
+                    .ok_or_else(|| o.err("type", "Shadowsocks options (plugins, UDP-over-TCP, detour, and custom socket options) are unsupported"))?;
+                out.link = Some(uri);
+                o.ignore(&["server", "server_port", "method", "password"]);
+            }
+            o.unsupported("plugin", "SIP003 plugins are not implemented")?;
+            o.unsupported("plugin_opts", "SIP003 plugins are not implemented")?;
+            o.unsupported("udp_over_tcp", "UDP-over-TCP is not implemented")?;
+            o.unsupported(
+                "network",
+                "per-network Shadowsocks restrictions are not implemented",
+            )?;
+        }
         OutboundKind::Hysteria2 => {
             out.link = o.str("link")?;
             out.link_file = o.str("link_file")?.map(PathBuf::from);

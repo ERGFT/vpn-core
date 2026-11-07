@@ -27,7 +27,7 @@ TUN может дополнить Metadata доверенным UID через `
 11. [Группы серверов и подписки](#11-группы-серверов-и-подписки)
 12. [DNS](#12-dns)
 13. [Транспорты](#13-транспорты)
-14. [Протоколы: VLESS, Vision, XUDP, Mux.Cool, Trojan](#14-протоколы-vless-vision-xudp-muxcool-trojan)
+14. [Протоколы: VLESS, Vision, XUDP, Mux.Cool, Trojan и Shadowsocks](#14-протоколы-vless-vision-xudp-muxcool-trojan-и-shadowsocks)
 15. [REALITY и TLS-отпечатки](#15-reality-и-tls-отпечатки)
 16. [API, учёт соединений и события](#16-api-учёт-соединений-и-события)
 17. [Безопасность](#17-безопасность)
@@ -94,6 +94,7 @@ httpupgrade, xhttp), напрямую или никуда. Сам графиче
 | Модуль | Что делает |
 |---|---|
 | `app/` | приложение: входы → маршрутизатор → выходы (включая SOCKS5 и HTTP CONNECT), настройки, DNS, TUN, группы, подписки, API |
+| `app/shadowsocks_out.rs`, `shadowsocks_protocol.rs` | классический Shadowsocks AEAD: TCP/UDP relay, строгая проверка методов и нормализация SIP002 URI; codec и криптография — из официального crate `shadowsocks-rust` |
 | `connection_owner.rs` | доверенные метаданные владельца соединения, передаваемые приложением-хостом |
 | `vless/` | ссылка `vless://` (`uri.rs`), заголовки VLESS (`protocol.rs`), Vision, UDP, XUDP, Mux.Cool |
 | `trojan.rs` | заголовок и UDP-пакеты Trojan |
@@ -219,7 +220,8 @@ flowchart LR
     себя через другие);
   - раскрывает пресеты (`route.presets`) в правила и наборы правил
     (`rule_set`) в условия правил и DNS;
-  - строит выходы по порядку: VLESS, Trojan, SOCKS5 и HTTP CONNECT через
+  - строит выходы по порядку: VLESS, Trojan, Hysteria 2, Shadowsocks, SOCKS5
+    и HTTP CONNECT через
     статическую фабрику `outbound_factory`; `direct`, `block`, `dns` и группы
     остаются в `build_core`;
   - когда все выходы собраны, заполняет участников групп и проверяет
@@ -490,7 +492,7 @@ SOCKS5 задаётся отдельным sing-box выходом `type: "socks
 - **vless, XUDP** (по умолчанию, как у клиента Xray): один VLESS-поток с
   командой Mux на все назначения. Даёт Full Cone NAT и одно рукопожатие
   на все назначения; с Vision-аккаунтом Xray принимает UDP только так.
-  Подробнее — [раздел 14](#14-протоколы-vless-vision-xudp-muxcool-trojan).
+  Подробнее — [раздел 14](#14-протоколы-vless-vision-xudp-muxcool-trojan-и-shadowsocks).
 - **vless, поток на назначение** (`xudp: false`): команда UDP, одна пара
   «источник — назначение» на поток; для серверов без XUDP. Не больше 256
   назначений и 4 МиБ в очередях на сессию.
@@ -983,7 +985,7 @@ flow. `transport::open(&TransportConfig)` открывает только тра
     PR #197 слит; CI #761 прошёл 8/8 jobs на head `3762074`. Reference interop,
     производительность, смена сетевого интерфейса и восстановление не проверены.
 
-## 14. Протоколы: VLESS, Vision, XUDP, Mux.Cool, Trojan
+## 14. Протоколы: VLESS, Vision, XUDP, Mux.Cool, Trojan и Shadowsocks
 
 ### 14.1. VLESS (`vless/protocol.rs`)
 
@@ -1053,6 +1055,42 @@ UDP-пакет: адрес | порт | длина(2) | CRLF | данные
 - Транспорты и TLS/REALITY — те же, что у VLESS.
 - `TrojanConfig` хранит `TransportConfig`; пароль остаётся в модели Trojan,
   а разбор ссылки больше не создаёт фиктивный VLESS UUID.
+
+### 14.6. Классический Shadowsocks AEAD (`shadowsocks_out.rs`)
+
+Реализация использует официальный Rust crate `shadowsocks-rust` для SIP002,
+AEAD framing и шифрования. Ядро открывает серверный TCP-поток через общий
+protected-socket путь; нативный UDP использует тот же codec через адаптер
+защищённого UDP-сокета. В UDP-сессии очереди ограничены, простои закрывают
+задачу, а переполненные очереди и слишком большие датаграммы отбрасываются.
+
+Поддерживаются только `aes-128-gcm`, `aes-256-gcm` и
+`chacha20-ietf-poly1305`. Форматы sing-box, Xray и подписок приводятся к
+классической ссылке `ss://`; Clash YAML записи с неподдерживаемыми plugin,
+UDP-over-TCP или `udp: false` пропускаются и учитываются в диагностике.
+SIP003 plugins, пользовательские транспортные ограничения и цепочки для
+Shadowsocks пока отклоняются. Старые stream ciphers и Shadowsocks 2022 нельзя
+передавать в этот режим: у 2022 отдельные ключевые и replay-protection правила.
+Независимый Xray TCP/UDP echo test включён в `interop_xray.sh`; его результат
+фиксируется только после CI.
+
+### 14.6. Классический Shadowsocks AEAD (`shadowsocks_out.rs`)
+
+Реализация использует официальный Rust crate `shadowsocks-rust` для SIP002,
+AEAD framing и шифрования. Ядро открывает серверный TCP-поток через общий
+protected-socket путь; нативный UDP использует тот же codec через адаптер
+защищённого UDP-сокета. В UDP-сессии очереди ограничены, простои закрывают
+задачу, а переполненные очереди и слишком большие датаграммы отбрасываются.
+
+Поддерживаются только `aes-128-gcm`, `aes-256-gcm` и
+`chacha20-ietf-poly1305`. Форматы sing-box, Xray и подписок приводятся к
+классической ссылке `ss://`; Clash YAML записи с неподдерживаемыми plugin,
+UDP-over-TCP или `udp: false` пропускаются и учитываются в диагностике.
+SIP003 plugins, пользовательские транспортные ограничения и цепочки для
+Shadowsocks пока отклоняются. Старые stream ciphers и Shadowsocks 2022 нельзя
+передавать в этот режим: у 2022 отдельные ключевые и replay-protection правила.
+Независимый Xray TCP/UDP echo test включён в `interop_xray.sh`; его результат
+фиксируется только после CI.
 
 ## 15. REALITY и TLS-отпечатки
 

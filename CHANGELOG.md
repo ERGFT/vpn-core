@@ -8,6 +8,13 @@
 
 ## [Не выпущено]
 
+### Shadowsocks
+- Добавлен классический Shadowsocks AEAD outbound для TCP и нативного UDP;
+  поддерживаются `aes-128-gcm`, `aes-256-gcm` и
+  `chacha20-ietf-poly1305`. Импортируются ссылки SIP002 и записи sing-box,
+  Xray и Clash YAML. SIP003 plugins, UDP-over-TCP, legacy stream ciphers и
+  Shadowsocks 2022 не поддерживаются.
+
 ### Hysteria 2
 - TCP/UDP runtime подключён к outbound factory, sing-box config и URI-подпискам; один outbound переиспользует аутентифицированное QUIC-соединение. Поддерживаемые поля sing-box преобразуются через URI-модель, неподдерживаемые опции отклоняются. Интеграция слита в PR #199; CI прошёл 16 проверок, 1 проверка пропущена. Совместимость с официальным сервером и смена сети пока не проверены, поэтому функция остаётся экспериментальной.
 - Добавлен `ca_file` для пользовательского PEM-набора корневых сертификатов Hysteria 2 в основной конфигурации. Проверка сертификата остаётся включённой; подписка не может хранить локальный путь и пропускает такую запись как неподдерживаемую.
@@ -258,6 +265,12 @@ and the project follows [SemVer](https://semver.org/). The detailed
 stage-by-stage decision history is in [PLAN.md](PLAN.md) (in Russian).
 
 ## [Unreleased]
+
+### Shadowsocks
+- Added a classic Shadowsocks AEAD outbound for TCP and native UDP, supporting
+  `aes-128-gcm`, `aes-256-gcm`, and `chacha20-ietf-poly1305`. SIP002 links and
+  sing-box, Xray, and Clash YAML records are imported. SIP003 plugins,
+  UDP-over-TCP, legacy stream ciphers, and Shadowsocks 2022 are unsupported.
 
 ### Hysteria 2
 - Wired the TCP/UDP runtime into the outbound factory, sing-box config, and URI subscriptions; each outbound reuses its authenticated QUIC connection. Supported sing-box fields are converted through the URI model, and unsupported options are rejected. PR #199 merged with 16 checks passed and 1 skipped. Official-server interoperability and network handover remain unverified, so the integration is experimental.
