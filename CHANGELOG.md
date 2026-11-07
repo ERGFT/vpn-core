@@ -10,6 +10,7 @@
 
 ### Hysteria 2
 - TCP/UDP runtime подключён к outbound factory, sing-box config и URI-подпискам; один outbound переиспользует аутентифицированное QUIC-соединение. Поддерживаемые поля sing-box преобразуются через URI-модель, неподдерживаемые опции отклоняются. Интеграция слита в PR #199; CI прошёл 16 проверок, 1 проверка пропущена. Совместимость с официальным сервером и смена сети пока не проверены, поэтому функция остаётся экспериментальной.
+- Добавлен `ca_file` для пользовательского PEM-набора корневых сертификатов Hysteria 2 в основной конфигурации. Проверка сертификата остаётся включённой; подписка не может хранить локальный путь и пропускает такую запись как неподдерживаемую.
 
 ### SDK и C ABI
 - Добавлены manifest архива с SHA-256 каждого файла и сведениями о сборке,
@@ -259,7 +260,8 @@ stage-by-stage decision history is in [PLAN.md](PLAN.md) (in Russian).
 ## [Unreleased]
 
 ### Hysteria 2
-- Wired the TCP/UDP runtime into the outbound factory, sing-box config, and URI subscriptions; each outbound reuses its authenticated QUIC connection. Supported sing-box fields are converted through the URI model, and unsupported options are rejected. The integration is experimental: this branch's CI and interoperability with the official server have not yet been verified.
+- Wired the TCP/UDP runtime into the outbound factory, sing-box config, and URI subscriptions; each outbound reuses its authenticated QUIC connection. Supported sing-box fields are converted through the URI model, and unsupported options are rejected. PR #199 merged with 16 checks passed and 1 skipped. Official-server interoperability and network handover remain unverified, so the integration is experimental.
+- Added `ca_file` for a custom PEM trust-root set on Hysteria 2 outbounds in the main config. Certificate verification stays enabled; subscriptions cannot store a local path and skip such records as unsupported.
 
 ### SDK and C ABI
 - SDK archives now include a per-file SHA-256 manifest and build metadata,

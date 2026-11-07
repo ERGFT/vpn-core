@@ -148,12 +148,15 @@ fn allocate_udp_session_id(next: &AtomicU64) -> Result<u32> {
 
 /// Connect securely to a Hysteria 2 server and authenticate it. Port hopping
 /// starts after authentication and uses the protocol's default 30-second interval.
-pub(crate) async fn connect(config: &Hysteria2Config) -> Result<Hysteria2Connection> {
+pub(crate) async fn connect(
+    config: &Hysteria2Config,
+    roots: Option<rustls::RootCertStore>,
+) -> Result<Hysteria2Connection> {
     validate_supported_options(config)?;
     let port = quic::random_hysteria2_port(&config.ports)?;
     let addrs = tcp_tls::resolve_server(&config.server, port).await?;
     let tls_name = config.sni.as_deref().unwrap_or(&config.server);
-    let client_config = quic::hysteria2_client_config(None, vec![b"h3".to_vec()])?;
+    let client_config = quic::hysteria2_client_config(roots, vec![b"h3".to_vec()])?;
     let mut last_error = None;
 
     for addr in addrs {
