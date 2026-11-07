@@ -10,6 +10,8 @@ import unittest
 import zipfile
 from pathlib import Path
 
+from check_ffi_sdk import expected_library_kinds
+
 CHECKER = Path(__file__).with_name("check_ffi_sdk.py")
 DOCS = ("LIBRARY.md", "LIBRARY.en.md", "API.md", "API.en.md",
         "APPLICATION_ROUTING.md", "APPLICATION_ROUTING.en.md")
@@ -21,6 +23,23 @@ TARGET = "x86_64-unknown-linux-gnu"
 
 
 class ArchiveCheck(unittest.TestCase):
+    def test_windows_manifest_accepts_and_requires_bundled_native_libraries(self):
+        records = {
+            "reality.dll": "shared",
+            "reality.dll.lib": "import",
+            "reality.lib": "static",
+            "windows.0.53.0.lib": "static",
+        }
+        expected_library_kinds(
+            "windows-x86_64", records, ["kernel32.lib", "windows.0.53.0.lib"]
+        )
+        with self.assertRaisesRegex(SystemExit, "missing bundled Windows"):
+            expected_library_kinds(
+                "windows-x86_64",
+                {name: kind for name, kind in records.items() if name != "windows.0.53.0.lib"},
+                ["windows.0.53.0.lib"],
+            )
+
     def test_valid_corrupt_and_missing(self):
         with tempfile.TemporaryDirectory() as directory:
             archive = Path(directory) / "sdk.zip"

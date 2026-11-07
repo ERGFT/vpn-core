@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import platform
 import re
 import shlex
@@ -36,6 +37,7 @@ TARGETS = {
 }
 MINIMUM_OS = {"ios-arm64": "13.0"}
 ANSI_ESCAPE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
+WINDOWS_IMPORT_LIBRARY = re.compile(r"windows(?:\.\d+){3}\.lib", re.IGNORECASE)
 
 
 def library_kind(name: str) -> str:
@@ -81,6 +83,23 @@ def parse_native_static_libs(text: str) -> list[str]:
     return shlex.split(lines[0])
 
 
+def resolve_windows_native_libraries(arguments: list[str], cargo_home: Path) -> list[Path]:
+    """Find generated Windows API import libraries required by a static SDK."""
+    registry = cargo_home / "registry" / "src"
+    package_roots = list(registry.glob("*/windows_x86_64_msvc-*/lib"))
+    libraries: list[Path] = []
+    for name in dict.fromkeys(
+        argument for argument in arguments if WINDOWS_IMPORT_LIBRARY.fullmatch(argument)
+    ):
+        matches = [root / name for root in package_roots if (root / name).is_file()]
+        if not matches:
+            raise ValueError(f"cannot find Cargo-provided Windows import library: {name}")
+        # Multiple registry indexes can contain the same locked package. Their
+        # artifacts have the same path and contents; any matching copy works.
+        libraries.append(matches[0])
+    return libraries
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--platform", required=True)
@@ -106,7 +125,15 @@ def main() -> None:
     except (OSError, ValueError) as error:
         parser.error(f"cannot read native static link arguments: {error}")
 
-    for path in args.library:
+    libraries = list(args.library)
+    if args.platform == "windows-x86_64":
+        cargo_home = Path(os.environ.get("CARGO_HOME", Path.home() / ".cargo"))
+        try:
+            libraries.extend(resolve_windows_native_libraries(native_static_libs, cargo_home))
+        except ValueError as error:
+            parser.error(str(error))
+
+    for path in libraries:
         if not path.is_file():
             parser.error(f"library does not exist: {path}")
 
@@ -124,7 +151,7 @@ def main() -> None:
         for name in DOCS:
             shutil.copy2(ROOT / "docs" / name, stage / "docs" / name)
         shutil.copy2(ROOT / "LICENSE", stage / "LICENSE")
-        for library in args.library:
+        for library in libraries:
             shutil.copy2(library, stage / "lib" / library.name)
 
         generate_metadata(stage, args.platform, args.version.removeprefix("v"), native_static_libs)

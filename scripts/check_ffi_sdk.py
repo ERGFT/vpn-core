@@ -4,6 +4,7 @@
 import argparse
 import hashlib
 import json
+import re
 import zipfile
 from pathlib import Path
 
@@ -23,6 +24,24 @@ TARGETS = {
 }
 MINIMUM_OS = {"ios-arm64": "13.0"}
 PKG_CONFIG_PLATFORMS = {"linux-x86_64", "macos-arm64"}
+WINDOWS_IMPORT_LIBRARY = re.compile(r"windows(?:\.\d+){3}\.lib", re.IGNORECASE)
+
+
+def expected_library_kinds(platform, library_records, native_arguments):
+    expected = {
+        name: ("import" if name.endswith(".dll.lib") else
+               "shared" if name.endswith((".so", ".dylib", ".dll")) else "static")
+        for name in LIBRARIES[platform]
+    }
+    if platform == "windows-x86_64":
+        bundled = {name for name in native_arguments
+                   if WINDOWS_IMPORT_LIBRARY.fullmatch(name)}
+        if not bundled.issubset(library_records):
+            missing = sorted(bundled - set(library_records))
+            raise SystemExit(f"SDK is missing bundled Windows import libraries: {missing}")
+        expected.update({name: "static" for name in bundled})
+    if library_records != expected:
+        raise SystemExit("SDK manifest library list/kinds do not match platform")
 
 
 def main():
@@ -115,13 +134,7 @@ def main():
         library_records = {item["path"].removeprefix("lib/"): item.get("kind")
                            for item in records if item["path"].startswith("lib/")
                            and item.get("kind") is not None}
-        expected_kinds = {
-            name: ("import" if name.endswith(".dll.lib") else
-                   "shared" if name.endswith((".so", ".dylib", ".dll")) else "static")
-            for name in LIBRARIES[args.platform]
-        }
-        if library_records != expected_kinds:
-            raise SystemExit("SDK manifest library list/kinds do not match platform")
+        expected_library_kinds(args.platform, library_records, static_link["arguments"])
     print(f"SDK archive and checksum OK: {args.archive}")
 
 
