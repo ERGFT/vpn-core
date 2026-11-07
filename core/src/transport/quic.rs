@@ -300,7 +300,7 @@ mod tests {
     #[tokio::test]
     async fn hop_sends_to_the_new_remote_port() {
         use quinn::udp::Transmit;
-        use quinn::{AsyncUdpSocket, UdpPoller};
+        use quinn::AsyncUdpSocket;
 
         let (first, second) = (20_000..60_000)
             .find_map(|port| {
