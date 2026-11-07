@@ -1,6 +1,6 @@
 # План интеграции Hysteria 2
 
-**Статус:** этапы 1–2 завершены (PR #187 и #188); этап 3 реализован в PR #189; этап 4 (TCP relay) реализован в PR #190 и все 8 CI jobs прошли в последнем запуске; этап 5 (UDP relay) разрабатывается в отдельной ветке поверх PR #190. Рабочий production outbound пока отсутствует.
+**Статус:** этапы 1–2 завершены (PR #187 и #188); этап 3 реализован в PR #189; этап 4 (TCP relay) реализован в PR #190; этап 5 (UDP relay и unit tests) реализован в PR #192. Все 8 CI jobs PR #192 прошли на commit `a93b890`; PR остаётся открытым поверх #190. Эталонная interop и production outbound ещё не выполнены.
 **Срез кода:** `main`, commit `e43066b` (PR #188).
 **Область:** только клиентский прокси-выход в существующем ядре.
 
@@ -58,7 +58,7 @@ PR #187 добавил типизированную модель и строги
 
 Этап 4 реализован в PR #190 (`codex/hysteria2-tcp-relay`), stacked on #189: TCPRequest с QUIC-varint ID `0x401`, ограниченный TCPResponse, таймауты и bidirectional stream на назначение. В последней попытке CI все 8 jobs прошли; первый coverage запуск упал на интеграционном тесте `app_groups`, его повтор прошёл. Код пока не подключён к `Outbound`/production factory.
 
-Этап 5 разрабатывается в `codex/hysteria2-udp-relay`, поверх PR #190. Добавлены формат UDPMessage, QUIC unreliable datagrams, уникальные возрастающие Session ID на QUIC connection, wrapping Packet ID, фрагментация по актуальному `max_datagram_size`, сборка переставленных фрагментов и ограничение состояния: до 128 незавершённых пакетов, до 256 KiB буфера сборки и TTL 5 секунд. UDP association имеет очередь до 256 ответов и idle timeout 120 секунд; размер одной UDP-полезной нагрузки ограничен 4096 байтами по эталонному клиенту. Эталонная server/client interop и CI этой ветки ещё не выполнены. Ни TCP, ни UDP пока не доступны через production outbound.
+Этап 5 реализован в PR #192 (`codex/hysteria2-udp-relay`), stacked on #190. Добавлены UDPMessage, QUIC unreliable datagrams, возрастающие Session ID на QUIC connection, wrapping Packet ID, фрагментация по `max_datagram_size`, сборка переставленных фрагментов и пределы состояния: до 128 незавершённых пакетов, до 256 KiB буфера сборки и TTL 5 секунд. UDP association имеет очередь до 256 ответов и idle timeout 120 секунд; payload ограничен 4096 байтами. Все 8 CI jobs прошли на `a93b890`, включая workspace tests, coverage и платформенные проверки. Эталонная server/client interop ещё не выполнена; PR остаётся открытым. TCP и UDP не доступны через production outbound.
 
 Внешний Android-телефон не требуется для разработки parser/codec и локального interop. Он станет полезен для финального device-level прогона Android VPN/TUN, Wi-Fi↔cellular handover и восстановления после sleep; одна Android cross-build этого поведения не доказывает.
 
