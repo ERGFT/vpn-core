@@ -326,7 +326,7 @@ fn encode_tcp_request(target: &Address, port: u16) -> Result<Vec<u8>> {
     Ok(request)
 }
 
-pub(super) fn encode_quic_varint(value: u64, output: &mut Vec<u8>) {
+pub(crate) fn encode_quic_varint(value: u64, output: &mut Vec<u8>) {
     match value {
         0..=63 => output.push(value as u8),
         64..=16_383 => output.extend_from_slice(&((value as u16) | 0x4000).to_be_bytes()),
@@ -354,7 +354,7 @@ async fn read_quic_varint<R: AsyncRead + Unpin>(reader: &mut R) -> Result<u64> {
     decode_quic_varint(&encoded[..len]).map(|(value, _)| value)
 }
 
-pub(super) fn decode_quic_varint(encoded: &[u8]) -> Result<(u64, usize)> {
+pub(crate) fn decode_quic_varint(encoded: &[u8]) -> Result<(u64, usize)> {
     let first = *encoded
         .first()
         .ok_or_else(|| Error::Protocol("Hysteria 2: empty QUIC variable-length integer".into()))?;
