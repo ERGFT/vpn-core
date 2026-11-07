@@ -396,7 +396,7 @@ fn encode_udp_fragments(
         ));
     }
     let mut address_len = Vec::new();
-    super::encode_quic_varint(address.len() as u64, &mut address_len);
+    crate::hysteria2_transport::encode_quic_varint(address.len() as u64, &mut address_len);
     let header_len = 8usize
         .checked_add(address_len.len())
         .and_then(|n| n.checked_add(address.len()))
@@ -444,7 +444,8 @@ fn decode_udp_message(bytes: &[u8]) -> Result<UdpFragment> {
     {
         return Err(protocol_error("UDP fragment index or count is invalid"));
     }
-    let (address_len, address_len_bytes) = super::decode_quic_varint(&bytes[8..])?;
+    let (address_len, address_len_bytes) =
+        crate::hysteria2_transport::decode_quic_varint(&bytes[8..])?;
     let address_len = usize::try_from(address_len)
         .map_err(|_| protocol_error("UDP address length overflows usize"))?;
     if address_len == 0 || address_len > MAX_ADDRESS {
