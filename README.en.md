@@ -117,7 +117,7 @@ from an extracted ZIP. Public headers and examples are in [`ffi/`](ffi/).
 | Experimental | `fragment`, `noises`, and application routing integration |
 | Not supported | KCP transport; ICMP/ping through TUN |
 Importing an Xray-core or sing-box config does not imply support for every option in those formats.
-The Hysteria 2 TCP/UDP runtime is wired into the outbound factory, sing-box configuration, and URI subscriptions. Interoperability with the official server, production readiness, network changes, and connection recovery are not yet verified; see the [Hysteria 2 plan](docs/HYSTERIA2_IMPLEMENTATION_PLAN.en.md).
+The Hysteria 2 TCP/UDP runtime is wired into the outbound factory, sing-box configuration, and URI subscriptions. A local Windows TCP/UDP echo run against the official v2.13.0 server passed on PR #201 head `fdc24a8` with a custom CA. This is a limited loopback smoke test; overall production readiness, network handover, and connection recovery remain unverified. See the [Hysteria 2 plan](docs/HYSTERIA2_IMPLEMENTATION_PLAN.en.md).
 
 The [feature matrix](docs/FEATURES.en.md) lists capabilities, maturity, and specific checks. Scenarios and test results are documented in the [testing guide](docs/TESTING.en.md).
 
