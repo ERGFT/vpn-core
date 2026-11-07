@@ -129,6 +129,8 @@ impl Drop for Hysteria2Connection {
     }
 }
 
+// Keep `fetch_update` for the repository's MSRV; newer stable toolchains deprecate it.
+#[allow(deprecated)]
 fn allocate_udp_session_id(next: &AtomicU64) -> Result<u32> {
     next.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |id| {
         (id <= u64::from(u32::MAX)).then_some(id + 1)
