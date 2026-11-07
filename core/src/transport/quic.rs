@@ -22,6 +22,7 @@ use tokio::sync::mpsc;
 
 use crate::app::outbound::UdpSession;
 use crate::error::{Error, Result};
+use crate::hysteria2::PortRange;
 use crate::hysteria2_obfs::{salamander_unwrap, salamander_wrap};
 use crate::vless::Address;
 
@@ -88,13 +89,18 @@ fn client_config_inner(
 
 #[cfg(test)]
 mod tests {
+    use std::net::{Ipv4Addr, SocketAddr};
     use std::sync::Arc;
     use std::time::Duration;
 
     use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
     use rustls::RootCertStore;
 
-    use super::{client_config, hysteria2_client_config};
+    use super::{
+        client_config, hysteria2_client_config, random_hysteria2_port, PortHopSocket, PortHopState,
+        RecvMeta,
+    };
+    use crate::hysteria2::PortRange;
 
     #[tokio::test]
     async fn hysteria2_uses_bbr_and_other_quic_clients_keep_cubic() {
@@ -168,6 +174,128 @@ mod tests {
         regular_connection.close(0u32.into(), b"test complete");
         server.close(0u32.into(), b"test complete");
     }
+
+    #[test]
+    fn initial_hysteria2_port_is_chosen_from_configured_ranges() {
+        let ports = [
+            PortRange {
+                first: 443,
+                last: 445,
+            },
+            PortRange {
+                first: 8443,
+                last: 8443,
+            },
+        ];
+        for _ in 0..100 {
+            let port = random_hysteria2_port(&ports).unwrap();
+            assert!(ports
+                .iter()
+                .any(|range| (range.first..=range.last).contains(&port)));
+        }
+        assert!(random_hysteria2_port(&[]).is_err());
+    }
+
+    #[test]
+    fn port_hop_never_repeats_the_current_port_when_alternatives_exist() {
+        let ports = [
+            PortRange {
+                first: 443,
+                last: 445,
+            },
+            PortRange {
+                first: 8443,
+                last: 8443,
+            },
+        ];
+        for current in [443, 444, 445, 8443] {
+            for _ in 0..100 {
+                let next = PortHopState::next_port(&ports, current);
+                assert_ne!(next, current);
+                assert!(ports
+                    .iter()
+                    .any(|range| (range.first..=range.last).contains(&next)));
+            }
+        }
+        let overlapping = [
+            PortRange {
+                first: 443,
+                last: 444,
+            },
+            PortRange {
+                first: 444,
+                last: 445,
+            },
+        ];
+        for _ in 0..100 {
+            assert_ne!(PortHopState::next_port(&overlapping, 444), 444);
+        }
+    }
+
+    #[tokio::test]
+    async fn hop_uses_a_fresh_socket_and_receives_from_the_previous_socket() {
+        use std::io::IoSliceMut;
+        use std::task::Poll;
+
+        use quinn::AsyncUdpSocket;
+
+        let state = PortHopState::new(
+            vec![PortRange {
+                first: 443,
+                last: 444,
+            }],
+            443,
+            false,
+        )
+        .unwrap();
+        let old_local_addr = state
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .active
+            .local_addr()
+            .unwrap();
+        let old_addr = SocketAddr::from((Ipv4Addr::LOCALHOST, old_local_addr.port()));
+
+        state.rotate(false).unwrap();
+        let new_addr = state
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .active
+            .local_addr()
+            .unwrap();
+        assert_ne!(old_addr.port(), new_addr.port());
+
+        let sender = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        sender.send_to(b"late packet", old_addr).await.unwrap();
+
+        let socket = PortHopSocket { state };
+        let mut buffer = [0u8; 64];
+        let (received, packet_len) = {
+            let mut bufs = [IoSliceMut::new(&mut buffer)];
+            let mut meta = [RecvMeta {
+                addr: "127.0.0.1:0".parse().unwrap(),
+                len: 0,
+                stride: 0,
+                ecn: None,
+                dst_ip: None,
+            }];
+            let received = tokio::time::timeout(Duration::from_secs(2), async {
+                std::future::poll_fn(|cx| match socket.poll_recv(cx, &mut bufs, &mut meta) {
+                    Poll::Ready(result) => Poll::Ready(result),
+                    Poll::Pending => Poll::Pending,
+                })
+                .await
+            })
+            .await
+            .unwrap()
+            .unwrap();
+            (received, meta[0].len)
+        };
+        assert_eq!(received, 1);
+        assert_eq!(&buffer[..packet_len], b"late packet");
+    }
 }
 
 /// Точка QUIC на настоящем UDP-сокете (с меткой `net_protect`).
@@ -207,6 +335,331 @@ pub fn plain_endpoint(
         Arc::new(PlainSocket(sock)),
         Arc::new(quinn::TokioRuntime),
     )?)
+}
+
+/// Hysteria keeps the previous local UDP socket open briefly while moving the
+/// QUIC connection to a fresh source port. This lets in-flight packets arrive
+/// during a hop instead of only changing the server destination port.
+#[derive(Debug)]
+struct HopSocketState {
+    ports: Vec<PortRange>,
+    active: Arc<PlainSocket>,
+    active_port: u16,
+    previous: Vec<(Arc<PlainSocket>, tokio::time::Instant)>,
+}
+
+#[derive(Debug)]
+pub(crate) struct PortHopState {
+    state: Mutex<HopSocketState>,
+}
+
+const PORT_HOP_SOCKET_GRACE: Duration = Duration::from_secs(2);
+
+pub(crate) fn random_hysteria2_port(ports: &[PortRange]) -> Result<u16> {
+    let total: u64 = ports
+        .iter()
+        .map(|range| u64::from(range.last) - u64::from(range.first) + 1)
+        .sum();
+    if total == 0 {
+        return Err(Error::Config("Hysteria 2: список портов пуст".into()));
+    }
+    let mut index = rand::random::<u64>() % total;
+    for range in ports {
+        let width = u64::from(range.last) - u64::from(range.first) + 1;
+        if index < width {
+            return Ok(range.first + index as u16);
+        }
+        index -= width;
+    }
+    Err(Error::Config("Hysteria 2: не удалось выбрать порт".into()))
+}
+
+impl PortHopState {
+    fn bind_socket(ipv6: bool) -> Result<Arc<PlainSocket>> {
+        let bind = if ipv6 {
+            SocketAddr::from((std::net::Ipv6Addr::UNSPECIFIED, 0))
+        } else {
+            SocketAddr::from((Ipv4Addr::UNSPECIFIED, 0))
+        };
+        let sock = crate::net_protect::udp_bind(bind)?.into_std()?;
+        sock.set_nonblocking(true)?;
+        Ok(Arc::new(PlainSocket(tokio::net::UdpSocket::from_std(
+            sock,
+        )?)))
+    }
+
+    fn new(ports: Vec<PortRange>, initial_port: u16, ipv6: bool) -> Result<Arc<Self>> {
+        if ports.is_empty()
+            || !ports
+                .iter()
+                .any(|range| (range.first..=range.last).contains(&initial_port))
+        {
+            return Err(Error::Config(
+                "Hysteria 2: начальный порт отсутствует в списке port hopping".into(),
+            ));
+        }
+        Ok(Arc::new(Self {
+            state: Mutex::new(HopSocketState {
+                ports,
+                active: Self::bind_socket(ipv6)?,
+                active_port: initial_port,
+                previous: Vec::new(),
+            }),
+        }))
+    }
+
+    fn next_port(ports: &[PortRange], current: u16) -> u16 {
+        let total: u64 = ports
+            .iter()
+            .map(|range| u64::from(range.last) - u64::from(range.first) + 1)
+            .sum();
+        if total <= 1 {
+            return current;
+        }
+        let current_occurrences: u64 = ports
+            .iter()
+            .filter(|range| (range.first..=range.last).contains(&current))
+            .count() as u64;
+        let alternatives = total - current_occurrences;
+        if alternatives == 0 {
+            return current;
+        }
+        let mut index = rand::random::<u64>() % alternatives;
+        for range in ports {
+            let lower = u64::from(range.last) - u64::from(range.first) + 1;
+            if (range.first..=range.last).contains(&current) {
+                let before_current = u64::from(current - range.first);
+                if index < before_current {
+                    return range.first + index as u16;
+                }
+                index -= before_current;
+                let after_current = u64::from(range.last - current);
+                if index < after_current {
+                    return current + 1 + index as u16;
+                }
+                index -= after_current;
+            } else if index < lower {
+                return range.first + index as u16;
+            } else {
+                index -= lower;
+            }
+        }
+        current
+    }
+
+    fn rotate(&self, ipv6: bool) -> Result<u16> {
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        state
+            .previous
+            .retain(|(_, deadline)| *deadline > tokio::time::Instant::now());
+        if state
+            .ports
+            .iter()
+            .map(|range| u32::from(range.last) - u32::from(range.first) + 1)
+            .sum::<u32>()
+            <= 1
+        {
+            return Ok(state.active_port);
+        }
+        let next = Self::next_port(&state.ports, state.active_port);
+        let socket = Self::bind_socket(ipv6)?;
+        let old = std::mem::replace(&mut state.active, socket);
+        state
+            .previous
+            .push((old, tokio::time::Instant::now() + PORT_HOP_SOCKET_GRACE));
+        state.active_port = next;
+        Ok(next)
+    }
+
+    pub(crate) fn start(
+        self: &Arc<Self>,
+        interval: Duration,
+        ipv6: bool,
+    ) -> Option<tokio::task::JoinHandle<()>> {
+        let ports_len: u64 = self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .ports
+            .iter()
+            .map(|range| u64::from(range.last) - u64::from(range.first) + 1)
+            .sum();
+        if ports_len <= 1 {
+            return None;
+        }
+        let state = Arc::clone(self);
+        Some(tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(interval).await;
+                match state.rotate(ipv6) {
+                    Ok(port) => tracing::debug!(port, "Hysteria 2 UDP source socket rotated"),
+                    Err(error) => tracing::warn!(%error, "Hysteria 2 UDP socket rotation failed"),
+                }
+            }
+        }))
+    }
+}
+
+#[derive(Debug)]
+struct PortHopSocket {
+    state: Arc<PortHopState>,
+}
+
+impl AsyncUdpSocket for PortHopSocket {
+    fn create_io_poller(self: Arc<Self>) -> Pin<Box<dyn UdpPoller>> {
+        Box::pin(PortHopPoller { socket: self })
+    }
+
+    fn try_send(&self, transmit: &Transmit) -> io::Result<()> {
+        let state = self
+            .state
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let socket = &state.active.0;
+        let mut destination = transmit.destination;
+        destination.set_port(state.active_port);
+        let send_one = |contents: &[u8]| socket.try_send_to(contents, destination).map(|_| ());
+        match transmit.segment_size {
+            Some(segment_size) if segment_size < transmit.contents.len() => {
+                if segment_size == 0 {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidInput,
+                        "QUIC provided a zero-sized UDP segment",
+                    ));
+                }
+                for packet in transmit.contents.chunks(segment_size) {
+                    send_one(packet)?;
+                }
+                Ok(())
+            }
+            _ => send_one(transmit.contents),
+        }
+    }
+
+    fn poll_recv(
+        &self,
+        cx: &mut Context,
+        bufs: &mut [IoSliceMut<'_>],
+        meta: &mut [RecvMeta],
+    ) -> Poll<io::Result<usize>> {
+        let mut sockets = {
+            let mut state = self
+                .state
+                .state
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            state
+                .previous
+                .retain(|(_, deadline)| *deadline > tokio::time::Instant::now());
+            let mut sockets = vec![Arc::clone(&state.active)];
+            sockets.extend(state.previous.iter().map(|(socket, _)| Arc::clone(socket)));
+            sockets
+        };
+        let buffer = bufs.first_mut().ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "QUIC receive buffer is missing",
+            )
+        });
+        let buffer = match buffer {
+            Ok(buffer) => buffer,
+            Err(error) => return Poll::Ready(Err(error)),
+        };
+        let metadata = meta.first_mut().ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "QUIC receive metadata is missing",
+            )
+        });
+        let metadata = match metadata {
+            Ok(metadata) => metadata,
+            Err(error) => return Poll::Ready(Err(error)),
+        };
+        for socket in sockets.drain(..) {
+            let mut read_buf = tokio::io::ReadBuf::new(buffer);
+            match socket.0.poll_recv_from(cx, &mut read_buf) {
+                Poll::Ready(Ok(addr)) => {
+                    let len = read_buf.filled().len();
+                    *metadata = RecvMeta {
+                        addr,
+                        len,
+                        stride: len,
+                        ecn: None,
+                        dst_ip: None,
+                    };
+                    return Poll::Ready(Ok(1));
+                }
+                Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
+                Poll::Pending => {}
+            }
+        }
+        Poll::Pending
+    }
+
+    fn local_addr(&self) -> io::Result<SocketAddr> {
+        self.state
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .active
+            .local_addr()
+    }
+}
+
+#[derive(Debug)]
+struct PortHopPoller {
+    socket: Arc<PortHopSocket>,
+}
+
+impl UdpPoller for PortHopPoller {
+    fn poll_writable(self: Pin<&mut Self>, cx: &mut Context) -> Poll<io::Result<()>> {
+        let state = self
+            .socket
+            .state
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        state.active.0.poll_send_ready(cx)
+    }
+}
+
+/// Create a Hysteria endpoint using a random initial remote port and a fresh
+/// local UDP socket per hop; optional Salamander framing wraps each datagram.
+pub(crate) fn hysteria2_endpoint(
+    ipv6: bool,
+    ports: Vec<PortRange>,
+    initial_port: u16,
+    salamander_key: Option<&[u8]>,
+) -> Result<(quinn::Endpoint, Option<Arc<PortHopState>>)> {
+    if !ports
+        .iter()
+        .any(|range| range.first != initial_port || range.last != initial_port)
+    {
+        let endpoint = match salamander_key {
+            Some(key) => salamander_endpoint(ipv6, key)?,
+            None => direct_endpoint(ipv6)?,
+        };
+        return Ok((endpoint, None));
+    }
+    let state = PortHopState::new(ports, initial_port, ipv6)?;
+    let hopping: Arc<dyn AsyncUdpSocket> = Arc::new(PortHopSocket {
+        state: Arc::clone(&state),
+    });
+    let socket: Arc<dyn AsyncUdpSocket> = match salamander_key {
+        Some(key) => SalamanderSocket::new(hopping, key),
+        None => hopping,
+    };
+    let endpoint = quinn::Endpoint::new_with_abstract_socket(
+        quinn::EndpointConfig::default(),
+        None,
+        socket,
+        Arc::new(quinn::TokioRuntime),
+    )?;
+    Ok((endpoint, Some(state)))
 }
 
 /// Обычный UDP-сокет для quinn: по датаграмме за вызов.
@@ -265,7 +718,7 @@ impl AsyncUdpSocket for PlainSocket {
 
 /// QUIC socket wrapper that applies the Hysteria 2 Salamander packet format.
 pub(crate) struct SalamanderSocket {
-    inner: Arc<PlainSocket>,
+    inner: Arc<dyn AsyncUdpSocket>,
     key: Arc<[u8]>,
 }
 
@@ -279,9 +732,9 @@ impl fmt::Debug for SalamanderSocket {
 }
 
 impl SalamanderSocket {
-    fn new(sock: tokio::net::UdpSocket, key: &[u8]) -> Arc<Self> {
+    fn new(inner: Arc<dyn AsyncUdpSocket>, key: &[u8]) -> Arc<Self> {
         Arc::new(Self {
-            inner: Arc::new(PlainSocket(sock)),
+            inner,
             key: Arc::from(key),
         })
     }
