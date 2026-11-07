@@ -35,7 +35,9 @@ use tokio::net::{TcpListener, TcpStream, UdpSocket};
 use tokio_rustls::{TlsAcceptor, TlsConnector};
 use x25519_dalek::{PublicKey, StaticSecret};
 
-use reality_core::transport::tcp_tls::{connect_and_handshake, ensure_crypto_provider};
+use reality_core::transport::tcp_tls::{
+    connect_and_handshake, connect_command_config, ensure_crypto_provider,
+};
 use reality_core::transport::{dial, TcpVlessStream, TransportConfig};
 use reality_core::vless::{Address, Command as VlessCommand, VlessConfig};
 
@@ -715,9 +717,16 @@ async fn vision_plain_payload_against_xray() {
     .await;
     let cfg = reality_link(port, &uuid, &keys, "&type=tcp&flow=xtls-rprx-vision");
     let (a, p) = target(echo);
-    let mut s = connect_and_handshake(&TransportConfig::from(&cfg), &cfg.id, a, p)
-        .await
-        .unwrap();
+    let mut s = connect_command_config(
+        &TransportConfig::from(&cfg),
+        &cfg.id,
+        cfg.flow,
+        VlessCommand::Tcp,
+        a,
+        p,
+    )
+    .await
+    .unwrap();
     assert!(matches!(s, TcpVlessStream::Vision(_)));
     echo_roundtrip(&mut s, 300 * 1024).await;
     let TcpVlessStream::Vision(v) = &s else {
@@ -760,9 +769,16 @@ async fn vision_sends_header_when_client_is_silent() {
     .await;
     let cfg = reality_link(port, &uuid, &keys, "&type=tcp&flow=xtls-rprx-vision");
     let (a, p) = target(banner_port);
-    let mut s = connect_and_handshake(&TransportConfig::from(&cfg), &cfg.id, a, p)
-        .await
-        .unwrap();
+    let mut s = connect_command_config(
+        &TransportConfig::from(&cfg),
+        &cfg.id,
+        cfg.flow,
+        VlessCommand::Tcp,
+        a,
+        p,
+    )
+    .await
+    .unwrap();
     let mut buf = [0u8; 23];
     tokio::time::timeout(Duration::from_secs(10), s.read_exact(&mut buf))
         .await
@@ -803,7 +819,15 @@ async fn vision_inner_tls(pqv: Option<(&str, &str)>, expect_ok: bool) {
     };
     let cfg = reality_link(port, &uuid, &keys, &extra);
     let (a, p) = target(inner_port);
-    let res = connect_and_handshake(&TransportConfig::from(&cfg), &cfg.id, a, p).await;
+    let res = connect_command_config(
+        &TransportConfig::from(&cfg),
+        &cfg.id,
+        cfg.flow,
+        VlessCommand::Tcp,
+        a,
+        p,
+    )
+    .await;
     if !expect_ok {
         let err = res
             .expect_err("неверный pqv= должен отвергаться")
@@ -2205,7 +2229,7 @@ async fn xhttp_h3_against_xray() {
         for t in tasks {
             t.await.unwrap();
         }
-        let key = format!("xhttp3|{}", cfg.pool_key());
+        let key = format!("xhttp3|{}", TransportConfig::from(&cfg).pool_key());
         assert_eq!(
             reality_core::transport::h2pool::connections(&key),
             1,
