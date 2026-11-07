@@ -967,7 +967,8 @@ flow. `transport::open(&TransportConfig)` открывает только тра
     отклоняется для совместимости с официальной реализацией, короткие и
     salt-only кадры отбрасываются. UDP payload
     budget уменьшается на размер соли. Wrapper использует Tokio UDP без
-    GSO/ECN; CI прошёл на предыдущем head, проверка границы PSK ожидает CI;
+    GSO/ECN; все 15 обязательных CI checks прошли на head `9a1c1da`
+    (runs #42378078167 и #42378077596), publish штатно пропущен;
     interop и производительность ещё не измерялись.
 
 ## 14. Протоколы: VLESS, Vision, XUDP, Mux.Cool, Trojan
