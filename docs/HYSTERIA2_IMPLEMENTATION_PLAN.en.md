@@ -1,0 +1,59 @@
+# Hysteria 2 Integration Plan
+
+**Status:** preparation for implementation; `vpn-core` does not support Hysteria 2 yet.
+**Code snapshot:** `main`, commit `53ec432` (PR #185).
+**Scope:** client proxy outbound in the existing core only.
+
+## Architectural decision
+
+Hysteria 2 is a QUIC protocol with TCP streams and UDP datagrams. It fits the current `Outbound` contract: `connect()` opens a TCP destination stream and `udp()` returns a `UdpSession` association. A dedicated `Hysteria2Outbound` should own a shared QUIC endpoint/connection and its HTTP/3 control/auth state. Do not create another router or a dynamic registry.
+
+`core/src/transport/quic.rs` already builds QUIC with `quinn`, creates protected UDP sockets through `net_protect`, supports QUIC over `UdpSession`, and bounds internal queues. `core/src/transport/xhttp.rs` already has an HTTP/3 client using `h3` + `h3-quinn`. These modules provide code examples and infrastructure, but they are not a ready Hysteria transport: Hysteria needs its own ALPN/auth headers, stream messages, UDP framing/fragmentation, congestion/rate settings, and port-hopping behavior.
+
+Keep outbound construction in `app/outbound_factory.rs`; typed configuration and strict combination checks belong in `app/config/outbound.rs`. Add explicit parsing for applicable `hysteria2://` links, subscriptions, and supported sing-box input. Do not invent Xray Hysteria support where that outbound type does not exist.
+
+## Protocol requirements and first complete implementation boundary
+
+The official [Hysteria 2 protocol](https://v2.hysteria.network/docs/developers/Protocol/) specifies these required mechanisms:
+
+- HTTP/3 `POST /auth`, `Hysteria-Auth`, and `Hysteria-CC-RX`; authentication succeeds only with status `233`. Any other result must close the connection and return an error.
+- A new QUIC bidirectional stream for each TCP destination, with TCPRequest/TCPResponse validation before exposing the stream to callers.
+- UDP over QUIC unreliable datagrams, with a unique session ID per UDP association, packet IDs, and protocol fragmentation/reassembly. Loss of any fragment discards the whole datagram.
+- RX-rate negotiation from the auth response; `0` and `auto` have distinct meanings. Local bandwidth limits and server negotiation must not be conflated or silently ignored.
+- Optional Salamander wraps QUIC packets with salted BLAKE2b-256 obfuscation. Generate a salt per packet and discard invalid packets.
+
+Settings should follow the current [official client configuration](https://v2.hysteria.network/docs/advanced/Full-Client-Config/): server/port and SNI, certificate verification, custom CA, fingerprint pinning, mTLS, ECH, Salamander, port hopping, bandwidth, and congestion controller. Verify the supported fields and limitations against current URI and sing-box formats during implementation. If an option is unsupported in the first release, reject it clearly; never accept and ignore it.
+
+Out of scope for `vpn-core`: Hysteria's local SOCKS/HTTP listeners, server-side forwarding, NAT hole punching/Realms, Hysteria's own system TUN interface, and server-side `mimic`/XDP mode. UDP routing and TUN belong to the shared core and must work through its existing session model.
+
+## Small PR sequence
+
+1. **Model and input formats.** Typed `Hysteria2Config`, secret redaction, strict validation; sing-box outbound and `hysteria2://` link/subscription parser. Do not add the type to the production factory before the transport is ready; otherwise return a clear error that does not imply a working protocol.
+2. **QUIC and authentication.** Shared endpoint/connection owner, ALPN, TLS validation (insecure disabled by default), HTTP/3 auth, status 233, rate negotiation, timeouts, and task cancellation. Do not change existing DNS/XHTTP `quinn`/`h3` behavior.
+3. **TCP relay and shutdown.** TCPRequest/Response codec, stream forwarding, concurrent streams, cancellation on either side closing and when `Running` stops.
+4. **UDP relay.** Datagram codec, per-association IDs, packet-ID wrap handling, bounded-memory fragmentation/reassembly, queues, and idle cleanup. Never retain unbounded state based on server traffic.
+5. **Transport options.** Salamander; congestion/rate algorithms; port hopping with correct DNS/IPv4/IPv6 and network-change handling. Verify the available `quinn` congestion-controller APIs; do not claim BBR/Brutal until a controller is actually wired and tested. Gecko needs a separate assessment: it is officially experimental and should only be included in its own bounded, interoperable stage.
+6. **Integration and compatibility.** Groups, router, accounting, config reload, subscription formats, and C ABI; update Russian and English docs and the feature matrix together.
+
+Each PR should remain small, carry focused tests, and update both languages. Do not combine separate steps into a claim of a completed protocol without the full verification set.
+
+## Completion checks
+
+Full Hysteria 2 status requires codec/config tests plus interop with a pinned version of the official Go client/server. Verify:
+
+- valid/invalid password, certificate, SNI, CA, and fingerprint;
+- TCP echo, concurrent streams, remote close, timeout, and core shutdown;
+- IPv4/IPv6 UDP echo, multiple destinations per association, large datagrams, fragment loss/reordering, queue overflow, and session cleanup;
+- configured and negotiated rates, and BBR/Reno/Brutal only for controllers actually implemented;
+- Salamander with correct/incorrect passwords, port hopping, network changes, and reconnection;
+- single link and subscription import, groups/failover, and configuration reload;
+- regular CI: fmt, clippy, workspace tests, coverage, Linux interop/TUN, Windows, Android/iOS builds, MSRV, audit, and secrets; preserve Rust/C ABI compatibility.
+
+An external Android phone is not needed for parser/codec development or local interop. It will help with the final device-level Android VPN/TUN run, Wi-Fi↔cellular handover, and wake-from-sleep recovery; an Android cross-build alone does not prove that behavior.
+
+## Sources
+
+- [Hysteria 2 protocol specification](https://v2.hysteria.network/docs/developers/Protocol/)
+- [Hysteria 2 full client configuration](https://v2.hysteria.network/docs/advanced/Full-Client-Config/)
+- [Hysteria 2 changelog](https://v2.hysteria.network/docs/Changelog/)
+- [Quinn congestion control API](https://docs.rs/quinn/latest/quinn/congestion/index.html)
