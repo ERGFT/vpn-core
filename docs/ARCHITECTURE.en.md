@@ -821,6 +821,9 @@ current member.
   - base64 link lists (3x-ui, Marzban, Remnawave), plain text, sing-box
     JSON, Clash YAML;
   - VLESS and Trojan are taken; everything else is counted in the log;
+  - format decoders normalize servers into a shared internal typed
+    VLESS/Trojan model; the public `parse()` keeps its previous result shape
+    for compatibility;
   - `include`/`exclude` are regular expressions on the server name;
   - `security=none` servers are skipped without `allow_insecure`.
 - **Applying**:

@@ -1,0 +1,379 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+//! Format decoders and the normalized subscription server model.
+
+use std::collections::HashMap;
+
+use super::super::config::link::LinkBuilder;
+use crate::error::{Error, Result};
+use base64::Engine;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum NormalizedProtocol {
+    Vless,
+    Trojan,
+}
+
+impl NormalizedProtocol {
+    pub(super) fn as_str(self) -> &'static str {
+        match self {
+            Self::Vless => "vless",
+            Self::Trojan => "trojan",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct NormalizedServer {
+    pub(super) protocol: NormalizedProtocol,
+    pub(super) name: String,
+    pub(super) link: String,
+}
+
+#[derive(Debug, Default, PartialEq, Eq)]
+pub(super) struct NormalizedSubscription {
+    pub(super) servers: Vec<NormalizedServer>,
+    pub(super) skipped: HashMap<String, usize>,
+    pub(super) invalid: usize,
+}
+
+impl NormalizedSubscription {
+    fn push_server(&mut self, scheme: &str, name: String, link: String) {
+        let protocol = match scheme {
+            "vless" => NormalizedProtocol::Vless,
+            "trojan" => NormalizedProtocol::Trojan,
+            _ => return,
+        };
+        self.servers.push(NormalizedServer {
+            protocol,
+            name,
+            link,
+        });
+    }
+}
+
+/// Что нашлось в ответе панели.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct Parsed {
+    /// Имя сервера и vless://-ссылка.
+    pub servers: Vec<(String, String)>,
+    /// Пропущенные протоколы: схема → сколько.
+    pub skipped: HashMap<String, usize>,
+    /// Серверы с неверными полями (порт вне 1–65535).
+    pub invalid: usize,
+}
+
+/// Порт сервера: по умолчанию 443; число вне `u16` или 0 — `None`
+/// (раньше `as u16` молча превращал 70000 в 4464).
+fn port_of(v: Option<&serde_json::Value>) -> Option<u16> {
+    let Some(v) = v else { return Some(443) };
+    let n = v
+        .as_u64()
+        .or_else(|| v.as_str().and_then(|s| s.trim().parse().ok()))?;
+    u16::try_from(n).ok().filter(|&p| p != 0)
+}
+
+fn pct_decode(s: &str) -> String {
+    url::form_urlencoded::parse(format!("x={}", s.replace('+', "%2B")).as_bytes())
+        .next()
+        .map(|(_, v)| v.into_owned())
+        .unwrap_or_else(|| s.to_string())
+}
+
+fn decode_base64(text: &str) -> Option<String> {
+    let compact: String = text.chars().filter(|c| !c.is_whitespace()).collect();
+    if compact.is_empty() {
+        return None;
+    }
+    use base64::engine::general_purpose::{STANDARD, STANDARD_NO_PAD, URL_SAFE, URL_SAFE_NO_PAD};
+    for engine in [&STANDARD, &STANDARD_NO_PAD, &URL_SAFE, &URL_SAFE_NO_PAD] {
+        if let Ok(b) = engine.decode(&compact) {
+            if let Ok(s) = String::from_utf8(b) {
+                return Some(s);
+            }
+        }
+    }
+    None
+}
+
+fn parse_lines(text: &str, out: &mut NormalizedSubscription) {
+    for line in text.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let Some((scheme, rest)) = line.split_once("://") else {
+            continue;
+        };
+        let scheme = scheme.to_ascii_lowercase();
+        if scheme != "vless" && scheme != "trojan" {
+            *out.skipped.entry(scheme).or_default() += 1;
+            continue;
+        }
+        let name = match rest.split_once('#') {
+            Some((_, frag)) if !frag.is_empty() => pct_decode(frag),
+            _ => rest
+                .split(['?', '#'])
+                .next()
+                .and_then(|a| a.rsplit_once('@'))
+                .map(|(_, hp)| hp.to_string())
+                .unwrap_or_else(|| "server".into()),
+        };
+        out.push_server(&scheme, name, line.to_string());
+    }
+}
+
+fn js<'a>(v: &'a serde_json::Value, path: &[&str]) -> Option<&'a serde_json::Value> {
+    let mut cur = v;
+    for k in path {
+        cur = cur.get(k)?;
+    }
+    Some(cur)
+}
+
+fn js_str(v: &serde_json::Value, path: &[&str]) -> String {
+    js(v, path)
+        .and_then(|x| x.as_str())
+        .unwrap_or_default()
+        .to_string()
+}
+
+/// JSON sing-box: `outbounds` с `"type": "vless"`.
+fn parse_singbox(text: &str, out: &mut NormalizedSubscription) -> Result<()> {
+    let v: serde_json::Value = serde_json::from_str(text)
+        .map_err(|e| Error::Config(format!("подписка: JSON sing-box: {e}")))?;
+    let list = v
+        .get("outbounds")
+        .and_then(|o| o.as_array())
+        .cloned()
+        .unwrap_or_default();
+    for o in list {
+        let ty = js_str(&o, &["type"]);
+        let scheme = match ty.as_str() {
+            "vless" => "vless",
+            "trojan" => "trojan",
+            // Служебные выходы sing-box — не серверы.
+            "direct" | "block" | "dns" | "selector" | "urltest" | "" => continue,
+            other => {
+                *out.skipped.entry(other.to_string()).or_default() += 1;
+                continue;
+            }
+        };
+        let Some(port) = port_of(js(&o, &["server_port"])) else {
+            out.invalid += 1;
+            continue;
+        };
+        let mut b = LinkBuilder {
+            scheme,
+            uuid: if scheme == "trojan" {
+                js_str(&o, &["password"])
+            } else {
+                js_str(&o, &["uuid"])
+            },
+            host: js_str(&o, &["server"]),
+            port,
+            params: Vec::new(),
+            name: js_str(&o, &["tag"]),
+        };
+        b.param("flow", js_str(&o, &["flow"]));
+        let tls = js(&o, &["tls", "enabled"]).and_then(|x| x.as_bool()) == Some(true);
+        let reality =
+            js(&o, &["tls", "reality", "enabled"]).and_then(|x| x.as_bool()) == Some(true);
+        b.param(
+            "security",
+            if reality {
+                "reality"
+            } else if tls {
+                "tls"
+            } else {
+                "none"
+            },
+        );
+        b.param("sni", js_str(&o, &["tls", "server_name"]));
+        b.param("fp", js_str(&o, &["tls", "utls", "fingerprint"]));
+        b.param("pbk", js_str(&o, &["tls", "reality", "public_key"]));
+        b.param("sid", js_str(&o, &["tls", "reality", "short_id"]));
+        if let Some(alpn) = js(&o, &["tls", "alpn"]).and_then(|a| a.as_array()) {
+            let a: Vec<&str> = alpn.iter().filter_map(|x| x.as_str()).collect();
+            b.param("alpn", a.join(","));
+        }
+        let transport = js_str(&o, &["transport", "type"]);
+        match transport.as_str() {
+            "" => b.param("type", "tcp"),
+            "ws" | "httpupgrade" => {
+                b.param("type", transport.as_str());
+                b.param("path", js_str(&o, &["transport", "path"]));
+                let host = js_str(&o, &["transport", "headers", "Host"]);
+                let host = if host.is_empty() {
+                    js_str(&o, &["transport", "host"])
+                } else {
+                    host
+                };
+                b.param("host", host);
+            }
+            "grpc" => {
+                b.param("type", "grpc");
+                b.param("serviceName", js_str(&o, &["transport", "service_name"]));
+            }
+            other => {
+                *out.skipped.entry(format!("vless+{other}")).or_default() += 1;
+                continue;
+            }
+        }
+        if b.name.is_empty() {
+            b.name = format!("{}:{}", b.host, b.port);
+        }
+        let name = b.name.clone();
+        out.push_server(scheme, name, b.build());
+    }
+    Ok(())
+}
+
+/// YAML Clash: `proxies` с `type: vless`.
+fn parse_clash(text: &str, out: &mut NormalizedSubscription) -> Result<()> {
+    let v: serde_json::Value = yaml_serde::from_str(text)
+        .map_err(|e| Error::Config(format!("подписка: YAML Clash: {e}")))?;
+    let list = v
+        .get("proxies")
+        .and_then(|o| o.as_array())
+        .cloned()
+        .unwrap_or_default();
+    for p in list {
+        let ty = js_str(&p, &["type"]);
+        let scheme = match ty.as_str() {
+            "vless" => "vless",
+            "trojan" => "trojan",
+            _ => {
+                *out.skipped.entry(ty).or_default() += 1;
+                continue;
+            }
+        };
+        let Some(port) = port_of(js(&p, &["port"])) else {
+            out.invalid += 1;
+            continue;
+        };
+        let mut b = LinkBuilder {
+            scheme,
+            uuid: if scheme == "trojan" {
+                js_str(&p, &["password"])
+            } else {
+                js_str(&p, &["uuid"])
+            },
+            host: js_str(&p, &["server"]),
+            port,
+            params: Vec::new(),
+            name: js_str(&p, &["name"]),
+        };
+        b.param("flow", js_str(&p, &["flow"]));
+        // У trojan в Clash TLS включён всегда; имя — `sni`.
+        let tls = scheme == "trojan" || js(&p, &["tls"]).and_then(|x| x.as_bool()) == Some(true);
+        b.param("sni", js_str(&p, &["sni"]));
+        let reality = js(&p, &["reality-opts"]).is_some();
+        b.param(
+            "security",
+            if reality {
+                "reality"
+            } else if tls {
+                "tls"
+            } else {
+                "none"
+            },
+        );
+        b.param("sni", js_str(&p, &["servername"]));
+        b.param("fp", js_str(&p, &["client-fingerprint"]));
+        b.param("pbk", js_str(&p, &["reality-opts", "public-key"]));
+        b.param("sid", js_str(&p, &["reality-opts", "short-id"]));
+        let network = js_str(&p, &["network"]);
+        match network.as_str() {
+            "" | "tcp" => b.param("type", "tcp"),
+            "ws" => {
+                b.param("type", "ws");
+                b.param("path", js_str(&p, &["ws-opts", "path"]));
+                b.param("host", js_str(&p, &["ws-opts", "headers", "Host"]));
+            }
+            "grpc" => {
+                b.param("type", "grpc");
+                b.param(
+                    "serviceName",
+                    js_str(&p, &["grpc-opts", "grpc-service-name"]),
+                );
+            }
+            other => {
+                *out.skipped.entry(format!("vless+{other}")).or_default() += 1;
+                continue;
+            }
+        }
+        if b.name.is_empty() {
+            b.name = format!("{}:{}", b.host, b.port);
+        }
+        let name = b.name.clone();
+        out.push_server(scheme, name, b.build());
+    }
+    Ok(())
+}
+
+/// Разобрать ответ панели в любом из форматов.
+pub(super) fn parse_typed(body: &[u8]) -> Result<NormalizedSubscription> {
+    let text = String::from_utf8_lossy(body);
+    let text = text.trim().trim_start_matches('\u{feff}');
+    let mut out = NormalizedSubscription::default();
+    if text.starts_with('{') {
+        parse_singbox(text, &mut out)?;
+    } else if text.contains("proxies:") {
+        parse_clash(text, &mut out)?;
+    } else if text.contains("://") {
+        parse_lines(text, &mut out);
+    } else if let Some(decoded) = decode_base64(text) {
+        parse_lines(&decoded, &mut out);
+    } else {
+        return Err(Error::Config(
+            "подписка: ответ не похож ни на список ссылок, ни на base64, ни на JSON/YAML".into(),
+        ));
+    }
+    // Имя задаёт панель, и оно попадает в tag выхода, а с ним — в журнал и
+    // API: без управляющих символов (`\n` подделывал бы строки журнала).
+    // Одинаковые имена — с номером, чтобы tag серверов были разными.
+    let mut seen: HashMap<String, usize> = HashMap::new();
+    for server in &mut out.servers {
+        server.name.retain(|c| !c.is_control());
+        if server.name.is_empty() {
+            server.name = "server".into();
+        }
+        let n = seen.entry(server.name.clone()).or_default();
+        *n += 1;
+        if *n > 1 {
+            server.name = format!("{} ({n})", server.name);
+        }
+    }
+    Ok(out)
+}
+
+/// Public compatibility view; subscription application uses the typed model.
+pub fn parse(body: &[u8]) -> Result<Parsed> {
+    let parsed = parse_typed(body)?;
+    Ok(Parsed {
+        servers: parsed
+            .servers
+            .into_iter()
+            .map(|server| (server.name, server.link))
+            .collect(),
+        skipped: parsed.skipped,
+        invalid: parsed.invalid,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{parse_typed, NormalizedProtocol};
+
+    #[test]
+    fn normalizes_supported_protocols_to_typed_servers() {
+        let body = b"vless://uuid@vless.example:443#VLESS\ntrojan://pass@trojan.example:443#Trojan";
+        let parsed = parse_typed(body).unwrap();
+
+        assert_eq!(parsed.servers.len(), 2);
+        assert_eq!(parsed.servers[0].protocol, NormalizedProtocol::Vless);
+        assert_eq!(parsed.servers[0].name, "VLESS");
+        assert_eq!(parsed.servers[1].protocol, NormalizedProtocol::Trojan);
+        assert_eq!(parsed.servers[1].name, "Trojan");
+    }
+}
