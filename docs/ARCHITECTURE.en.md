@@ -1016,16 +1016,19 @@ implementation:
   - the socket is a real UDP socket (with `net_protect`) or an outbound's
     UDP session, so QUIC can run over VLESS.
 - **Hysteria 2** (`hysteria2_transport.rs`, `hysteria2_udp.rs`, `hysteria2_obfs.rs`):
-  - separate QUIC/authentication, TCP stream, and UDP datagram layers; the
-    production factory is not wired, and PRs #189–#192 remain open;
+  - separate QUIC/authentication, TCP stream, and UDP datagram layers; PRs
+    #189, #190, #192, and #193 are merged, while the production factory is
+    not wired;
   - Stage 6.1 adds a Salamander socket wrapper: each QUIC UDP packet receives
     an 8-byte salt and BLAKE2b-256 mask; PSKs shorter than 4 UTF-8 bytes are
     rejected to match the reference implementation, and short or salt-only
     frames are discarded. The UDP payload budget is
-    reduced by the salt length. The wrapper uses Tokio UDP without GSO/ECN; all
-    15 required CI checks passed on head `9a1c1da` (runs #42378078167 and
-    #42378077596), with publish intentionally skipped.
-    Reference interoperability and performance have not been measured.
+    reduced by the salt length. The wrapper uses Tokio UDP without GSO/ECN;
+    CI #757 passed 8/8 jobs and Release #124 passed 7/7 jobs on head `32ef01a`
+    (15 successful checks and 1 skipped publish check).
+    Reference interoperability and performance have not been measured;
+  - Stage 6.2 selects BBR only for Hysteria 2; other QUIC users keep Cubic.
+    Full rate negotiation and Brutal are not supported.
 
 ## 14. Protocols: VLESS, Vision, XUDP, Mux.Cool, Trojan
 

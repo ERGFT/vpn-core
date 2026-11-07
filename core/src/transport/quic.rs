@@ -31,6 +31,29 @@ pub fn client_config(
     roots: Option<RootCertStore>,
     alpn: Vec<Vec<u8>>,
 ) -> Result<quinn::ClientConfig> {
+    client_config_inner(roots, alpn, None)
+}
+
+/// Build a QUIC client config for Hysteria 2 with Quinn's BBR controller.
+///
+/// Hysteria uses BBR by default when no per-direction Brutal bandwidth is
+/// configured. Keep the default for the repository's other QUIC users intact.
+pub(crate) fn hysteria2_client_config(
+    roots: Option<RootCertStore>,
+    alpn: Vec<Vec<u8>>,
+) -> Result<quinn::ClientConfig> {
+    client_config_inner(
+        roots,
+        alpn,
+        Some(Arc::new(quinn::congestion::BbrConfig::default())),
+    )
+}
+
+fn client_config_inner(
+    roots: Option<RootCertStore>,
+    alpn: Vec<Vec<u8>>,
+    controller: Option<Arc<dyn quinn::congestion::ControllerFactory + Send + Sync>>,
+) -> Result<quinn::ClientConfig> {
     super::tcp_tls::ensure_crypto_provider();
     let roots = roots.unwrap_or_else(|| {
         let mut r = RootCertStore::empty();
@@ -49,6 +72,9 @@ pub fn client_config(
         .map_err(|e| Error::Protocol(format!("QUIC: TLS: {e}")))?;
     let mut cc = quinn::ClientConfig::new(Arc::new(qc));
     let mut tr = quinn::TransportConfig::default();
+    if let Some(controller) = controller {
+        tr.congestion_controller_factory(controller);
+    }
     tr.keep_alive_interval(Some(Duration::from_secs(15)));
     #[allow(
         clippy::expect_used,
@@ -58,6 +84,90 @@ pub fn client_config(
     tr.max_idle_timeout(Some(idle));
     cc.transport_config(Arc::new(tr));
     Ok(cc)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
+    use rustls::RootCertStore;
+
+    use super::{client_config, hysteria2_client_config};
+
+    #[tokio::test]
+    async fn hysteria2_uses_bbr_and_other_quic_clients_keep_cubic() {
+        use rcgen::{CertificateParams, KeyPair};
+
+        let key_pair = KeyPair::generate_for(&rcgen::PKCS_ECDSA_P256_SHA256).unwrap();
+        let cert = CertificateParams::new(vec!["quic-test.local".into()])
+            .unwrap()
+            .self_signed(&key_pair)
+            .unwrap();
+        let certificate = CertificateDer::from(cert.der().to_vec());
+        let private_key = PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(key_pair.serialize_der()));
+        let mut tls = rustls::ServerConfig::builder_with_provider(Arc::new(
+            rustls::crypto::aws_lc_rs::default_provider(),
+        ))
+        .with_protocol_versions(&[&rustls::version::TLS13])
+        .unwrap()
+        .with_no_client_auth()
+        .with_single_cert(vec![certificate.clone()], private_key)
+        .unwrap();
+        tls.alpn_protocols = vec![b"h3".to_vec()];
+        let crypto = quinn::crypto::rustls::QuicServerConfig::try_from(Arc::new(tls)).unwrap();
+        let server = quinn::Endpoint::server(
+            quinn::ServerConfig::with_crypto(Arc::new(crypto)),
+            "127.0.0.1:0".parse().unwrap(),
+        )
+        .unwrap();
+
+        let mut roots = RootCertStore::empty();
+        roots.add(certificate).unwrap();
+        let hysteria_config =
+            hysteria2_client_config(Some(roots.clone()), vec![b"h3".to_vec()]).unwrap();
+        let regular_config = client_config(Some(roots), vec![b"h3".to_vec()]).unwrap();
+        let server_addr = server.local_addr().unwrap();
+
+        async fn connect(
+            server: &quinn::Endpoint,
+            server_addr: std::net::SocketAddr,
+            config: quinn::ClientConfig,
+        ) -> quinn::Connection {
+            let mut endpoint = quinn::Endpoint::client("127.0.0.1:0".parse().unwrap()).unwrap();
+            endpoint.set_default_client_config(config);
+            let connecting = endpoint.connect(server_addr, "quic-test.local").unwrap();
+            let accepting = async { server.accept().await.unwrap().await.unwrap() };
+            let (client, _server) = tokio::time::timeout(Duration::from_secs(5), async {
+                tokio::join!(connecting, accepting)
+            })
+            .await
+            .unwrap();
+            client.unwrap()
+        }
+
+        let hysteria_connection = connect(&server, server_addr, hysteria_config).await;
+        assert!(
+            hysteria_connection
+                .congestion_state()
+                .into_any()
+                .is::<quinn::congestion::Bbr>(),
+            "Hysteria 2 must select Quinn BBR"
+        );
+        hysteria_connection.close(0u32.into(), b"test complete");
+
+        let regular_connection = connect(&server, server_addr, regular_config).await;
+        assert!(
+            regular_connection
+                .congestion_state()
+                .into_any()
+                .is::<quinn::congestion::Cubic>(),
+            "existing QUIC users must keep Quinn's default Cubic controller"
+        );
+        regular_connection.close(0u32.into(), b"test complete");
+        server.close(0u32.into(), b"test complete");
+    }
 }
 
 /// Точка QUIC на настоящем UDP-сокете (с меткой `net_protect`).
