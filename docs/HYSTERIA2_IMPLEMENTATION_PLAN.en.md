@@ -1,7 +1,7 @@
 # Hysteria 2 Integration Plan
 
-**Status:** Stage 1 is complete (PR #187); Stage 2 has started: URI and sing-box adapters. A working Hysteria 2 outbound is not available yet.
-**Code snapshot:** `main`, commit `aa8dab6` (PR #187).
+**Status:** Stages 1–2 are complete (PRs #187 and #188); Stage 3 — QUIC and HTTP/3 authentication — is in progress. A working Hysteria 2 outbound is not available yet.
+**Code snapshot:** `main`, commit `e43066b` (PR #188).
 **Scope:** client proxy outbound in the existing core only.
 
 ## Architectural decision
@@ -52,7 +52,9 @@ Full Hysteria 2 status requires codec/config tests plus interop with a pinned ve
 
 ## Current progress
 
-PR #187 added the typed model and strict URI parser and was merged into `main` as [`aa8dab6`](https://github.com/ERGFT/vpn-core/commit/aa8dab644b19cd5e3641d53e62408c705e6c6b5a); all 8 CI groups passed. Stage 2 is adding URI-subscription parsing and conservative sing-box conversion. Entries can be parsed and validated, but subscriptions currently skip them with a separate count; a regular sing-box config returns the precise reason that runtime support is not ready. No working outbound is created. Local Rust tests on this Windows host are limited by the missing MSVC linker `link.exe`, so merge decisions rely on Linux/Windows CI.
+PR #187 added the typed model and strict URI parser and was merged into `main` as [`aa8dab6`](https://github.com/ERGFT/vpn-core/commit/aa8dab644b19cd5e3641d53e62408c705e6c6b5a); all 8 CI groups passed. PR #188 added URI-subscription parsing and conservative sing-box conversion, updated the RU/EN documentation, and was merged as [`e43066b`](https://github.com/ERGFT/vpn-core/commit/e43066ba4fac86d21796e57a4237f9d28f4adafa) after GitHub checks completed (16 successful, one skipped). Entries can be parsed and validated, but subscriptions currently skip them with a separate count; a regular sing-box config returns the precise reason that runtime support is not ready. No working outbound is created.
+
+Stage 3 adds a shared QUIC endpoint/connection owner, HTTP/3 `POST /auth`, strict acceptance of status 233 only, and parsing of the `Hysteria-UDP` and `Hysteria-CC-RX` response headers. The current implementation uses system trust roots and rejects unsupported settings (insecure TLS, pinning, ECH, obfuscation, and port hopping) instead of silently accepting them. This is not yet an integrated outbound: TCP/UDP relays and production-factory wiring remain later stages. Local Rust checks on this Windows host may be blocked by the missing MSVC linker `link.exe`; CI is verified separately for each PR.
 
 An external Android phone is not needed for parser/codec development or local interop. It will help with the final device-level Android VPN/TUN run, Wi-Fi↔cellular handover, and wake-from-sleep recovery; an Android cross-build alone does not prove that behavior.
 

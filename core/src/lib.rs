@@ -38,6 +38,7 @@ pub mod fsutil;
 pub mod hostname;
 pub mod http1;
 pub mod hysteria2;
+pub(crate) mod hysteria2_transport;
 pub mod net_protect;
 pub mod reality;
 pub mod redact;
