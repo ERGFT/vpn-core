@@ -42,6 +42,13 @@ after a refusal, the address-attempt limit, a maximum of two concurrent
 attempts, and an overall connection deadline without external DNS or network
 dependencies.
 
+`cargo test -p reality-core protocol_architecture_test` runs the internal test
+proxy: typed settings and builder, TCP and UDP echo through `Outbound`/router,
+settings validation, an unavailable-server error, a timeout, tracker
+cancellation, and router replacement while an existing TCP stream stays open.
+The fixture is included through `#[cfg(test)]`; it is not a user protocol and
+is absent from release builds.
+
 The GitHub workflow `.github/workflows/ci.yml` runs on pushes to `main` and
 pull requests. The `linux` job runs `scripts/ci.sh`, checks the C ABI and
 dependency license list, and runs TUN in a network namespace; the TUN step is

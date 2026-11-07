@@ -42,6 +42,13 @@ Unit-тесты `core/src/transport/tcp_tls.rs` используют вирту�
 попыток, а также общего срока подключения — без зависимости от внешней сети и
 DNS.
 
+`cargo test -p reality-core protocol_architecture_test` запускает внутренний
+тестовый proxy: типизированные настройки и фабрику, TCP и UDP echo через
+`Outbound`/router, проверку настроек, отказ при недоступном сервере, таймаут,
+сигнал отмены tracker и замену router при сохранении уже открытого TCP-потока.
+Этот fixture подключён через `#[cfg(test)]`; он не является пользовательским
+протоколом и не попадает в release-сборки.
+
 На GitHub workflow `.github/workflows/ci.yml` запускается при push в `main`
 и для каждого pull request. Job `linux` выполняет `scripts/ci.sh`, проверку
 C ABI, список лицензий и TUN в netns; последний шаг пропускается для PR из

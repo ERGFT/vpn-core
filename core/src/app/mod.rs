@@ -45,6 +45,11 @@ pub mod trojan_out;
 pub mod tun;
 pub mod vless_out;
 
+// A protocol-shaped fixture for exercising the outbound extension boundary.
+// This module is absent from non-test builds.
+#[cfg(test)]
+mod protocol_architecture_test;
+
 use std::net::SocketAddr;
 use std::sync::Arc;
 

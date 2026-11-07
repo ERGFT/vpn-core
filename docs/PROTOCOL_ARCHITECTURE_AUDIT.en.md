@@ -89,6 +89,15 @@ Adjust the sequence after designing the first patch. Do not merge before require
 
 Change the order of PRs 1–5 if evidence shows an extraction does not reduce the cost of adding a real protocol. A dynamic registry or global router, DNS, or TUN rewrite is not justified.
 
+### Implementation status on 2026-11-07
+
+PRs #178–#182 are merged into `main`: typed settings, the static factory,
+shared transport configuration, outbound capabilities, and typed subscription
+normalization. The required internal test protocol for Stage 2 is being added
+in the current PR behind `cfg(test)` only. After it merges, Stage 2 regression
+acceptance remains: old configs and links, subscriptions, VLESS/Trojan
+interoperability, groups, reload, C ABI/SDK, and RU/EN documentation.
+
 ## Baseline checks
 
 | Check | Result in this run |

@@ -1422,7 +1422,10 @@ PLAN.en.md):
 - **Unit tests** live next to the code (`#[cfg(test)]`). They cover the
   parsers, rules, geo, the DNS cache, fake-IP, sniffing (including
   RFC 9001/9369 vectors and real Chromium packets), JA3/JA4 and REALITY
-  crypto (RFC 7748 vectors).
+  crypto (RFC 7748 vectors). `app/protocol_architecture_test.rs` contains a
+  test proxy with typed settings. It exercises `Outbound`, the router, TCP/UDP
+  echo, tracking, and router replacement. The module is gated by `cfg(test)`
+  and is absent from user builds.
 - **Integration tests** (`core/tests/`), all over loopback:
 
   | File | What |
@@ -1470,6 +1473,10 @@ PLAN.en.md):
    `build_core`.
 3. Add an integration test through `App::build(&cfg).start()` and a SOCKS5
    inbound.
+
+`app/protocol_architecture_test.rs` shows a minimal test of a new outbound
+through the shared `Outbound` and router boundary. It is test-only; do not add
+the fixture to user configuration or production builds.
 
 **A new protocol over the same transports** (like Trojan):
 `transport::open(cfg)` gives a ready TLS/REALITY + transport stream; only
