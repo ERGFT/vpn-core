@@ -1,7 +1,7 @@
 # Hysteria 2 Integration Plan
 
-**Status:** Stages 1–2 are complete (PRs #187 and #188), and Stages 3–5 are merged into `main` (PRs #189, #190, and #192). Stage 6.1 Salamander was merged in PR #193; Stage 6.2 BBR was merged in PR #196. CI #759 for PR #196 passed all 8 jobs on head `4300fc1`. Stage 6.3 port hopping is implemented on the current branch; rebasing it onto `main` and CI remain pending. Reference interoperability and performance have not been measured; the production outbound is not wired.
-**Code snapshot:** `main` after PR #196, merge commit `2d5361a`.
+**Status:** Stages 1–2 are complete (PRs #187 and #188), and Stages 3–5 are merged into `main` (PRs #189, #190, and #192). Stage 6.1 Salamander was merged in PR #193, Stage 6.2 BBR in PR #196, and Stage 6.3 port hopping in PR #197. CI #759 passed all 8 jobs for BBR; CI #761 passed all 8 jobs for port hopping on head `3762074`. Reference interoperability, performance, network-interface changes, and connection recovery have not been verified; the production outbound is not wired.
+**Code snapshot:** `main` after PR #197, merge commit `1ae04ff`.
 **Scope:** client proxy outbound in the existing core only.
 
 ## Architectural decision
@@ -64,7 +64,7 @@ Stage 6.1 is implemented and merged in PR #193: a dedicated QUIC UDP socket adds
 
 Stage 6.2 was implemented and merged in PR #196: Hysteria uses a dedicated Quinn BBR controller while existing DNS/XHTTP QUIC clients retain Cubic. CI #759 passed all 8 jobs. Quinn marks BBR experimental. The auth response still parses `auto`, `0`, and a numeric RX limit, but the numeric limit is not applied because the project has no local Hysteria bandwidth setting. Exact Brutal is also not implementable through this Quinn pacing API and must not be claimed as supported.
 
-Stage 6.3 is implemented and rebased onto the current `main`: the initial server port is selected randomly from the configured ranges, and periodic hopping starts 30 seconds after successful authentication. Each hop creates a fresh protected UDP socket while keeping the previous socket available briefly for inbound packets. CI and reference-server interoperability remain pending. Network-interface changes and connection recovery have not been verified.
+Stage 6.3 was implemented and merged in PR #197: the initial server port is selected randomly from the configured ranges, and periodic hopping starts 30 seconds after successful authentication. Each hop creates a fresh protected UDP socket; the previous socket remains available for inbound packets for 2 seconds. CI #761 passed all 8 jobs for head `37620742be9e1d9f9f83c5bdb22f810c6ebeeb0b`. The focused local test could not start because MSVC `link.exe` is missing; CI ran the checks on supported runners. Reference-server interoperability, network-interface changes, and connection recovery have not been verified.
 
 An external Android phone is not needed for parser/codec development or local interop. It will help with the final device-level Android VPN/TUN run, Wi-Fi↔cellular handover, and wake-from-sleep recovery; an Android cross-build alone does not prove that behavior.
 
