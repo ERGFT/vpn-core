@@ -724,11 +724,7 @@ mod tests {
         try_route_packet(
             &routes,
             1,
-            (
-                Address::Domain("full.example".into()),
-                53,
-                vec![0xff, 0xff],
-            ),
+            (Address::Domain("full.example".into()), 53, vec![0xff, 0xff]),
         );
         try_route_packet(
             &routes,
@@ -755,9 +751,7 @@ mod tests {
         );
         let remaining: Vec<_> = std::iter::from_fn(|| full_rx.try_recv().ok()).collect();
         assert_eq!(remaining.len(), UDP_QUEUE - 1);
-        assert!(!remaining
-            .iter()
-            .any(|packet| packet.2 == vec![0xff, 0xff]));
+        assert!(!remaining.iter().any(|packet| packet.2 == vec![0xff, 0xff]));
     }
 
     #[test]
