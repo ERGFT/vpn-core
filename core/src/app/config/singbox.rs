@@ -288,12 +288,7 @@ fn outbound(o: Obj<'_>) -> Result<OutboundConfig> {
         "selector" => OutboundKind::Selector,
         "urltest" => OutboundKind::Urltest,
         "fallback" => OutboundKind::Fallback,
-        "hysteria2" => {
-            return Err(o.err(
-                "type",
-                "Hysteria 2 outbound распознан, но транспорт ещё не реализован; URI можно проверить, но подключение невозможно",
-            ))
-        }
+        "hysteria2" => OutboundKind::Hysteria2,
         other => {
             return Err(o.err(
                 "type",
@@ -311,6 +306,52 @@ fn outbound(o: Obj<'_>) -> Result<OutboundConfig> {
     }
     match kind {
         OutboundKind::Vless | OutboundKind::Trojan => server(&o, &mut out)?,
+        OutboundKind::Hysteria2 => {
+            out.link = o.str("link")?;
+            out.link_file = o.str("link_file")?.map(PathBuf::from);
+            if out.link.is_some() || out.link_file.is_some() {
+                o.ignore(&["link", "link_file"]);
+            } else {
+                let uri = crate::app::subscription::formats::singbox_hysteria2_uri(&o.to_value())?
+                    .ok_or_else(|| {
+                        o.err(
+                            "type",
+                            "параметры Hysteria 2 содержат неподдерживаемые опции",
+                        )
+                    })?;
+                out.link = Some(uri);
+                o.ignore(&[
+                    "server",
+                    "server_port",
+                    "server_ports",
+                    "password",
+                    "obfs",
+                    "tls",
+                    "hop_interval",
+                    "hop_interval_max",
+                    "up_mbps",
+                    "down_mbps",
+                    "network",
+                    "bbr_profile",
+                    "brutal_debug",
+                    "disable_chrome_parrot",
+                    "realm",
+                    "domain_resolver",
+                    "detour",
+                    "bind_interface",
+                    "bind_address",
+                    "bind_address_no_port",
+                    "routing_mark",
+                    "reuse_addr",
+                    "connect_timeout",
+                    "tcp_fast_open",
+                    "tcp_multi_path",
+                    "udp_fragment",
+                    "udp_fragment_default",
+                    "udp_fragment_size",
+                ]);
+            }
+        }
         OutboundKind::Socks5 => {
             out.detour = o.str("detour")?;
             if o.str("network")?.as_deref() != Some("tcp") {

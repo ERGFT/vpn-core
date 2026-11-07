@@ -98,7 +98,7 @@ fn yes() -> bool {
     true
 }
 
-mod formats;
+pub(crate) mod formats;
 use formats::parse_typed;
 pub use formats::{parse, Parsed};
 
@@ -208,14 +208,7 @@ impl Subscription {
         let mut built = Vec::new();
         let mut insecure = 0;
         let mut broken = parsed.invalid;
-        let mut unavailable_hysteria2 = 0;
         for server in &parsed.servers {
-            if server.protocol == formats::NormalizedProtocol::Hysteria2 {
-                // Импорт уже распознал URI, но транспорта пока нет. Считаем
-                // отдельно от некорректных серверов и показываем этот счётчик.
-                unavailable_hysteria2 += 1;
-                continue;
-            }
             let name = &server.name;
             let link = &server.link;
             if self.include.as_ref().is_some_and(|r| !r.is_match(name))
@@ -253,9 +246,6 @@ impl Subscription {
         }
         if broken > 0 {
             tracing::warn!(subscription = %self.cfg.tag, count = broken, "подписка: серверы с неподходящими ссылками пропущены");
-        }
-        if unavailable_hysteria2 > 0 {
-            tracing::info!(subscription = %self.cfg.tag, protocol = "hysteria2", count = unavailable_hysteria2, "подписка: URI распознаны, но outbound ещё не реализован — пропущено");
         }
         for (scheme, n) in &parsed.skipped {
             tracing::info!(subscription = %self.cfg.tag, protocol = %scheme, count = n, "подписка: протокол не поддерживается — пропущено");

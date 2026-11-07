@@ -30,6 +30,7 @@ pub mod group;
 pub mod http_client;
 pub mod http_connect_out;
 pub mod http_in;
+pub mod hysteria2_out;
 pub mod outbound;
 mod outbound_factory;
 pub mod proxy_in;
@@ -896,6 +897,24 @@ mod outbound_detour_tests {
     use super::*;
 
     #[test]
+    fn subscription_factory_builds_hysteria2_outbound() {
+        let outbound = server_from_link(
+            "sub/node",
+            "hy2://secret@example.com:443#node",
+            subscription::ServerOpts {
+                xudp: true,
+                allow_insecure: false,
+                mux: None,
+                fragment: None,
+            },
+        )
+        .unwrap();
+        assert_eq!(outbound.tag(), "sub/node");
+        assert_eq!(outbound.clash_type(), "Hysteria2");
+        assert_eq!(outbound.server(), Some(("example.com".into(), 443)));
+    }
+
+    #[test]
     fn detour_chains_may_mix_http_and_socks_with_a_vless_first_hop() {
         let config = Config::parse(
             r#"{"outbounds":[
@@ -979,6 +998,7 @@ fn router_pinned_servers(
         .map(|o| match o.kind() {
             OutboundKind::Vless
             | OutboundKind::Trojan
+            | OutboundKind::Hysteria2
             | OutboundKind::Socks5
             | OutboundKind::HttpConnect => router.get(&o.tag).and_then(|b| b.server()),
             _ => None,
@@ -1121,6 +1141,7 @@ fn build_core(
         let built: Arc<dyn Outbound> = match o.kind() {
             OutboundKind::Vless
             | OutboundKind::Trojan
+            | OutboundKind::Hysteria2
             | OutboundKind::Socks5
             | OutboundKind::HttpConnect => outbound_factory::build_proxy(o, &detour_slots)?,
             OutboundKind::Direct => Arc::new(build_direct(
@@ -1360,6 +1381,19 @@ fn server_from_link(
     link: &str,
     o: subscription::ServerOpts,
 ) -> Result<Arc<dyn Outbound>> {
+    let scheme = link.split_once("://").map(|(scheme, _)| scheme);
+    if scheme
+        .is_some_and(|scheme| matches!(scheme.to_ascii_lowercase().as_str(), "hysteria2" | "hy2"))
+    {
+        if o.allow_insecure || o.mux.is_some() || o.fragment.is_some() {
+            return Err(Error::Config(format!(
+                "подписка {tag}: allow_insecure, mux и fragment не поддерживаются для Hysteria 2"
+            )));
+        }
+        let config = crate::hysteria2::Hysteria2Config::parse(link)?;
+        crate::hysteria2_transport::validate_supported_options(&config)?;
+        return Ok(Arc::new(hysteria2_out::Hysteria2Outbound::new(tag, config)));
+    }
     if link.starts_with("trojan://") {
         return Ok(Arc::new(trojan_from_link(
             tag,

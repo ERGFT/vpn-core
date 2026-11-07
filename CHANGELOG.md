@@ -9,7 +9,7 @@
 ## [Не выпущено]
 
 ### Hysteria 2
-- Добавлены разбор URI Hysteria 2 в подписках и консервативный адаптер ограниченного подмножества sing-box JSON. Записи с непредставимыми опциями учитываются отдельно; runtime outbound ещё не реализован, поэтому подписки пропускают распознанные записи, а обычный sing-box конфиг сообщает об этом явно.
+- TCP/UDP runtime подключён к outbound factory, sing-box config и URI-подпискам; один outbound переиспользует аутентифицированное QUIC-соединение. Поддерживаемые поля sing-box преобразуются через URI-модель, неподдерживаемые опции отклоняются. Интеграция экспериментальная: CI этой ветки и совместимость с официальным сервером ещё не проверены.
 
 ### SDK и C ABI
 - Добавлены manifest архива с SHA-256 каждого файла и сведениями о сборке,
@@ -259,7 +259,7 @@ stage-by-stage decision history is in [PLAN.md](PLAN.md) (in Russian).
 ## [Unreleased]
 
 ### Hysteria 2
-- Added Hysteria 2 URI parsing in subscriptions and a conservative adapter for a limited sing-box JSON subset. Entries with unrepresentable options are counted separately; the runtime outbound is not implemented, so subscriptions skip recognized entries and regular sing-box configs report this explicitly.
+- Wired the TCP/UDP runtime into the outbound factory, sing-box config, and URI subscriptions; each outbound reuses its authenticated QUIC connection. Supported sing-box fields are converted through the URI model, and unsupported options are rejected. The integration is experimental: this branch's CI and interoperability with the official server have not yet been verified.
 
 ### SDK and C ABI
 - SDK archives now include a per-file SHA-256 manifest and build metadata,

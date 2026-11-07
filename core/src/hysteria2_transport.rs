@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! QUIC, HTTP/3 authentication, and TCP relay for the Hysteria 2 client.
 //!
-//! Production outbound wiring is implemented in a later stage.
+//! The application outbound shares one authenticated connection for TCP and
+//! UDP associations.
 
 use std::io;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -49,7 +50,7 @@ pub(crate) enum ServerRxRate {
     BytesPerSecond(u64),
 }
 
-/// Negotiated capabilities needed by later TCP and UDP relay stages.
+/// Capabilities negotiated for the active TCP and UDP relays.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct AuthNegotiation {
     pub(crate) udp_supported: bool,
@@ -60,7 +61,7 @@ pub(crate) struct AuthNegotiation {
 ///
 /// The QUIC connection is shared by concurrent TCP and UDP relays. Drop
 /// closes the connection and stops the HTTP/3 driver deterministically.
-#[allow(dead_code, reason = "consumed by the TCP and UDP relay stages")]
+#[allow(dead_code, reason = "owns background drivers for connection lifecycle")]
 pub(crate) struct Hysteria2Connection {
     _endpoint: quinn::Endpoint,
     pub(crate) connection: Connection,
@@ -147,10 +148,6 @@ fn allocate_udp_session_id(next: &AtomicU64) -> Result<u32> {
 
 /// Connect securely to a Hysteria 2 server and authenticate it. Port hopping
 /// starts after authentication and uses the protocol's default 30-second interval.
-#[allow(
-    dead_code,
-    reason = "wired into the production outbound in a later stage"
-)]
 pub(crate) async fn connect(config: &Hysteria2Config) -> Result<Hysteria2Connection> {
     validate_supported_options(config)?;
     let port = quic::random_hysteria2_port(&config.ports)?;
@@ -247,7 +244,7 @@ pub(crate) async fn connect(config: &Hysteria2Config) -> Result<Hysteria2Connect
     }))
 }
 
-fn validate_supported_options(config: &Hysteria2Config) -> Result<()> {
+pub(crate) fn validate_supported_options(config: &Hysteria2Config) -> Result<()> {
     if config.ports.is_empty()
         || config
             .ports

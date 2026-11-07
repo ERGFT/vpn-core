@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 use super::config::{self, OutboundKind};
 use super::outbound::{self, Outbound};
-use super::{http_connect_out, socks_out, trojan_out};
+use super::{http_connect_out, hysteria2_out, socks_out, trojan_out};
 use crate::error::{Error, Result};
 
 /// Build one server-backed proxy outbound from its validated typed config.
@@ -24,6 +24,7 @@ pub(super) fn build_proxy(
     let proxy: Arc<dyn Outbound> = match config.kind() {
         OutboundKind::Vless => Arc::new(build_vless(config)?),
         OutboundKind::Trojan => Arc::new(build_trojan(config)?),
+        OutboundKind::Hysteria2 => Arc::new(build_hysteria2(config)?),
         OutboundKind::Socks5 => {
             let settings = config
                 .socks5()
@@ -66,12 +67,29 @@ pub(super) fn build_proxy(
         }
         _ => {
             return Err(Error::Config(format!(
-                "выход «{}»: фабрика собирает только VLESS, Trojan, SOCKS5 и HTTP CONNECT",
+                "выход «{}»: фабрика собирает только VLESS, Trojan, Hysteria 2, SOCKS5 и HTTP CONNECT",
                 config.tag
             )));
         }
     };
     Ok(proxy)
+}
+
+#[allow(
+    clippy::expect_used,
+    reason = "invariant: called only for an outbound of type Hysteria 2"
+)]
+fn build_hysteria2(config: &config::OutboundConfig) -> Result<hysteria2_out::Hysteria2Outbound> {
+    let link = config
+        .hysteria2_link()
+        .expect("Hysteria 2 settings match outbound kind")
+        .read()?;
+    let hysteria = crate::hysteria2::Hysteria2Config::parse(&link)?;
+    crate::hysteria2_transport::validate_supported_options(&hysteria)?;
+    Ok(hysteria2_out::Hysteria2Outbound::new(
+        config.tag.clone(),
+        hysteria,
+    ))
 }
 
 #[allow(
@@ -164,5 +182,22 @@ mod tests {
             config::Config::parse(r#"{"outbounds":[{"type":"direct","tag":"direct"}]}"#).unwrap();
 
         assert!(build_proxy(&config.outbounds[0], &HashMap::new()).is_err());
+    }
+
+    #[test]
+    fn factory_builds_hysteria2_from_singbox_config() {
+        let config = config::Config::parse(
+            r#"{"outbounds":[{"type":"hysteria2","tag":"hy2","server":"example.com","server_port":443,"password":"secret","tls":{"server_name":"edge.example"}}]}"#,
+        )
+        .unwrap();
+
+        let outbound = build_proxy(&config.outbounds[0], &HashMap::new()).unwrap();
+        assert_eq!(outbound.tag(), "hy2");
+        assert_eq!(outbound.clash_type(), "Hysteria2");
+        assert_eq!(outbound.server(), Some(("example.com".into(), 443)));
+        assert_eq!(
+            outbound.capabilities(),
+            outbound::OutboundCapabilities::TCP_UDP_TERMINAL
+        );
     }
 }

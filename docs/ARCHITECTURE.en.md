@@ -1017,8 +1017,10 @@ implementation:
     UDP session, so QUIC can run over VLESS.
 - **Hysteria 2** (`hysteria2_transport.rs`, `hysteria2_udp.rs`, `hysteria2_obfs.rs`):
   - separate QUIC/authentication, TCP stream, and UDP datagram layers; PRs
-    #189, #190, #192, #193, and #196 are merged into `main`, while the
-    production factory is not wired;
+    #189, #190, #192, #193, #196, and #197 are merged into `main`; the current
+    Stage 7 branch wires a shared `Hysteria2Outbound`, factory, sing-box config,
+    and subscriptions; that branch is unmerged and its CI and reference
+    interoperability have not run;
   - Stage 6.1 adds a Salamander socket wrapper: each QUIC UDP packet receives
     an 8-byte salt and BLAKE2b-256 mask; PSKs shorter than 4 UTF-8 bytes are
     rejected to match the reference implementation, and short or salt-only
