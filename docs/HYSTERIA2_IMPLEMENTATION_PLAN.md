@@ -1,6 +1,6 @@
 # План интеграции Hysteria 2
 
-**Статус:** этапы 1–2 завершены (PR #187 и #188); этап 3 (QUIC и HTTP/3-аутентификация) реализован и прошёл CI в PR #189; этап 4 (TCP relay) — в работе в отдельной ветке поверх PR #189. Рабочий production outbound пока отсутствует.
+**Статус:** этапы 1–2 завершены (PR #187 и #188); этап 3 реализован в PR #189; этап 4 (TCP relay) реализован в PR #190 и все 8 CI jobs прошли в последнем запуске; этап 5 (UDP relay) разрабатывается в отдельной ветке поверх PR #190. Рабочий production outbound пока отсутствует.
 **Срез кода:** `main`, commit `e43066b` (PR #188).
 **Область:** только клиентский прокси-выход в существующем ядре.
 
@@ -56,7 +56,9 @@ PR #187 добавил типизированную модель и строги
 
 Этап 3 реализован в PR #189: единый QUIC endpoint/connection owner, HTTP/3 `POST /auth`, строгая проверка статуса 233 и разбор `Hysteria-UDP`/`Hysteria-CC-RX`. Все 8 CI jobs для commit `cc388b5` прошли; PR остаётся открытым до отдельного разрешения на слияние. Используются системные корни сертификатов; неподдержанные insecure TLS, pinning, ECH, obfuscation и port hopping отклоняются.
 
-Этап 4 разрабатывается в ветке `codex/hysteria2-tcp-relay` поверх PR #189. Добавляется TCPRequest с QUIC-varint ID `0x401`, адресом `host:port`, padding 64–511 байт, ограниченный разбор TCPResponse и отдельный QUIC bidirectional stream на каждое назначение. Добавлен метод TCP relay на уже аутентифицированном соединении, но он ещё не подключён к `Outbound`/production factory; UDP и фактический рабочий outbound остаются незавершёнными. Локальная проверка Rust на Windows может быть ограничена отсутствующим MSVC linker `link.exe`; обязательную компиляцию и тесты проверяет CI каждого PR.
+Этап 4 реализован в PR #190 (`codex/hysteria2-tcp-relay`), stacked on #189: TCPRequest с QUIC-varint ID `0x401`, ограниченный TCPResponse, таймауты и bidirectional stream на назначение. В последней попытке CI все 8 jobs прошли; первый coverage запуск упал на интеграционном тесте `app_groups`, его повтор прошёл. Код пока не подключён к `Outbound`/production factory.
+
+Этап 5 разрабатывается в `codex/hysteria2-udp-relay`, поверх PR #190. Добавлены формат UDPMessage, QUIC unreliable datagrams, уникальные возрастающие Session ID на QUIC connection, wrapping Packet ID, фрагментация по актуальному `max_datagram_size`, сборка переставленных фрагментов и ограничение состояния: до 128 незавершённых пакетов, до 256 KiB буфера сборки и TTL 5 секунд. UDP association имеет очередь до 256 ответов и idle timeout 120 секунд; размер одной UDP-полезной нагрузки ограничен 4096 байтами по эталонному клиенту. Эталонная server/client interop и CI этой ветки ещё не выполнены. Ни TCP, ни UDP пока не доступны через production outbound.
 
 Внешний Android-телефон не требуется для разработки parser/codec и локального interop. Он станет полезен для финального device-level прогона Android VPN/TUN, Wi-Fi↔cellular handover и восстановления после sleep; одна Android cross-build этого поведения не доказывает.
 

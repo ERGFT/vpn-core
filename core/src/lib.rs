@@ -43,6 +43,11 @@ pub mod hysteria2;
     reason = "Hysteria transport is implemented in stages before production factory wiring"
 )]
 pub(crate) mod hysteria2_transport;
+#[allow(
+    dead_code,
+    reason = "Hysteria UDP relay is implemented before production factory wiring"
+)]
+pub(crate) mod hysteria2_udp;
 pub mod net_protect;
 pub mod reality;
 pub mod redact;
