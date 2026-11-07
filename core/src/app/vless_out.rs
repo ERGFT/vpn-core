@@ -35,13 +35,20 @@ const MAX_QUEUED_BYTES: usize = 4 * 1024 * 1024;
 /// Reserve queue memory without allowing concurrent senders to exceed the
 /// per-session byte budget between a load and an increment.
 fn reserve_queued_bytes(budget: &AtomicUsize, len: usize) -> bool {
-    budget
-        .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |queued| {
-            queued
-                .checked_add(len)
-                .filter(|total| *total <= MAX_QUEUED_BYTES)
-        })
-        .is_ok()
+    let mut queued = budget.load(Ordering::Relaxed);
+    loop {
+        let Some(total) = queued
+            .checked_add(len)
+            .filter(|total| *total <= MAX_QUEUED_BYTES)
+        else {
+            return false;
+        };
+
+        match budget.compare_exchange_weak(queued, total, Ordering::Relaxed, Ordering::Relaxed) {
+            Ok(_) => return true,
+            Err(actual) => queued = actual,
+        }
+    }
 }
 
 pub struct VlessOutbound {
