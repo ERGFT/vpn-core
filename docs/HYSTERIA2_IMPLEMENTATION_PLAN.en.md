@@ -1,6 +1,6 @@
 # Hysteria 2 Integration Plan
 
-**Status:** Stages 1–2 are complete (PRs #187 and #188); Stage 3 (QUIC and HTTP/3 authentication) is implemented and passed CI in PR #189; Stage 4 (TCP relay) is in progress on a separate branch stacked on PR #189. A production outbound is not available yet.
+**Status:** Stages 1–2 are complete (PRs #187 and #188); Stage 3 is implemented in PR #189; Stage 4 (TCP relay) is implemented in PR #190; Stage 5 (UDP relay and unit tests) is implemented in PR #192. All 8 CI jobs for PR #192 passed at commit `a93b890`; the PR remains open stacked on #190. Reference interoperability and the production outbound are still outstanding.
 **Code snapshot:** `main`, commit `e43066b` (PR #188).
 **Scope:** client proxy outbound in the existing core only.
 
@@ -56,7 +56,9 @@ PR #187 added the typed model and strict URI parser and was merged into `main` a
 
 Stage 3 is implemented in PR #189: one QUIC endpoint/connection owner, HTTP/3 `POST /auth`, strict acceptance of status 233, and parsing of `Hysteria-UDP`/`Hysteria-CC-RX`. All 8 CI jobs passed for commit `cc388b5`; the PR remains open pending separate authorization to merge. System certificate roots are used; unsupported insecure TLS, pinning, ECH, obfuscation, and port hopping are rejected.
 
-Stage 4 is under development on branch `codex/hysteria2-tcp-relay`, stacked on PR #189. It adds a TCPRequest with QUIC-varint ID `0x401`, a `host:port` destination, 64–511 bytes of padding, bounded TCPResponse parsing, and one bidirectional QUIC stream per destination on the authenticated connection. The TCP relay method is not yet wired into `Outbound` or the production factory; UDP and a usable production outbound remain incomplete. Local Rust checks on this Windows host may be blocked by the missing MSVC linker `link.exe`; CI verifies compilation and tests for each PR.
+Stage 4 is implemented in PR #190 (`codex/hysteria2-tcp-relay`), stacked on #189: TCPRequest with QUIC-varint ID `0x401`, bounded TCPResponse parsing, timeouts, and a bidirectional stream per destination. All 8 jobs passed in the latest CI attempt; the first coverage run failed in an integration test in `app_groups`, and its retry passed. The code is not wired into `Outbound` or the production factory.
+
+Stage 5 is implemented in PR #192 (`codex/hysteria2-udp-relay`), stacked on #190. It adds UDPMessage framing, QUIC unreliable datagrams, monotonically increasing Session IDs per QUIC connection, wrapping Packet IDs, fragmentation using `max_datagram_size`, reordered-fragment reassembly, and bounded state: at most 128 incomplete packets, 256 KiB of reassembly data, and a 5-second TTL. Each UDP association has a queue of up to 256 replies and a 120-second idle timeout; payloads are limited to 4096 bytes. All 8 CI jobs passed at `a93b890`, including workspace tests, coverage, and platform checks. Reference server/client interoperability remains outstanding, and the PR remains open. TCP and UDP are not available through the production outbound.
 
 An external Android phone is not needed for parser/codec development or local interop. It will help with the final device-level Android VPN/TUN run, Wi-Fi↔cellular handover, and wake-from-sleep recovery; an Android cross-build alone does not prove that behavior.
 

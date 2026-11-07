@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! QUIC, HTTP/3 authentication, and TCP relay for the Hysteria 2 client.
 //!
-//! UDP relay and production outbound wiring are implemented in later stages.
+//! Production outbound wiring is implemented in a later stage.
 
 use std::io;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use bytes::Buf;
@@ -16,6 +17,7 @@ use tokio::{
 
 use crate::error::{Error, Result};
 use crate::hysteria2::{Hysteria2Config, Obfuscation};
+use crate::hysteria2_udp::UdpDatagramMux;
 use crate::transport::{quic, tcp_tls, AsyncStream};
 use crate::vless::Address;
 
@@ -54,13 +56,16 @@ pub(crate) struct AuthNegotiation {
 
 /// An authenticated Hysteria 2 QUIC connection and its HTTP/3 driver.
 ///
-/// The QUIC connection is shared by concurrent relays in later stages. Drop
+/// The QUIC connection is shared by concurrent TCP and UDP relays. Drop
 /// closes the connection and stops the HTTP/3 driver deterministically.
 #[allow(dead_code, reason = "consumed by the TCP and UDP relay stages")]
 pub(crate) struct Hysteria2Connection {
     _endpoint: quinn::Endpoint,
     pub(crate) connection: Connection,
     pub(crate) auth: AuthNegotiation,
+    udp_mux: std::sync::Arc<UdpDatagramMux>,
+    udp_driver: JoinHandle<()>,
+    next_udp_session_id: AtomicU64,
     driver: JoinHandle<()>,
 }
 
@@ -101,19 +106,46 @@ impl Hysteria2Connection {
             }
         }
     }
+
+    /// Open one Hysteria UDP association on the shared QUIC connection.
+    pub(crate) async fn open_udp_session(
+        &self,
+    ) -> Result<std::sync::Arc<dyn crate::app::outbound::UdpSession>> {
+        if !self.auth.udp_supported {
+            return Err(Error::Protocol(
+                "Hysteria 2: server did not enable UDP relay".into(),
+            ));
+        }
+        let session_id = allocate_udp_session_id(&self.next_udp_session_id)?;
+        self.udp_mux.open_session(session_id).await
+    }
 }
 
 impl Drop for Hysteria2Connection {
     fn drop(&mut self) {
         self.connection.close(0u32.into(), b"client shutdown");
         self.driver.abort();
+        // Closing QUIC wakes read_datagram(); let it clear per-session routes.
     }
+}
+
+// Keep `fetch_update` for the repository's MSRV; newer stable toolchains deprecate it.
+#[allow(deprecated)]
+fn allocate_udp_session_id(next: &AtomicU64) -> Result<u32> {
+    next.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |id| {
+        (id <= u64::from(u32::MAX)).then_some(id + 1)
+    })
+    .map(|id| id as u32)
+    .map_err(|_| Error::Protocol("Hysteria 2: UDP session ID space is exhausted".into()))
 }
 
 /// Connect securely to a single-port Hysteria 2 server and authenticate it.
 /// Advanced TLS, port hopping, and obfuscation options are rejected until
 /// their dedicated transport stages are implemented.
-#[allow(dead_code, reason = "wired into Outbound in the next Hysteria stage")]
+#[allow(
+    dead_code,
+    reason = "wired into the production outbound in a later stage"
+)]
 pub(crate) async fn connect(config: &Hysteria2Config) -> Result<Hysteria2Connection> {
     validate_supported_options(config)?;
     let port = config
@@ -181,10 +213,15 @@ pub(crate) async fn connect(config: &Hysteria2Config) -> Result<Hysteria2Connect
             }
         };
 
+        let udp_mux = UdpDatagramMux::new(connection.clone());
+        let udp_driver = udp_mux.clone().spawn();
         return Ok(Hysteria2Connection {
             _endpoint: endpoint,
             connection,
             auth,
+            udp_mux,
+            udp_driver,
+            next_udp_session_id: AtomicU64::new(0),
             driver,
         });
     }
@@ -291,7 +328,7 @@ fn encode_tcp_request(target: &Address, port: u16) -> Result<Vec<u8>> {
     Ok(request)
 }
 
-fn encode_quic_varint(value: u64, output: &mut Vec<u8>) {
+pub(crate) fn encode_quic_varint(value: u64, output: &mut Vec<u8>) {
     match value {
         0..=63 => output.push(value as u8),
         64..=16_383 => output.extend_from_slice(&((value as u16) | 0x4000).to_be_bytes()),
@@ -319,7 +356,7 @@ async fn read_quic_varint<R: AsyncRead + Unpin>(reader: &mut R) -> Result<u64> {
     decode_quic_varint(&encoded[..len]).map(|(value, _)| value)
 }
 
-fn decode_quic_varint(encoded: &[u8]) -> Result<(u64, usize)> {
+pub(crate) fn decode_quic_varint(encoded: &[u8]) -> Result<(u64, usize)> {
     let first = *encoded
         .first()
         .ok_or_else(|| Error::Protocol("Hysteria 2: empty QUIC variable-length integer".into()))?;
@@ -471,13 +508,22 @@ mod tests {
     use http::{HeaderMap, HeaderValue, Method, StatusCode};
 
     use super::{
-        auth_request, decode_quic_varint, encode_quic_varint, encode_tcp_request,
-        parse_auth_response, read_quic_varint, read_tcp_response, validate_supported_options,
-        AuthNegotiation, ServerRxRate, AUTH_HOST, HYSTERIA_AUTH, HYSTERIA_CC_RX, HYSTERIA_PADDING,
-        HYSTERIA_UDP,
+        allocate_udp_session_id, auth_request, decode_quic_varint, encode_quic_varint,
+        encode_tcp_request, parse_auth_response, read_quic_varint, read_tcp_response,
+        validate_supported_options, AuthNegotiation, ServerRxRate, AUTH_HOST, HYSTERIA_AUTH,
+        HYSTERIA_CC_RX, HYSTERIA_PADDING, HYSTERIA_UDP,
     };
     use crate::hysteria2::Hysteria2Config;
     use crate::vless::Address;
+    use std::sync::atomic::AtomicU64;
+
+    #[test]
+    fn udp_session_ids_are_unique_until_the_wire_space_is_exhausted() {
+        let next = AtomicU64::new(u64::from(u32::MAX) - 1);
+        assert_eq!(allocate_udp_session_id(&next).unwrap(), u32::MAX - 1);
+        assert_eq!(allocate_udp_session_id(&next).unwrap(), u32::MAX);
+        assert!(allocate_udp_session_id(&next).is_err());
+    }
 
     #[test]
     fn builds_protocol_auth_request_with_unknown_client_rate_and_padding() {
