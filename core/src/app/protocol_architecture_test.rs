@@ -180,10 +180,7 @@ fn spawn_tcp_echo(listener: TcpListener) -> tokio::task::JoinHandle<()> {
         while let Ok((mut stream, _)) = listener.accept().await {
             tokio::spawn(async move {
                 let mut buffer = [0; 4096];
-                loop {
-                    let Ok(size) = stream.read(&mut buffer).await else {
-                        break;
-                    };
+                while let Ok(size) = stream.read(&mut buffer).await {
                     if size == 0 || stream.write_all(&buffer[..size]).await.is_err() {
                         break;
                     }
