@@ -119,7 +119,7 @@ SDK позволяет встроить `vpn-core` как сетевое ядр�
 | Управление и платформенная интеграция | Локальный Clash API, панели metacubexd и yacd, systemd и служба Windows; Android/iOS через C ABI остаются экспериментальными, адаптер iOS `NEPacketTunnelFlow` не поставляется |
 | Экспериментально | `fragment`, `noises` и интеграция с правилами приложений |
 | Не поддерживается | Транспорт KCP; ICMP/ping через TUN |
-Импорт конфигурации Xray-core или sing-box не означает поддержку каждого параметра этих форматов. Классический Shadowsocks принимает TCP и нативный UDP с AEAD-методами; Shadowsocks 2022 и plugins пока не поддерживаются. См. [план Shadowsocks](docs/SHADOWSOCKS_IMPLEMENTATION_PLAN.md).
+Импорт конфигурации Xray-core или sing-box не означает поддержку каждого параметра этих форматов. Классический Shadowsocks принимает TCP и нативный UDP с AEAD-методами. Реализация Shadowsocks 2022 начата в отдельной ветке, но ещё не подтверждена полным CI и межоперабельностью; plugins не поддерживаются. См. [план Shadowsocks](docs/SHADOWSOCKS_IMPLEMENTATION_PLAN.md).
 Hysteria 2 TCP/UDP runtime подключён к outbound factory, sing-box-конфигурации и URI-подпискам. Локальный Windows-прогон TCP/UDP echo с официальным сервером v2.13.0 прошёл на head PR #201 `fdc24a8` с пользовательским CA. Это ограниченный loopback smoke test: общая production readiness, смена сети и восстановление соединения пока не подтверждены; см. [план Hysteria 2](docs/HYSTERIA2_IMPLEMENTATION_PLAN.md).
 
 Полный перечень возможностей, их зрелость и конкретные проверки приведены в [матрице возможностей](docs/FEATURES.md). Сценарии и результаты тестирования описаны в [руководстве по тестированию](docs/TESTING.md).

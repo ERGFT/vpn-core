@@ -113,12 +113,16 @@ themselves (sing-box and Xray will not accept them):
   CA set replaces the built-in roots. This key works with `link`/`link_file`
   and with sing-box server fields. A local path cannot be represented in a
   subscription, so such records are skipped as unsupported;
-- on a `shadowsocks` outbound: `link` or `link_file` contains a classic
-  `ss://` link. Without this extension, sing-box accepts `server`,
+- on a `shadowsocks` outbound: `link` or `link_file` contains an `ss://` link.
+  Classic methods and their formats are unchanged. Without this extension, sing-box accepts `server`,
   `server_port`, `method`, and `password`; Xray accepts one
   `settings.servers` record. Supported methods are `aes-128-gcm`,
   `aes-256-gcm`, and `chacha20-ietf-poly1305`, over TCP and native UDP.
-  Shadowsocks 2022, legacy stream ciphers, SIP003 plugins, UDP-over-TCP, and
+  A separate work branch is adding Shadowsocks 2022; it is not verified support
+  until full CI and interoperability pass. The methods
+  `2022-blake3-aes-128-gcm`/
+  `2022-blake3-aes-256-gcm` use 16/32-byte base64 PSKs. Legacy stream ciphers,
+  SIP003 plugins, UDP-over-TCP, and
   per-network restrictions are explicitly rejected; unsupported subscription
   records are skipped and counted;
 - on `direct` (sing-box): `fragment`, `noises` — as on `freedom` in Xray;

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! Интероп-тесты против НАСТОЯЩЕГО Xray-core (сервер `xray run` с
-//! VLESS-входами) — не против собственной реализации серверной стороны.
+//! Интероп-тесты против НАСТОЯЩЕГО Xray-core (`xray run` с VLESS- и
+//! Shadowsocks-входами) — не против собственной реализации серверной стороны.
 //!
 //! Что проверяется (каждый тест поднимает свой экземпляр Xray):
 //! - REALITY поверх TCP без flow;
@@ -12,6 +12,7 @@
 //! - gRPC поверх REALITY;
 //! - xhttp: HTTP/1.1 и h2, все три режима, поверх TLS и REALITY, отказы
 //!   сервера (404, 400) с понятной ошибкой;
+//! - классический Shadowsocks AEAD и SIP022 — TCP/UDP echo;
 //! - UDP (команда VLESS UDP) — эхо датаграмм; XUDP (как у клиента Xray) —
 //!   с проверкой Full Cone.
 //!
@@ -2030,7 +2031,7 @@ fn trojan_inbound(
     ])
 }
 
-fn shadowsocks_inbound(port: u16, password: &str) -> serde_json_lite::Value {
+fn shadowsocks_inbound(port: u16, method: &str, password: &str) -> serde_json_lite::Value {
     obj(vec![
         ("listen", s("127.0.0.1")),
         ("port", n(port as i64)),
@@ -2038,7 +2039,7 @@ fn shadowsocks_inbound(port: u16, password: &str) -> serde_json_lite::Value {
         (
             "settings",
             obj(vec![
-                ("method", s("aes-256-gcm")),
+                ("method", s(method)),
                 ("password", s(password)),
                 ("network", s("tcp,udp")),
             ]),
@@ -2057,7 +2058,7 @@ async fn shadowsocks_aead_tcp_udp_against_xray() {
     let server_port = free_port();
     let password = "correct horse battery staple";
     let _x = Xray::start(
-        vec![shadowsocks_inbound(server_port, password)],
+        vec![shadowsocks_inbound(server_port, "aes-256-gcm", password)],
         &[server_port],
         tempdir::Dir::new(),
     )
@@ -2097,6 +2098,67 @@ async fn shadowsocks_aead_tcp_udp_against_xray() {
                 payload
             )
         );
+    }
+}
+
+/// SIP022 TCP and native UDP against the pinned independent Xray-core server.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "нужен Xray-core: scripts/interop_xray.sh"]
+async fn shadowsocks_2022_tcp_udp_against_xray() {
+    ensure_crypto_provider();
+    init_log();
+    let tcp_echo = start_echo().await;
+    let udp_echo = start_udp_echo().await;
+    for (method, psk) in [
+        ("2022-blake3-aes-128-gcm", "AAAAAAAAAAAAAAAAAAAAAA=="),
+        (
+            "2022-blake3-aes-256-gcm",
+            "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+        ),
+    ] {
+        let server_port = free_port();
+        let _x = Xray::start(
+            vec![shadowsocks_inbound(server_port, method, psk)],
+            &[server_port],
+            tempdir::Dir::new(),
+        )
+        .await;
+        let userinfo =
+            base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(format!("{method}:{psk}"));
+        let link = format!("ss://{userinfo}@127.0.0.1:{server_port}#xray-ss22");
+        let outbound = ShadowsocksOutbound::from_link("ss22", &link).unwrap();
+
+        let mut stream = outbound.connect(&meta(tcp_echo)).await.unwrap();
+        echo_roundtrip(&mut stream, 300_000).await;
+
+        let mut metadata = meta(udp_echo);
+        metadata.network = Network::Udp;
+        let session = outbound.udp(&metadata).await.unwrap();
+        for i in 0..5u8 {
+            let payload = vec![i; 100 + i as usize * 200];
+            session
+                .send(
+                    Address::Ipv4("127.0.0.1".parse().unwrap()),
+                    udp_echo,
+                    payload.clone(),
+                )
+                .await
+                .unwrap();
+            let (source, port, received) =
+                tokio::time::timeout(Duration::from_secs(10), session.recv())
+                    .await
+                    .expect("Shadowsocks 2022 UDP response")
+                    .unwrap()
+                    .unwrap();
+            assert_eq!(
+                (source, port, received),
+                (
+                    Address::Ipv4("127.0.0.1".parse().unwrap()),
+                    udp_echo,
+                    payload
+                )
+            );
+        }
     }
 }
 

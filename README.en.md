@@ -116,7 +116,7 @@ from an extracted ZIP. Public headers and examples are in [`ffi/`](ffi/).
 | Management and platform integration | Local Clash API, metacubexd and yacd dashboards, systemd, and Windows service; Android/iOS C ABI integration remains experimental, and no iOS `NEPacketTunnelFlow` adapter is provided |
 | Experimental | `fragment`, `noises`, and application routing integration |
 | Not supported | KCP transport; ICMP/ping through TUN |
-Importing an Xray-core or sing-box config does not imply support for every option in those formats. Classic Shadowsocks accepts TCP and native UDP with AEAD methods; Shadowsocks 2022 and plugins are not supported yet. See the [Shadowsocks plan](docs/SHADOWSOCKS_IMPLEMENTATION_PLAN.en.md).
+Importing an Xray-core or sing-box config does not imply support for every option in those formats. Classic Shadowsocks accepts TCP and native UDP with AEAD methods. Shadowsocks 2022 implementation has started in a separate branch but is not verified by full CI and interoperability yet; plugins are unsupported. See the [Shadowsocks plan](docs/SHADOWSOCKS_IMPLEMENTATION_PLAN.en.md).
 The Hysteria 2 TCP/UDP runtime is wired into the outbound factory, sing-box configuration, and URI subscriptions. A local Windows TCP/UDP echo run against the official v2.13.0 server passed on PR #201 head `fdc24a8` with a custom CA. This is a limited loopback smoke test; overall production readiness, network handover, and connection recovery remain unverified. See the [Hysteria 2 plan](docs/HYSTERIA2_IMPLEMENTATION_PLAN.en.md).
 
 The [feature matrix](docs/FEATURES.en.md) lists capabilities, maturity, and specific checks. Scenarios and test results are documented in the [testing guide](docs/TESTING.en.md).

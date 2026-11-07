@@ -1074,23 +1074,16 @@ Shadowsocks пока отклоняются. Старые stream ciphers и Shad
 Независимый Xray TCP/UDP echo test включён в `interop_xray.sh`; его результат
 фиксируется только после CI.
 
-### 14.6. Классический Shadowsocks AEAD (`shadowsocks_out.rs`)
+### 14.7. SIP022 / Shadowsocks 2022 — отдельный профиль
 
-Реализация использует официальный Rust crate `shadowsocks-rust` для SIP002,
-AEAD framing и шифрования. Ядро открывает серверный TCP-поток через общий
-protected-socket путь; нативный UDP использует тот же codec через адаптер
-защищённого UDP-сокета. В UDP-сессии очереди ограничены, простои закрывают
-задачу, а переполненные очереди и слишком большие датаграммы отбрасываются.
-
-Поддерживаются только `aes-128-gcm`, `aes-256-gcm` и
-`chacha20-ietf-poly1305`. Форматы sing-box, Xray и подписок приводятся к
-классической ссылке `ss://`; Clash YAML записи с неподдерживаемыми plugin,
-UDP-over-TCP или `udp: false` пропускаются и учитываются в диагностике.
-SIP003 plugins, пользовательские транспортные ограничения и цепочки для
-Shadowsocks пока отклоняются. Старые stream ciphers и Shadowsocks 2022 нельзя
-передавать в этот режим: у 2022 отдельные ключевые и replay-protection правила.
-Независимый Xray TCP/UDP echo test включён в `interop_xray.sh`; его результат
-фиксируется только после CI.
+В отдельной рабочей ветке включён feature `aead-cipher-2022` официального
+crate, а validator разрешает только два обязательных метода SIP022:
+`2022-blake3-aes-128-gcm` и `2022-blake3-aes-256-gcm`. `ServerConfig`
+проверяет base64 PSK и точную длину ключа; пароли classic AEAD по-прежнему
+проходят только через классический allowlist. TCP chunk framing, BLAKE3
+subkeys, UDP session IDs и replay window остаются в reference crate. Добавлен
+отдельный Xray TCP/UDP echo test для обоих методов; до зелёного CI его результат
+не подтверждён. Это состояние ветки, а не уже выпущенная возможность.
 
 ## 15. REALITY и TLS-отпечатки
 

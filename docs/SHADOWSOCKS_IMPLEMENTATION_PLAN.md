@@ -33,11 +33,24 @@ Shadowsocks AEAD и Shadowsocks 2022 — разные режимы; поддер
 - RU/EN README, CONFIG, FEATURES, ARCHITECTURE, TESTING и этот план совпадают
   по поддержанным форматам, методам, транспорту и ограничениям.
 
-## Следующий подэтап: Shadowsocks 2022 / SIP022
+## Следующий подэтап: Shadowsocks 2022 / SIP022 — в работе
 
-Не включать 2022 в классический decoder. Перед реализацией отдельно проверить
-актуальную спецификацию SIP022 и официальный независимый reference code, затем
-спроектировать и покрыть тестами:
+Спецификация [SIP022](https://shadowsocks.org/doc/sip022.html) сверена с
+закреплённым официальным crate `shadowsocks-rust` 1.24.0. В ней обязательны
+AES-128/256-GCM, фиксированные base64 PSK в 16/32 байта, отдельные TCP stream
+salts/chunks и UDP session/packet IDs со sliding-window replay protection.
+Криптографию и протокольный codec не дублируем в ядре: используем клиентские
+TCP/UDP пути этого crate.
+
+В отдельной worktree от PR #204 начата реализация методов
+`2022-blake3-aes-128-gcm` и `2022-blake3-aes-256-gcm`. Включён AEAD-2022
+feature официального `shadowsocks-rust`; добавлены раздельная allowlist
+методов, валидация PSK через `ServerConfig` и покрытие URI/factory/import
+unit-тестами. Это ещё не подтверждённая поддержка: TCP/UDP interoperability,
+полный CI и сверка всех форматов остаются обязательными. Локальная сборка
+пока остановилась на отсутствующем MSVC `link.exe`.
+
+Не включать 2022 в классический validator/decoder. Дальше покрыть критерии:
 
 1. Имена методов, формат ключей и минимальную длину PSK для всех целевых
    вариантов `2022-blake3-*`.

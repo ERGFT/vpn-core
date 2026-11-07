@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! Classic Shadowsocks AEAD outbound over the existing protected socket path.
+//! Shadowsocks AEAD outbounds over the existing protected socket path.
 
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::sync::Arc;
@@ -39,7 +39,7 @@ impl ShadowsocksOutbound {
         let config = ServerConfig::from_url(link).map_err(|_| {
             Error::Config("shadowsocks: некорректная ссылка ss:// или учётные данные".into())
         })?;
-        crate::shadowsocks_protocol::validate_classic(&config)?;
+        crate::shadowsocks_protocol::validate_supported(&config)?;
         Ok(Self {
             tag: tag.into(),
             config: Arc::new(config),

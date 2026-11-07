@@ -64,10 +64,10 @@ yaml_serde.workspace = true
 tun-rs.workspace = true
 netstack-smoltcp.workspace = true
 socket2.workspace = true
-# Official Shadowsocks Rust implementation: enable only standardized AEAD
-# ciphers for the classic (pre-2022) protocol. The 2022 feature is a separate
-# roadmap stage with distinct key and replay-protection requirements.
-shadowsocks = { version = "=1.24.0", default-features = false, features = ["aead-cipher"] }
+# Official Shadowsocks Rust implementation: enable standardized classic AEAD
+# and the separate SIP022/AEAD-2022 profile. The application validates each
+# profile independently so legacy ciphers cannot enter either mode.
+shadowsocks = { version = "=1.24.0", default-features = false, features = ["aead-cipher", "aead-cipher-2022"] }
 # Слой журнала для потока GET /logs (events.rs).
 tracing-subscriber.workspace = true
 

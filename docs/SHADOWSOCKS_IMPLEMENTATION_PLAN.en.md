@@ -34,11 +34,24 @@ or released support.
 - RU/EN README, CONFIG, FEATURES, ARCHITECTURE, TESTING, and this plan agree on
   supported formats, methods, transports, and limitations.
 
-## Next substage: Shadowsocks 2022 / SIP022
+## Next substage: Shadowsocks 2022 / SIP022 — in progress
 
-Do not add 2022 to the classic decoder. Before implementation, check the current
-SIP022 specification and independent official reference code, then design and
-test separately:
+The [SIP022 specification](https://shadowsocks.org/doc/sip022.html) has been
+checked against the pinned official `shadowsocks-rust` 1.24.0 crate. It
+requires AES-128/256-GCM, fixed 16/32-byte base64 PSKs, separate TCP stream
+salts/chunks, and UDP session/packet IDs with sliding-window replay protection.
+The core does not duplicate cryptography or protocol codecs; it uses this
+crate's client TCP/UDP paths.
+
+Implementation has started in a separate worktree based on PR #204 for
+`2022-blake3-aes-128-gcm` and `2022-blake3-aes-256-gcm`. The official
+`shadowsocks-rust` AEAD-2022 feature is enabled; separate method validation,
+PSK validation through `ServerConfig`, and URI/factory/import unit tests have
+been added. This is not verified support yet: TCP/UDP interoperability, full
+CI, and review of all input formats remain required. The local build is
+currently blocked by the missing MSVC `link.exe`.
+
+Do not add 2022 to the classic validator/decoder. Next, satisfy these criteria:
 
 1. Method names, key format, and minimum PSK length for each targeted
    `2022-blake3-*` variant.

@@ -236,13 +236,26 @@ mod tests {
     }
 
     #[test]
-    fn classic_shadowsocks_rejects_legacy_and_2022_ciphers() {
-        for method in ["aes-256-cfb", "2022-blake3-aes-128-gcm"] {
+    fn shadowsocks_rejects_legacy_ciphers() {
+        for method in ["aes-256-cfb"] {
             let text = format!(
                 r#"{{"outbounds":[{{"type":"shadowsocks","tag":"ss","server":"ss.example","server_port":8388,"method":"{method}","password":"secret"}}]}}"#
             );
             assert!(config::Config::parse(&text).is_err(), "{method}");
         }
+    }
+
+    #[test]
+    fn factory_builds_sip022_with_a_fixed_length_psk() {
+        let config = config::Config::parse(
+            r#"{"outbounds":[{"type":"shadowsocks","tag":"ss22","server":"ss.example","server_port":8388,"method":"2022-blake3-aes-128-gcm","password":"AAAAAAAAAAAAAAAAAAAAAA=="}]}"#,
+        )
+        .unwrap();
+        let debug = format!("{:?}", config.outbounds[0]);
+        assert!(!debug.contains("AAAAAAAA"), "{debug}");
+        let outbound = build_proxy(&config.outbounds[0], &HashMap::new()).unwrap();
+        assert_eq!(outbound.tag(), "ss22");
+        assert_eq!(outbound.server(), Some(("ss.example".into(), 8388)));
     }
 
     #[test]
