@@ -300,7 +300,7 @@ mod tests {
     #[tokio::test]
     async fn hop_sends_to_the_new_remote_port() {
         use quinn::udp::Transmit;
-        use quinn::AsyncUdpSocket;
+        use quinn::{AsyncUdpSocket, UdpPoller};
 
         let (first, second) = (20_000..60_000)
             .find_map(|port| {
@@ -320,9 +320,18 @@ mod tests {
             last: second_addr.port(),
         }];
         let state = PortHopState::new(ports, first_addr.port(), false).unwrap();
-        let socket = PortHopSocket {
+        let socket = Arc::new(PortHopSocket {
             state: Arc::clone(&state),
-        };
+        });
+        let mut poller = Arc::clone(&socket).create_io_poller();
+
+        tokio::time::timeout(
+            Duration::from_secs(2),
+            std::future::poll_fn(|cx| poller.as_mut().poll_writable(cx)),
+        )
+        .await
+        .unwrap()
+        .unwrap();
 
         socket
             .try_send(&Transmit {
@@ -342,6 +351,13 @@ mod tests {
 
         let selected = state.rotate(false).unwrap();
         assert_eq!(selected, second_addr.port());
+        tokio::time::timeout(
+            Duration::from_secs(2),
+            std::future::poll_fn(|cx| poller.as_mut().poll_writable(cx)),
+        )
+        .await
+        .unwrap()
+        .unwrap();
         socket
             .try_send(&Transmit {
                 destination: first_addr,
