@@ -11,7 +11,7 @@
 use anyhow::{Context, Result};
 use clap::Parser;
 use reality_core::fingerprint;
-use reality_core::transport::connect_tls_capturing_client_hello;
+use reality_core::transport::{connect_tls_capturing_client_hello, TransportConfig};
 use reality_core::vless::VlessConfig;
 
 #[derive(Parser, Debug)]
@@ -37,7 +37,8 @@ async fn main() -> Result<()> {
         cfg.effective_sni()
     );
 
-    let (_tls, captured) = connect_tls_capturing_client_hello(&cfg)
+    let transport = TransportConfig::from(&cfg);
+    let (_tls, captured) = connect_tls_capturing_client_hello(&transport)
         .await
         .context("не удалось поднять TCP+TLS (сертификат сервера не прошёл проверку — тогда захвата не будет: см. комментарий в исходнике)")?;
 

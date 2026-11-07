@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! Транспорт Этапа 4: VLESS поверх WebSocket-соединения внутри TLS.
+//! Общий WebSocket-транспорт поверх TCP/TLS. Функции `connect_command_*`
+//! добавляют к готовому потоку протокольный заголовок VLESS.
 //!
 //! Используем готовые библиотеки (`async-tungstenite` — само
 //! WS-рукопожатие и фреймирование, `ws_stream_tungstenite` — превращает
@@ -23,8 +24,8 @@ use ws_stream_tungstenite::WsStream;
 
 use crate::error::{Error, Result};
 use crate::transport::tcp_tls::{connect_tls_by_security, SecureStream};
+use crate::transport::{Security, TransportConfig};
 use crate::vless::protocol::{vless_connect, Address, Command, VlessStream};
-use crate::vless::VlessConfig;
 
 /// Потолок на одно сообщение WebSocket от сервера.
 const MAX_WS_MESSAGE: usize = 1024 * 1024;
@@ -34,7 +35,7 @@ pub type WsVlessStream = WsStream<Compat<SecureStream>>;
 /// Поднять TCP (+TLS или REALITY, по `cfg.security`) и выполнить поверх
 /// него HTTP Upgrade до WebSocket: `path=` из ссылки (по умолчанию `/`),
 /// `Host` — `host=` из ссылки или SNI.
-pub async fn connect_ws(cfg: &VlessConfig) -> Result<WsVlessStream> {
+pub async fn connect_ws(cfg: &TransportConfig) -> Result<WsVlessStream> {
     // WebSocket — это HTTP/1.1 Upgrade, поэтому ALPN по умолчанию
     // `http/1.1` (как делает Xray для ws); `alpn=` из ссылки главнее.
     let alpn = cfg.alpn().unwrap_or_else(|| vec![b"http/1.1".to_vec()]);
@@ -43,7 +44,7 @@ pub async fn connect_ws(cfg: &VlessConfig) -> Result<WsVlessStream> {
 
     // Host — `host=` из ссылки (для CDN он часто отличается от SNI), иначе SNI.
     let host = cfg.ws_host();
-    let scheme = if cfg.security == crate::vless::Security::None {
+    let scheme = if cfg.security == Security::None {
         "ws"
     } else {
         "wss"
@@ -88,23 +89,22 @@ pub async fn connect_ws(cfg: &VlessConfig) -> Result<WsVlessStream> {
 /// заголовок запроса VLESS (ответ снимается
 /// лениво, см. `vless_connect`).
 pub async fn connect_and_handshake_ws(
-    cfg: &VlessConfig,
+    cfg: &TransportConfig,
     id: &Uuid,
     target: Address,
     target_port: u16,
 ) -> Result<VlessStream<WsVlessStream>> {
-    connect_command_ws(cfg, id, Command::Tcp, target, target_port).await
+    connect_command_ws_config(cfg, id, Command::Tcp, target, target_port).await
 }
 
 /// Как [`connect_and_handshake_ws`], но с явной командой VLESS (TCP/UDP).
-pub async fn connect_command_ws(
-    cfg: &VlessConfig,
+pub async fn connect_command_ws_config(
+    cfg: &TransportConfig,
     id: &Uuid,
     command: Command,
     target: Address,
     target_port: u16,
 ) -> Result<VlessStream<WsVlessStream>> {
-    cfg.ensure_flow_supported()?;
     let stream = connect_ws(cfg).await?;
     vless_connect(stream, id, command, &target, target_port).await
 }

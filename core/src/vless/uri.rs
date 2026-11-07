@@ -1,68 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 use std::collections::HashMap;
 
-use base64::Engine;
 use uuid::Uuid;
 
 use crate::error::{Error, Result};
-
-/// Тип нижележащего транспорта (`type=` в URI): `tcp` (он же `raw` в
-/// новых версиях Xray), `ws`, `grpc`, `httpupgrade`, `xhttp` (он же
-/// `splithttp`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum NetworkType {
-    Tcp,
-    Ws,
-    Grpc,
-    HttpUpgrade,
-    Xhttp,
-}
-
-impl NetworkType {
-    /// Неизвестный транспорт — ошибка, а не молчаливый откат на TCP:
-    /// раньше `type=xhttp` или `type=httpupgrade` тихо превращались в
-    /// TCP, и соединение ломалось без понятной причины.
-    fn parse(s: &str) -> Result<Self> {
-        match s {
-            "" | "tcp" | "raw" => Ok(NetworkType::Tcp),
-            "ws" => Ok(NetworkType::Ws),
-            "grpc" | "gun" => Ok(NetworkType::Grpc),
-            "httpupgrade" => Ok(NetworkType::HttpUpgrade),
-            "xhttp" | "splithttp" => Ok(NetworkType::Xhttp),
-            // Удалены из самого Xray-core ("PrintRemovedFeatureError") —
-            // сервер с такой настройкой уже не запустится.
-            "quic" | "h2" | "http" | "h3" => Err(Error::InvalidUri(format!(
-                "транспорт type={s} удалён из Xray-core; его заменяет type=xhttp"
-            ))),
-            "kcp" | "mkcp" => Err(Error::InvalidUri(
-                "транспорт type=kcp (mKCP, UDP) не поддерживается этим клиентом".into(),
-            )),
-            other => Err(Error::InvalidUri(format!(
-                "транспорт type={other} не поддерживается (поддерживаются: tcp, ws, grpc, httpupgrade, xhttp)"
-            ))),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Security {
-    None,
-    Tls,
-    Reality,
-}
-
-impl Security {
-    fn parse(s: &str) -> Result<Self> {
-        match s {
-            "" | "none" => Ok(Security::None),
-            "tls" => Ok(Security::Tls),
-            "reality" => Ok(Security::Reality),
-            other => Err(Error::InvalidUri(format!(
-                "security={other} не поддерживается (поддерживаются: none, tls, reality)"
-            ))),
-        }
-    }
-}
+use crate::transport::TransportConfig;
+pub use crate::transport::{NetworkType, RealityParams, Security};
 
 /// `flow=` из ссылки. Значения — те, что понимает сервер Xray-core
 /// (`proxy/vless/inbound/inbound.go`: пустой flow и `xtls-rprx-vision`;
@@ -126,24 +69,6 @@ pub struct VlessConfig {
     pub browser: crate::fingerprint::Browser,
 }
 
-/// Разобранные параметры REALITY (`pbk=`/`sid=` в ссылке) — Этап 5.
-/// Живут отдельно от [`VlessConfig`], потому что осмысленны только при
-/// `security=reality`; см. [`VlessConfig::reality_params`].
-#[derive(Clone)]
-pub struct RealityParams {
-    /// Статический X25519-публичный ключ сервера (`pbk=`) — 32 байта,
-    /// base64url без padding, как у Xray-core.
-    pub public_key: [u8; 32],
-    /// ShortId (`sid=`) — hex-строка длиной 0-16 символов (0-8 байт) в
-    /// ссылке; более длинный short_id протоколом REALITY не
-    /// предусмотрен (Xray-core сам обрежет/отвергнет).
-    pub short_id: Vec<u8>,
-    /// Публичный ключ ML-DSA-65 сервера (`pqv=`, 1952 байта). Если задан,
-    /// кроме HMAC проверяется ещё и постквантовая подпись сервера в
-    /// сертификате (`Mldsa65Verify` у Xray-core).
-    pub mldsa65_verify: Option<Vec<u8>>,
-}
-
 /// UUID и параметры ссылки (`pbk`, `sid`, `pqv`, пароли транспорта) —
 /// скрыты; из `raw_params` видны только имена.
 impl std::fmt::Debug for VlessConfig {
@@ -165,16 +90,6 @@ impl std::fmt::Debug for VlessConfig {
             .field("ca_roots", &self.ca_roots.as_ref().map(|r| r.len()))
             .field("fragment", &self.fragment)
             .field("browser", &self.browser)
-            .finish()
-    }
-}
-
-impl std::fmt::Debug for RealityParams {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("RealityParams")
-            .field("public_key", &crate::redact::Redacted)
-            .field("short_id", &crate::redact::Redacted)
-            .field("mldsa65_verify", &crate::redact::opt(&self.mldsa65_verify))
             .finish()
     }
 }
@@ -215,17 +130,10 @@ impl VlessConfig {
         }
         let id = Uuid::parse_str(id_str)?;
 
-        let host = url
-            .host_str()
-            .ok_or_else(|| Error::InvalidUri("отсутствует host".into()))?
-            .to_string();
-        let port = url
-            .port()
-            .ok_or_else(|| Error::InvalidUri("отсутствует port".into()))?;
-
-        let mut raw_params: HashMap<String, String> = HashMap::new();
-        for (k, v) in url.query_pairs() {
-            raw_params.insert(k.into_owned(), v.into_owned());
+        let transport = TransportConfig::from_url(&url)?;
+        let mut raw_params = HashMap::new();
+        for (key, value) in url.query_pairs() {
+            raw_params.insert(key.into_owned(), value.into_owned());
         }
 
         let encryption = raw_params
@@ -241,32 +149,18 @@ impl VlessConfig {
             )));
         }
 
-        let security = match raw_params.get("security") {
-            Some(s) => Security::parse(s)?,
-            None => Security::None,
-        };
-        let network = match raw_params.get("type") {
-            Some(s) => NetworkType::parse(s)?,
-            None => NetworkType::Tcp,
-        };
-        if let Some(h) = raw_params.get("headerType") {
-            if !h.is_empty() && h != "none" {
-                return Err(Error::InvalidUri(format!(
-                    "headerType={h} не поддерживается (только none)"
-                )));
-            }
-        }
-
-        let sni = raw_params.get("sni").cloned();
-        let fingerprint = raw_params.get("fp").cloned();
-        let browser = crate::fingerprint::Browser::from_fp(fingerprint.as_deref()).0;
+        let security = transport.security;
+        let network = transport.network;
+        let sni = transport.sni.clone();
+        let fingerprint = transport.fingerprint.clone();
+        let browser = transport.browser;
         let flow = Flow::parse(raw_params.get("flow").map(String::as_str))?;
         let remark = url.fragment().map(percent_decode);
 
         Ok(VlessConfig {
             id,
-            host,
-            port,
+            host: transport.host,
+            port: transport.port,
             encryption,
             security,
             sni,
@@ -275,8 +169,8 @@ impl VlessConfig {
             network,
             remark,
             raw_params,
-            ca_roots: None,
-            fragment: None,
+            ca_roots: transport.ca_roots,
+            fragment: transport.fragment,
             browser,
         })
     }
@@ -303,48 +197,13 @@ impl VlessConfig {
         Ok(())
     }
 
-    /// Проверить всю ссылку на совместимость с сервером Xray-core до
-    /// соединения: flow (см. [`Self::ensure_flow_supported`]) и
-    /// сочетание REALITY с транспортом — Xray принимает REALITY только
-    /// поверх tcp, grpc и xhttp ("REALITY only supports RAW, XHTTP and
-    /// gRPC"), так что ws/httpupgrade + reality не заработают ни с одним
-    /// сервером. Библиотечный `transport::dial` такие сочетания не
-    /// запрещает (их используют тесты верификатора REALITY), а клиент
-    /// проверяет ссылку этим методом при старте.
+    /// Проверить VLESS flow и совместимость общего транспорта до
+    /// соединения. Остальные правила транспорта находятся в
+    /// [`TransportConfig::validate`], чтобы их можно было применять и к
+    /// другим протоколам.
     pub fn validate(&self) -> Result<()> {
         self.ensure_flow_supported()?;
-        // `path=`, `host=` и `serviceName=` декодируются из percent-encoding
-        // и попадают в сырую строку HTTP/1.1-запроса (httpupgrade, xhttp).
-        // `%0d%0a` иначе добавил бы произвольные заголовки или разбил бы
-        // запрос на два — отказ здесь, до соединения.
-        for (name, value) in [
-            ("path", self.raw_params.get("path")),
-            ("host", self.raw_params.get("host")),
-            ("serviceName", self.raw_params.get("serviceName")),
-        ] {
-            if let Some(v) = value {
-                if !crate::http1::request_part_ok(v) {
-                    return Err(Error::InvalidUri(format!(
-                        "{name}= содержит управляющие символы или пробелы — так можно \
-                         подменить HTTP-запрос"
-                    )));
-                }
-            }
-        }
-        if self.security == Security::Reality
-            && matches!(self.network, NetworkType::Ws | NetworkType::HttpUpgrade)
-        {
-            return Err(Error::InvalidUri(format!(
-                "security=reality с type={:?} не поддерживает сервер Xray-core \
-                 (REALITY работает только с tcp, grpc и xhttp)",
-                self.network
-            )));
-        }
-        if self.network == NetworkType::Xhttp {
-            // Параметры xhttp (mode=, extra=, alpn) — тоже до соединения.
-            crate::transport::xhttp::XhttpSettings::from_config(self)?;
-        }
-        Ok(())
+        TransportConfig::from(self).validate()
     }
 
     /// `alpn=` из ссылки (через запятую). `None` — не задан, транспорт
@@ -432,75 +291,27 @@ impl VlessConfig {
     /// разбираются — вызывающий код должен сам проверять `self.security`
     /// перед вызовом.
     pub fn reality_params(&self) -> Result<RealityParams> {
-        let pbk_str = self
-            .raw_params
-            .get("pbk")
-            .ok_or_else(|| Error::InvalidUri("security=reality, но в ссылке нет pbk=".into()))?;
-        let pbk_bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
-            .decode(pbk_str.trim_end_matches('='))
-            .map_err(|e| Error::InvalidUri(format!("pbk= не является base64url: {e}")))?;
-        if pbk_bytes.len() != 32 {
-            return Err(Error::InvalidUri(format!(
-                "pbk= должен декодироваться в 32 байта (X25519-ключ), получено {}",
-                pbk_bytes.len()
-            )));
-        }
-        let mut public_key = [0u8; 32];
-        public_key.copy_from_slice(&pbk_bytes);
-        // Точка малого порядка (например, все нули) даёт нулевой общий
-        // секрет с любым нашим ключом: AuthKey вычислим кем угодно, и
-        // любой посредник подделает «REALITY-сертификат». Xray такие
-        // ключи тоже отвергает.
-        let probe = x25519_dalek::StaticSecret::random_from_rng(&mut rand::rand_core::UnwrapErr(
-            rand::rngs::SysRng,
-        ))
-        .diffie_hellman(&x25519_dalek::PublicKey::from(public_key));
-        if !probe.was_contributory() {
-            return Err(Error::InvalidUri(
-                "pbk= — вырожденный ключ X25519 (точка малого порядка), такой ключ \
-                 небезопасен"
-                    .into(),
-            ));
-        }
+        TransportConfig::reality_params_from(&self.raw_params)
+    }
+}
 
-        // sid= необязателен у Xray-core (сервер может быть настроен с
-        // пустым shortIds), поэтому отсутствие ключа — не ошибка, в
-        // отличие от pbk=.
-        let short_id = match self.raw_params.get("sid") {
-            Some(s) if !s.is_empty() => hex::decode(s)
-                .map_err(|e| Error::InvalidUri(format!("sid= не является hex: {e}")))?,
-            _ => Vec::new(),
-        };
-        if short_id.len() > crate::reality::SHORT_ID_LEN {
-            return Err(Error::InvalidUri(format!(
-                "sid= длиннее {} байт: {}",
-                crate::reality::SHORT_ID_LEN,
-                short_id.len()
-            )));
+impl From<&VlessConfig> for TransportConfig {
+    fn from(cfg: &VlessConfig) -> Self {
+        let mut raw_params = cfg.raw_params.clone();
+        raw_params.remove("flow");
+        raw_params.remove("encryption");
+        Self {
+            host: cfg.host.clone(),
+            port: cfg.port,
+            security: cfg.security,
+            sni: cfg.sni.clone(),
+            fingerprint: cfg.fingerprint.clone(),
+            network: cfg.network,
+            raw_params,
+            ca_roots: cfg.ca_roots.clone(),
+            fragment: cfg.fragment.clone(),
+            browser: cfg.browser,
         }
-
-        let mldsa65_verify = match self.raw_params.get("pqv") {
-            Some(s) if !s.is_empty() => {
-                let b = base64::engine::general_purpose::URL_SAFE_NO_PAD
-                    .decode(s.trim_end_matches('='))
-                    .map_err(|e| Error::InvalidUri(format!("pqv= не является base64url: {e}")))?;
-                if b.len() != crate::reality::MLDSA65_PUBLIC_KEY_LEN {
-                    return Err(Error::InvalidUri(format!(
-                        "pqv= должен декодироваться в {} байт (ключ ML-DSA-65), получено {}",
-                        crate::reality::MLDSA65_PUBLIC_KEY_LEN,
-                        b.len()
-                    )));
-                }
-                Some(b)
-            }
-            _ => None,
-        };
-
-        Ok(RealityParams {
-            public_key,
-            short_id,
-            mldsa65_verify,
-        })
     }
 }
 
@@ -532,6 +343,7 @@ fn percent_decode_str(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use base64::Engine as _;
 
     #[test]
     fn parses_minimal_tcp_tls_link() {

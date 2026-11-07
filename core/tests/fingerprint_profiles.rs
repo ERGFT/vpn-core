@@ -19,6 +19,7 @@ use tokio_rustls::TlsAcceptor;
 use reality_core::fingerprint::{analyze_record, is_grease, Browser, FingerprintReport};
 use reality_core::transport::dial;
 use reality_core::transport::tcp_tls::{connect_tls_with_roots_alpn, ensure_crypto_provider};
+use reality_core::transport::TransportConfig;
 use reality_core::vless::{Address, Command, VlessConfig};
 
 const PBK: &str = "BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc";
@@ -224,7 +225,8 @@ async fn handshake(
         "vless://11111111-1111-1111-1111-111111111111@127.0.0.1:{port}?security=tls&sni=site.test&fp={fp}"
     ))
     .unwrap();
-    let mut t = connect_tls_with_roots_alpn(&cfg, roots, vec![])
+    let transport = TransportConfig::from(&cfg);
+    let mut t = connect_tls_with_roots_alpn(&transport, roots, vec![])
         .await
         .unwrap_or_else(|e| panic!("fp={fp}: {e}"));
     let mut b = [0u8; 2];

@@ -9,6 +9,7 @@
 use std::time::{Duration, Instant};
 
 use reality_core::transport::tcp_tls::{connect_tls, ensure_crypto_provider};
+use reality_core::transport::TransportConfig;
 use reality_core::vless::VlessConfig;
 
 /// Сервер, который принимает соединение и молчит — так ведёт себя
@@ -31,11 +32,12 @@ async fn silent_server_does_not_hang_forever() {
         "vless://11111111-1111-1111-1111-111111111111@127.0.0.1:{port}?security=tls&sni=example.com"
     ))
     .unwrap();
+    let transport = TransportConfig::from(&cfg);
 
     // Ограничение теста заведомо больше таймаута TLS-рукопожатия внутри,
     // но заведомо меньше «вечности».
     let started = Instant::now();
-    let res = tokio::time::timeout(Duration::from_secs(60), connect_tls(&cfg)).await;
+    let res = tokio::time::timeout(Duration::from_secs(60), connect_tls(&transport)).await;
 
     assert!(
         res.is_ok(),
@@ -70,8 +72,9 @@ async fn falls_back_to_second_address() {
         "vless://11111111-1111-1111-1111-111111111111@127.0.0.1:{dead}?security=tls&sni=example.com"
     ))
     .unwrap();
+    let transport = TransportConfig::from(&cfg);
 
-    let res = tokio::time::timeout(Duration::from_secs(30), connect_tls(&cfg)).await;
+    let res = tokio::time::timeout(Duration::from_secs(30), connect_tls(&transport)).await;
     assert!(res.is_ok(), "подключение к мёртвому порту не должно висеть");
     assert!(res.unwrap().is_err(), "мёртвый порт — это ошибка");
 }
@@ -85,8 +88,9 @@ async fn unresolvable_host_fails_cleanly() {
         "vless://11111111-1111-1111-1111-111111111111@nonexistent.invalid:443?security=tls",
     )
     .unwrap();
+    let transport = TransportConfig::from(&cfg);
 
-    let res = tokio::time::timeout(Duration::from_secs(30), connect_tls(&cfg)).await;
+    let res = tokio::time::timeout(Duration::from_secs(30), connect_tls(&transport)).await;
     assert!(
         res.is_ok(),
         "разрешение несуществующего имени не должно висеть"

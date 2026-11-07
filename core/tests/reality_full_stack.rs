@@ -56,6 +56,7 @@ use x25519_dalek::{PublicKey as X25519PublicKey, StaticSecret};
 use reality_core::transport::grpc::{connect_and_handshake_grpc, encode_hunk_frame, HunkDecoder};
 use reality_core::transport::tcp_tls::{connect_and_handshake, ensure_crypto_provider};
 use reality_core::transport::ws::connect_and_handshake_ws;
+use reality_core::transport::TransportConfig;
 use reality_core::vless::{Address, VlessConfig};
 
 const REQUEST_HEADER_LEN: usize = 1 + 16 + 1 + 1 + 2 + 1 + 1 + 11; // см. ws_loopback.rs
@@ -237,7 +238,7 @@ async fn reality_full_handshake_over_tcp() {
     let cfg = VlessConfig::parse(&uri).unwrap();
     let target = Address::Domain("example.com".to_string());
 
-    let mut client = connect_and_handshake(&cfg, &id, target, 443)
+    let mut client = connect_and_handshake(&TransportConfig::from(&cfg), &id, target, 443)
         .await
         .expect("полный REALITY-хендшейк через боевую connect_and_handshake должен пройти");
 
@@ -294,9 +295,10 @@ async fn reality_full_handshake_over_ws() {
 
     let uri = reality_client_uri(addr.port(), &server_pub, id, "&type=ws&path=/vless");
     let cfg = VlessConfig::parse(&uri).unwrap();
+    let transport = TransportConfig::from(&cfg);
     let target = Address::Domain("example.com".to_string());
 
-    let mut client = connect_and_handshake_ws(&cfg, &id, target, 443)
+    let mut client = connect_and_handshake_ws(&transport, &id, target, 443)
         .await
         .expect("полный REALITY-хендшейк через боевую connect_and_handshake_ws должен пройти");
 
@@ -385,11 +387,12 @@ async fn reality_full_handshake_over_grpc() {
         "&type=grpc&serviceName=testsvc",
     );
     let cfg = VlessConfig::parse(&uri).unwrap();
+    let transport = TransportConfig::from(&cfg);
     let target = Address::Domain("example.com".to_string());
 
     let mut client = tokio::time::timeout(
         std::time::Duration::from_secs(10),
-        connect_and_handshake_grpc(&cfg, &id, target, 443),
+        connect_and_handshake_grpc(&transport, &id, target, 443),
     )
     .await
     .expect("не должно зависать — если зависло, значит сервер этого теста не досылает VLESS-заголовок ответа")

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! Транспорт Этапа 4: VLESS поверх одного bidi-стрима gRPC — режим
+//! Общий gRPC-транспорт. VLESS использует один bidi-стрим — режим
 //! "gun" у Xray-core/V2Ray (без мультиплексирования, `multiMode=false`).
 //!
 //! Формат перепроверен по двум независимым источникам (см. PLAN.md,
@@ -38,8 +38,8 @@ use uuid::Uuid;
 use crate::error::{Error, Result};
 use crate::transport::h2pool;
 use crate::transport::tcp_tls::connect_tls_by_security;
+use crate::transport::TransportConfig;
 use crate::vless::protocol::{vless_connect, Address, Command, VlessStream};
-use crate::vless::VlessConfig;
 
 const DUPLEX_CAPACITY: usize = 64 * 1024;
 const READ_CHUNK: usize = 16 * 1024;
@@ -100,7 +100,7 @@ impl AsyncWrite for GrpcStream {
 /// работа с `h2`/protobuf-кадрированием идёт в фоновой задаче, наружу
 /// отдаётся уже плоский байтовый поток). TLS под ALPN `h2` — обычный или
 /// REALITY, по `cfg.security` (Этап 5).
-pub async fn connect_grpc(cfg: &VlessConfig) -> Result<GrpcStream> {
+pub async fn connect_grpc(cfg: &TransportConfig) -> Result<GrpcStream> {
     let service_name = cfg.service_name().to_string();
 
     // Все gRPC-потоки к одному серверу — в одном HTTP/2-соединении, как у
@@ -261,23 +261,22 @@ pub async fn connect_grpc(cfg: &VlessConfig) -> Result<GrpcStream> {
 /// gRPC-поток -> заголовок запроса VLESS (ответ снимается
 /// лениво, см. `vless_connect`).
 pub async fn connect_and_handshake_grpc(
-    cfg: &VlessConfig,
+    cfg: &TransportConfig,
     id: &Uuid,
     target: Address,
     target_port: u16,
 ) -> Result<VlessStream<GrpcStream>> {
-    connect_command_grpc(cfg, id, Command::Tcp, target, target_port).await
+    connect_command_grpc_config(cfg, id, Command::Tcp, target, target_port).await
 }
 
 /// Как [`connect_and_handshake_grpc`], но с явной командой VLESS (TCP/UDP).
-pub async fn connect_command_grpc(
-    cfg: &VlessConfig,
+pub async fn connect_command_grpc_config(
+    cfg: &TransportConfig,
     id: &Uuid,
     command: Command,
     target: Address,
     target_port: u16,
 ) -> Result<VlessStream<GrpcStream>> {
-    cfg.ensure_flow_supported()?;
     let stream = connect_grpc(cfg).await?;
     vless_connect(stream, id, command, &target, target_port).await
 }

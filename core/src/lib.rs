@@ -4,8 +4,9 @@
 //! Что где (подробно — README.md и PLAN.md в корне репозитория):
 //!   `vless`       — разбор vless://-ссылки, протокол VLESS (TCP и UDP),
 //!                   XTLS Vision (`vless::vision`)
-//!   `transport`   — TCP (+TLS или REALITY), WebSocket, gRPC; `raw` —
-//!                   сокет с выдачей по одному TLS-рекорду для Vision
+//!   `transport`   — общая TransportConfig, TCP (+TLS или REALITY),
+//!                   WebSocket, gRPC; `raw` — сокет с выдачей по одному
+//!                   TLS-рекорду для Vision
 //!   `reality`     — REALITY: SessionId, проверка сертификата (HMAC и
 //!                   ML-DSA-65), хук в ClientHello патченного rustls
 //!   `fingerprint` — ClientHello как у Chrome 133, разбор, JA3/JA4

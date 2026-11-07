@@ -65,8 +65,8 @@ use crate::fingerprint::Browser;
 use crate::transport::browser_headers::{headers as browser_headers, Variant};
 use crate::transport::h2pool;
 use crate::transport::tcp_tls::{connect_tls_by_security, SecureStream};
+use crate::transport::{NetworkType, Security, TransportConfig};
 use crate::vless::protocol::{vless_connect, Address, Command, VlessStream};
-use crate::vless::{Security, VlessConfig};
 
 /// Сколько данных «вниз» может ждать, пока их прочитает приложение.
 const DOWN_CAPACITY: usize = 256 * 1024;
@@ -174,12 +174,16 @@ pub struct XhttpSettings {
 
 #[derive(Debug, Clone)]
 struct DownloadSettings {
-    cfg: VlessConfig,
+    cfg: TransportConfig,
     http: XhttpSettings,
 }
 
 impl DownloadSettings {
-    fn parse(cfg: &VlessConfig, upload: &XhttpSettings, value: &serde_json::Value) -> Result<Self> {
+    fn parse(
+        cfg: &TransportConfig,
+        upload: &XhttpSettings,
+        value: &serde_json::Value,
+    ) -> Result<Self> {
         let invalid =
             |message: String| Error::InvalidUri(format!("xhttp: downloadSettings: {message}"));
         let fields = value
@@ -256,7 +260,7 @@ impl DownloadSettings {
         download_cfg.host = address;
         download_cfg.port = port;
         download_cfg.security = security;
-        download_cfg.network = crate::vless::NetworkType::Xhttp;
+        download_cfg.network = NetworkType::Xhttp;
         download_cfg
             .raw_params
             .insert("type".into(), "xhttp".into());
@@ -551,7 +555,7 @@ fn parse_xmux(v: &serde_json::Value) -> Result<h2pool::Limits> {
 }
 
 impl XhttpSettings {
-    pub fn from_config(cfg: &VlessConfig) -> Result<Self> {
+    pub fn from_config(cfg: &TransportConfig) -> Result<Self> {
         let extra: serde_json::Map<String, serde_json::Value> = match cfg.raw_params.get("extra") {
             Some(s) if !s.trim().is_empty() => match serde_json::from_str(s) {
                 Ok(serde_json::Value::Object(m)) => m,
@@ -1001,7 +1005,7 @@ impl AsyncWrite for XhttpStream {
 }
 
 /// Поднять xhttp-сессию.
-pub async fn connect_xhttp(cfg: &VlessConfig) -> Result<XhttpStream> {
+pub async fn connect_xhttp(cfg: &TransportConfig) -> Result<XhttpStream> {
     let st = Arc::new(XhttpSettings::from_config(cfg)?);
     let up_cap = match st.mode {
         Mode::PacketUp => (st.max_post.to as usize).clamp(READ_CHUNK, PACKET_UP_CAPACITY_MAX),
@@ -1067,14 +1071,13 @@ impl Drop for CancelOnDrop {
 }
 
 /// Полное открытие соединения: транспорт + заголовок VLESS.
-pub async fn connect_command_xhttp(
-    cfg: &VlessConfig,
+pub async fn connect_command_xhttp_config(
+    cfg: &TransportConfig,
     id: &Uuid,
     command: Command,
     target: Address,
     target_port: u16,
 ) -> Result<VlessStream<XhttpStream>> {
-    cfg.ensure_flow_supported()?;
     let stream = connect_xhttp(cfg).await?;
     vless_connect(stream, id, command, &target, target_port).await
 }
@@ -1162,7 +1165,7 @@ mod h2c {
     }
 
     fn connect(
-        c: VlessConfig,
+        c: TransportConfig,
     ) -> futures_util::future::BoxFuture<'static, Result<h2pool::Connected>> {
         Box::pin(async move {
             let alpn = c
@@ -1192,7 +1195,7 @@ mod h2c {
         })
     }
 
-    async fn acquire(cfg: &VlessConfig, st: &XhttpSettings) -> Result<h2pool::Lease> {
+    async fn acquire(cfg: &TransportConfig, st: &XhttpSettings) -> Result<h2pool::Lease> {
         let c = cfg.clone();
         h2pool::acquire(&format!("xhttp|{}", cfg.pool_key()), &st.xmux, move || {
             connect(c.clone())
@@ -1201,7 +1204,7 @@ mod h2c {
     }
 
     pub(super) async fn start_download(
-        cfg: &VlessConfig,
+        cfg: &TransportConfig,
         st: &XhttpSettings,
         session: &str,
         down: DuplexStream,
@@ -1223,7 +1226,7 @@ mod h2c {
     }
 
     pub(super) async fn start(
-        cfg: &VlessConfig,
+        cfg: &TransportConfig,
         st: Arc<XhttpSettings>,
         down: DuplexStream,
         up: DuplexStream,
@@ -1479,7 +1482,7 @@ mod h3c {
         }
     }
 
-    async fn connect(c: VlessConfig) -> Result<h2pool::Connected<Send3>> {
+    async fn connect(c: TransportConfig) -> Result<h2pool::Connected<Send3>> {
         let addrs = resolve_server(&c.host, c.port)
             .await
             .map_err(|e| crate::transport::tcp_tls::server_error(&c.host, e))?;
@@ -1523,7 +1526,7 @@ mod h3c {
         Err(last.unwrap_or_else(|| Error::Protocol("xhttp: нет адресов сервера".into())))
     }
 
-    async fn acquire(cfg: &VlessConfig, st: &XhttpSettings) -> Result<h2pool::Lease<Send3>> {
+    async fn acquire(cfg: &TransportConfig, st: &XhttpSettings) -> Result<h2pool::Lease<Send3>> {
         let c = cfg.clone();
         h2pool::acquire(&format!("xhttp3|{}", cfg.pool_key()), &st.xmux, move || {
             Box::pin(connect(c.clone()))
@@ -1532,7 +1535,7 @@ mod h3c {
     }
 
     pub(super) async fn start_download(
-        cfg: &VlessConfig,
+        cfg: &TransportConfig,
         st: &XhttpSettings,
         session: &str,
         down: DuplexStream,
@@ -1556,7 +1559,7 @@ mod h3c {
     }
 
     pub(super) async fn start(
-        cfg: &VlessConfig,
+        cfg: &TransportConfig,
         st: Arc<XhttpSettings>,
         down: DuplexStream,
         up: DuplexStream,
@@ -1797,12 +1800,12 @@ mod h1 {
 
     pub(super) use crate::http1::{pump_body, read_head};
 
-    fn alpn(cfg: &VlessConfig) -> Vec<Vec<u8>> {
+    fn alpn(cfg: &TransportConfig) -> Vec<Vec<u8>> {
         cfg.alpn().unwrap_or_else(|| vec![b"http/1.1".to_vec()])
     }
 
     pub(super) async fn start_download(
-        cfg: &VlessConfig,
+        cfg: &TransportConfig,
         st: &XhttpSettings,
         session: &str,
         down: DuplexStream,
@@ -1817,7 +1820,7 @@ mod h1 {
     }
 
     pub(super) async fn start(
-        cfg: &VlessConfig,
+        cfg: &TransportConfig,
         st: Arc<XhttpSettings>,
         down: DuplexStream,
         up: DuplexStream,
@@ -1866,7 +1869,7 @@ mod h1 {
         alive: Arc<std::sync::atomic::AtomicBool>,
     }
 
-    async fn open_upload(cfg: &VlessConfig, shared: &Arc<Shared>) -> Result<UploadConn> {
+    async fn open_upload(cfg: &TransportConfig, shared: &Arc<Shared>) -> Result<UploadConn> {
         use std::sync::atomic::{AtomicBool, Ordering};
         let s = connect_tls_by_security(cfg, alpn(cfg)).await?;
         let (r, w) = tokio::io::split(s);
@@ -1906,7 +1909,7 @@ mod h1 {
     }
 
     async fn packet_uploader(
-        cfg: VlessConfig,
+        cfg: TransportConfig,
         st: Arc<XhttpSettings>,
         session: String,
         mut r: DuplexStream,
@@ -1973,11 +1976,12 @@ mod tests {
     use super::*;
     use base64::Engine as _;
 
-    fn cfg(tail: &str) -> VlessConfig {
-        VlessConfig::parse(&format!(
+    fn cfg(tail: &str) -> TransportConfig {
+        let vless = crate::vless::VlessConfig::parse(&format!(
             "vless://11111111-1111-1111-1111-111111111111@1.2.3.4:443?type=xhttp&{tail}"
         ))
-        .unwrap()
+        .unwrap();
+        TransportConfig::from(&vless)
     }
 
     #[test]

@@ -22,6 +22,7 @@ use tokio_util::compat::TokioAsyncReadCompatExt;
 use uuid::Uuid;
 
 use reality_core::transport::tcp_tls::{connect_tls_with_roots, ensure_crypto_provider};
+use reality_core::transport::TransportConfig;
 use reality_core::vless::protocol::vless_connect;
 use reality_core::vless::{Address, Command, VlessConfig};
 
@@ -102,7 +103,9 @@ async fn ws_full_roundtrip_over_real_tls() {
     // публичных корней — для теста нам нужен наш тестовый корень, так
     // что рукопожатие собираем вручную теми же шагами, что и внутри
     // transport::ws, но с connect_tls_with_roots вместо connect_tls.
-    let tls = connect_tls_with_roots(&cfg, roots).await.unwrap();
+    let tls = connect_tls_with_roots(&TransportConfig::from(&cfg), roots)
+        .await
+        .unwrap();
     let compat_tls = tls.compat();
 
     let uri = format!("wss://{}{}", cfg.effective_sni(), cfg.path());

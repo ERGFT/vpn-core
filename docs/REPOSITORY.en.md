@@ -38,7 +38,7 @@ in [README.en.md](README.en.md).
 | `app/tun/` | TUN flows, routes, UDP, and the platform WFP implementation |
 | `connection_owner.rs` | trusted connection-owner metadata supplied by the host app |
 | `vless/`, `trojan.rs` | VLESS/Trojan link and protocol formats, Vision, UDP, XUDP, and Mux.Cool |
-| `transport/` | TCP/TLS/REALITY, WebSocket, gRPC, HTTPUpgrade, XHTTP, QUIC/DoQ/HTTP/3, HTTP/2 pools, fragmentation, and browser imitation |
+| `transport/` | protocol-independent `TransportConfig`; TCP/TLS/REALITY, WebSocket, gRPC, HTTPUpgrade, XHTTP, QUIC/DoQ/HTTP/3, HTTP/2 pools, fragmentation, and browser imitation |
 | `reality/`, `fingerprint/` | REALITY handshake and verification; ClientHello profiles, capture, JA3/JA4 |
 | `socks5/`, `relay.rs`, `http1.rs` | protocol framing, bidirectional relay, and HTTP/1.1 response parsing |
 | `net_protect.rs`, `hostname.rs`, `fsutil.rs`, `redact.rs` | bypassing TUN for the core's own sockets and shared networking/file helpers with secret redaction |

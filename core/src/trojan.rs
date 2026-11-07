@@ -26,7 +26,8 @@ use sha2::{Digest, Sha224};
 use tokio::io::{AsyncRead, AsyncReadExt};
 
 use crate::error::{Error, Result};
-use crate::vless::{Address, VlessConfig};
+use crate::transport::TransportConfig;
+use crate::vless::{Address, Flow};
 
 pub const CMD_TCP: u8 = 1;
 pub const CMD_UDP: u8 = 3;
@@ -37,9 +38,8 @@ pub const MAX_UDP: usize = 65535;
 #[derive(Clone)]
 pub struct TrojanConfig {
     pub password: String,
-    /// Параметры транспорта (TLS/REALITY, ws, grpc, …) — в том же виде,
-    /// что у VLESS; UUID в нём не используется.
-    pub transport: VlessConfig,
+    /// Общие параметры транспорта, независимые от конфигурации VLESS.
+    pub transport: TransportConfig,
 }
 
 impl std::fmt::Debug for TrojanConfig {
@@ -69,24 +69,26 @@ impl TrojanConfig {
             return Err(Error::InvalidUri("trojan://: пустой пароль".into()));
         }
         // По умолчанию — TLS, как у всех клиентов Trojan.
-        let mut host = hostpart.to_string();
-        let has_security = host
-            .split(['?', '#'])
-            .nth(1)
-            .is_some_and(|q| q.split('&').any(|kv| kv.starts_with("security=")));
+        let mut url = url::Url::parse(&format!("trojan://{hostpart}"))
+            .map_err(|e| Error::InvalidUri(format!("не удалось разобрать Trojan URI: {e}")))?;
+        let has_security = url.query_pairs().any(|(key, _)| key == "security");
         if !has_security {
-            host = match host.split_once('?') {
-                Some((a, q)) => format!("{a}?security=tls&{q}"),
-                None => match host.split_once('#') {
-                    Some((a, f)) => format!("{a}?security=tls#{f}"),
-                    None => format!("{host}?security=tls"),
-                },
-            };
+            url.query_pairs_mut().append_pair("security", "tls");
         }
-        let transport = VlessConfig::parse(&format!(
-            "vless://00000000-0000-0000-0000-000000000000@{host}"
-        ))?;
-        if transport.flow.is_vision() {
+        let protocol_params: std::collections::HashMap<String, String> = url
+            .query_pairs()
+            .map(|(key, value)| (key.into_owned(), value.into_owned()))
+            .collect();
+        if let Some(encryption) = protocol_params.get("encryption") {
+            if encryption != "none" {
+                return Err(Error::InvalidUri(format!(
+                    "неподдерживаемое значение encryption='{encryption}' (ожидалось 'none')"
+                )));
+            }
+        }
+        let flow = Flow::parse(protocol_params.get("flow").map(String::as_str))?;
+        let transport = TransportConfig::from_url(&url)?;
+        if flow.is_vision() {
             return Err(Error::InvalidUri(
                 "trojan: flow=xtls-rprx-vision бывает только у VLESS".into(),
             ));
@@ -205,6 +207,10 @@ mod tests {
         assert_eq!(c.transport.effective_sni(), "s.example");
         let c = TrojanConfig::parse("trojan://x@1.2.3.4:8443").unwrap();
         assert_eq!(c.transport.security, crate::vless::Security::Tls);
+        let c = TrojanConfig::parse("trojan://x@h:443#security=tls").unwrap();
+        assert_eq!(c.transport.security, crate::vless::Security::Tls);
+        let c = TrojanConfig::parse("trojan://x@h:443?flow=none").unwrap();
+        assert!(!c.transport.raw_params.contains_key("flow"));
         let c = TrojanConfig::parse("trojan://x@h:1?security=none&type=ws&path=%2Fw").unwrap();
         assert_eq!(c.transport.security, crate::vless::Security::None);
         assert!(TrojanConfig::parse("trojan://@h:1").is_err());
