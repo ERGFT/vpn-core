@@ -667,7 +667,7 @@ mod tests {
         let e = Config::parse(r#"{"outbounds":[{"type":"shadowsocks","tag":"s"}]}"#)
             .unwrap_err()
             .to_string();
-        assert!(e.contains("shadowsocks"), "{e}");
+        assert!(e.to_lowercase().contains("shadowsocks"), "{e}");
         let e = Config::parse(r#"{"outbounds":[{"protocol":"vmess"}]}"#)
             .unwrap_err()
             .to_string();

@@ -82,7 +82,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn singbox_fields_create_classic_aeAD_uri() {
+    fn singbox_fields_create_classic_ae_ad_uri() {
         let uri = uri_from_fields("ss.example", 8388, "chacha20-ietf-poly1305", "p@ss").unwrap();
         let parsed = shadowsocks::config::ServerConfig::from_url(&uri).unwrap();
         assert_eq!(parsed.addr().to_string(), "ss.example:8388");
