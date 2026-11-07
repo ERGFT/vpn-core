@@ -18,6 +18,7 @@ use tokio_rustls::TlsAcceptor;
 use uuid::Uuid;
 
 use reality_core::transport::tcp_tls::{connect_tls_with_roots, ensure_crypto_provider};
+use reality_core::transport::TransportConfig;
 use reality_core::vless::protocol::{vless_connect, Address, Command};
 use reality_core::vless::VlessConfig;
 
@@ -79,7 +80,7 @@ async fn real_tls_loopback_handshake() {
     );
     let cfg = VlessConfig::parse(&cfg_uri).expect("разбор тестовой ссылки");
 
-    let client_tls = connect_tls_with_roots(&cfg, roots)
+    let client_tls = connect_tls_with_roots(&TransportConfig::from(&cfg), roots)
         .await
         .expect("клиентское TLS-рукопожатие с доверенным тестовым корнем");
 

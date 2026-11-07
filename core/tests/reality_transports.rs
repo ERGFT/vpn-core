@@ -43,6 +43,7 @@ use uuid::Uuid;
 use reality_core::transport::grpc::connect_and_handshake_grpc;
 use reality_core::transport::tcp_tls::ensure_crypto_provider;
 use reality_core::transport::ws::connect_and_handshake_ws;
+use reality_core::transport::TransportConfig;
 use reality_core::vless::{Address, VlessConfig};
 
 /// Собрать `vless://` со `security=reality` и произвольным (для этого
@@ -137,10 +138,11 @@ async fn ws_transport_rejects_non_hmac_certificate_via_reality_verifier() {
 
     let uri = reality_uri(addr.port(), "&type=ws&path=/vless");
     let cfg = VlessConfig::parse(&uri).unwrap();
+    let transport = TransportConfig::from(&cfg);
     let id = cfg.id;
     let target = Address::Domain("example.com".to_string());
 
-    let err = connect_and_handshake_ws(&cfg, &id, target, 443)
+    let err = connect_and_handshake_ws(&transport, &id, target, 443)
         .await
         .expect_err("REALITY-верификатор обязан отвергнуть НЕ-HMAC подпись сертификата");
 
@@ -172,10 +174,11 @@ async fn grpc_transport_rejects_non_hmac_certificate_via_reality_verifier() {
 
     let uri = reality_uri(addr.port(), "&type=grpc&serviceName=testsvc");
     let cfg = VlessConfig::parse(&uri).unwrap();
+    let transport = TransportConfig::from(&cfg);
     let id = cfg.id;
     let target = Address::Domain("example.com".to_string());
 
-    let err = connect_and_handshake_grpc(&cfg, &id, target, 443)
+    let err = connect_and_handshake_grpc(&transport, &id, target, 443)
         .await
         .expect_err("REALITY-верификатор обязан отвергнуть НЕ-HMAC подпись сертификата");
 

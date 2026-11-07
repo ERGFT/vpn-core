@@ -21,6 +21,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use x25519_dalek::{PublicKey, StaticSecret};
 
 use reality_core::transport::tcp_tls::{connect_and_handshake, ensure_crypto_provider};
+use reality_core::transport::TransportConfig;
 use reality_core::vless::{Address, VlessConfig};
 
 struct GoServer {
@@ -129,7 +130,12 @@ async fn reality_handshake_and_vless_echo_against_go_server() {
 
     let mut stream = tokio::time::timeout(
         Duration::from_secs(20),
-        connect_and_handshake(&cfg, &cfg.id, Address::Domain("target.test".into()), 443),
+        connect_and_handshake(
+            &TransportConfig::from(&cfg),
+            &cfg.id,
+            Address::Domain("target.test".into()),
+            443,
+        ),
     )
     .await
     .expect("рукопожатие не должно зависать")
@@ -170,7 +176,12 @@ async fn wrong_short_id_falls_back_to_dest_and_client_rejects_it() {
 
     let res = tokio::time::timeout(
         Duration::from_secs(20),
-        connect_and_handshake(&cfg, &cfg.id, Address::Domain("target.test".into()), 443),
+        connect_and_handshake(
+            &TransportConfig::from(&cfg),
+            &cfg.id,
+            Address::Domain("target.test".into()),
+            443,
+        ),
     )
     .await
     .expect("не должно зависать");
@@ -204,7 +215,12 @@ async fn wrong_public_key_is_rejected() {
 
     let res = tokio::time::timeout(
         Duration::from_secs(20),
-        connect_and_handshake(&cfg, &cfg.id, Address::Domain("target.test".into()), 443),
+        connect_and_handshake(
+            &TransportConfig::from(&cfg),
+            &cfg.id,
+            Address::Domain("target.test".into()),
+            443,
+        ),
     )
     .await
     .expect("не должно зависать");
@@ -250,7 +266,12 @@ async fn client_version_is_checked_by_real_server() {
         let cfg = link(server.port, &uuid, &public, "0123abcd");
         let res = tokio::time::timeout(
             Duration::from_secs(20),
-            connect_and_handshake(&cfg, &cfg.id, Address::Domain("target.test".into()), 443),
+            connect_and_handshake(
+                &TransportConfig::from(&cfg),
+                &cfg.id,
+                Address::Domain("target.test".into()),
+                443,
+            ),
         )
         .await
         .expect("не должно зависать");

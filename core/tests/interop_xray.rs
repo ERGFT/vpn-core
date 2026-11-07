@@ -36,7 +36,7 @@ use tokio_rustls::{TlsAcceptor, TlsConnector};
 use x25519_dalek::{PublicKey, StaticSecret};
 
 use reality_core::transport::tcp_tls::{connect_and_handshake, ensure_crypto_provider};
-use reality_core::transport::{dial, TcpVlessStream};
+use reality_core::transport::{dial, TcpVlessStream, TransportConfig};
 use reality_core::vless::{Address, Command as VlessCommand, VlessConfig};
 
 const SHORT_ID: &str = "0123abcd";
@@ -641,7 +641,9 @@ async fn reality_tcp_echo(classic_decoy: bool) {
     .await;
     let cfg = reality_link(port, &uuid, &keys, "&type=tcp");
     let (a, p) = target(echo);
-    let mut s = connect_and_handshake(&cfg, &cfg.id, a, p).await.unwrap();
+    let mut s = connect_and_handshake(&TransportConfig::from(&cfg), &cfg.id, a, p)
+        .await
+        .unwrap();
     // Первое соединение к новому «сайту прикрытия» REALITY-сервер Xray
     // держит до 5 с, пока изучает его пост-рукопожатные записи
     // (`record_detect.go` в XTLS/REALITY) — поэтому щедрый таймаут.
@@ -678,7 +680,9 @@ async fn vision_account_rejects_client_without_flow() {
     .await;
     let cfg = reality_link(port, &uuid, &keys, "&type=tcp");
     let (a, p) = target(echo);
-    let mut s = connect_and_handshake(&cfg, &cfg.id, a, p).await.unwrap();
+    let mut s = connect_and_handshake(&TransportConfig::from(&cfg), &cfg.id, a, p)
+        .await
+        .unwrap();
     s.write_all(b"hello").await.unwrap();
     let mut buf = [0u8; 5];
     let r = tokio::time::timeout(Duration::from_secs(10), s.read_exact(&mut buf)).await;
@@ -711,7 +715,9 @@ async fn vision_plain_payload_against_xray() {
     .await;
     let cfg = reality_link(port, &uuid, &keys, "&type=tcp&flow=xtls-rprx-vision");
     let (a, p) = target(echo);
-    let mut s = connect_and_handshake(&cfg, &cfg.id, a, p).await.unwrap();
+    let mut s = connect_and_handshake(&TransportConfig::from(&cfg), &cfg.id, a, p)
+        .await
+        .unwrap();
     assert!(matches!(s, TcpVlessStream::Vision(_)));
     echo_roundtrip(&mut s, 300 * 1024).await;
     let TcpVlessStream::Vision(v) = &s else {
@@ -754,7 +760,9 @@ async fn vision_sends_header_when_client_is_silent() {
     .await;
     let cfg = reality_link(port, &uuid, &keys, "&type=tcp&flow=xtls-rprx-vision");
     let (a, p) = target(banner_port);
-    let mut s = connect_and_handshake(&cfg, &cfg.id, a, p).await.unwrap();
+    let mut s = connect_and_handshake(&TransportConfig::from(&cfg), &cfg.id, a, p)
+        .await
+        .unwrap();
     let mut buf = [0u8; 23];
     tokio::time::timeout(Duration::from_secs(10), s.read_exact(&mut buf))
         .await
@@ -795,7 +803,7 @@ async fn vision_inner_tls(pqv: Option<(&str, &str)>, expect_ok: bool) {
     };
     let cfg = reality_link(port, &uuid, &keys, &extra);
     let (a, p) = target(inner_port);
-    let res = connect_and_handshake(&cfg, &cfg.id, a, p).await;
+    let res = connect_and_handshake(&TransportConfig::from(&cfg), &cfg.id, a, p).await;
     if !expect_ok {
         let err = res
             .expect_err("неверный pqv= должен отвергаться")
