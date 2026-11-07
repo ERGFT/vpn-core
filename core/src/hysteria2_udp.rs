@@ -488,15 +488,16 @@ fn format_authority(address: &Address, port: u16) -> String {
 }
 
 fn parse_authority(authority: &str) -> Result<(Address, u16)> {
-    let (host, port) = if let Some(bracketed) = authority.strip_prefix('[') {
+    let (host, port, is_bracketed) = if let Some(bracketed) = authority.strip_prefix('[') {
         let (host, port) = bracketed
             .split_once("]:")
             .ok_or_else(|| protocol_error("invalid bracketed UDP IPv6 destination"))?;
-        (host, port)
+        (host, port, true)
     } else {
-        authority
+        let (host, port) = authority
             .rsplit_once(':')
-            .ok_or_else(|| protocol_error("UDP destination has no port"))?
+            .ok_or_else(|| protocol_error("UDP destination has no port"))?;
+        (host, port, false)
     };
     if host.is_empty() || host.bytes().any(|byte| byte.is_ascii_whitespace()) {
         return Err(protocol_error("UDP destination host is invalid"));
@@ -504,6 +505,11 @@ fn parse_authority(authority: &str) -> Result<(Address, u16)> {
     let port = port
         .parse::<u16>()
         .map_err(|_| protocol_error("UDP destination port is invalid"))?;
+    if !is_bracketed && host.contains(':') {
+        return Err(protocol_error(
+            "unbracketed or invalid UDP IPv6 destination",
+        ));
+    }
     let address = match host.parse::<IpAddr>() {
         Ok(IpAddr::V4(ip)) => Address::Ipv4(ip),
         Ok(IpAddr::V6(ip)) => Address::Ipv6(ip),
