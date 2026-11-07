@@ -1,23 +1,32 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! QUIC and HTTP/3 authentication for the Hysteria 2 client.
+//! QUIC, HTTP/3 authentication, and TCP relay for the Hysteria 2 client.
 //!
-//! This stage establishes and authenticates a protocol connection. TCP/UDP
-//! relays and production outbound wiring are implemented in later stages.
+//! UDP relay and production outbound wiring are implemented in later stages.
 
+use std::io;
 use std::time::Duration;
 
 use bytes::Buf;
 use http::{HeaderMap, HeaderValue, Method, Request, StatusCode};
 use quinn::Connection;
-use tokio::task::JoinHandle;
+use tokio::{
+    io::{AsyncRead, AsyncReadExt, AsyncWriteExt},
+    task::JoinHandle,
+};
 
 use crate::error::{Error, Result};
 use crate::hysteria2::{Hysteria2Config, Obfuscation};
-use crate::transport::{quic, tcp_tls};
+use crate::transport::{quic, tcp_tls, AsyncStream};
+use crate::vless::Address;
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const AUTH_TIMEOUT: Duration = Duration::from_secs(10);
+const TCP_OPEN_TIMEOUT: Duration = Duration::from_secs(10);
 const MAX_AUTH_RESPONSE_BODY: usize = 16 * 1024;
+const TCP_REQUEST_ID: u64 = 0x401;
+const MAX_TCP_ADDRESS: usize = 2048;
+const MAX_TCP_RESPONSE_MESSAGE: usize = 2048;
+const MAX_TCP_PADDING: usize = 4096;
 const AUTH_PATH: &str = "/auth";
 const AUTH_HOST: &str = "hysteria";
 const HYSTERIA_AUTH: &str = "Hysteria-Auth";
@@ -53,6 +62,45 @@ pub(crate) struct Hysteria2Connection {
     pub(crate) connection: Connection,
     pub(crate) auth: AuthNegotiation,
     driver: JoinHandle<()>,
+}
+
+impl Hysteria2Connection {
+    /// Open one TCP relay stream on the authenticated QUIC connection.
+    pub(crate) async fn connect_tcp(
+        &self,
+        target: &Address,
+        port: u16,
+    ) -> Result<Box<dyn AsyncStream>> {
+        let request = encode_tcp_request(target, port)?;
+        let (mut send, mut recv) =
+            tokio::time::timeout(TCP_OPEN_TIMEOUT, self.connection.open_bi())
+                .await
+                .map_err(|_| Error::Protocol("Hysteria 2: opening TCP stream timed out".into()))?
+                .map_err(|error| {
+                    Error::Protocol(format!("Hysteria 2: opening TCP stream failed: {error}"))
+                })?;
+        tokio::time::timeout(TCP_OPEN_TIMEOUT, async {
+            send.write_all(&request).await?;
+            send.flush().await
+        })
+        .await
+        .map_err(|_| Error::Protocol("Hysteria 2: sending TCP request timed out".into()))?
+        .map_err(|error| {
+            Error::Protocol(format!("Hysteria 2: sending TCP request failed: {error}"))
+        })?;
+
+        match tokio::time::timeout(TCP_OPEN_TIMEOUT, read_tcp_response(&mut recv)).await {
+            Ok(Ok(())) => Ok(Box::new(tokio::io::join(recv, send))),
+            Ok(Err(error)) => {
+                let _ = send.reset(1u32.into());
+                Err(error)
+            }
+            Err(_) => {
+                let _ = send.reset(1u32.into());
+                Err(Error::Protocol("Hysteria 2: TCP response timed out".into()))
+            }
+        }
+    }
 }
 
 impl Drop for Hysteria2Connection {
@@ -220,6 +268,134 @@ async fn authenticate(
     Ok(auth)
 }
 
+fn encode_tcp_request(target: &Address, port: u16) -> Result<Vec<u8>> {
+    let host = match target {
+        Address::Ipv4(ip) => ip.to_string(),
+        Address::Domain(domain) => domain.clone(),
+        Address::Ipv6(ip) => format!("[{ip}]"),
+    };
+    let address = format!("{host}:{port}");
+    if address.is_empty() || address.len() > MAX_TCP_ADDRESS {
+        return Err(Error::Protocol(
+            "Hysteria 2: TCP destination address exceeds the protocol limit".into(),
+        ));
+    }
+
+    let padding = random_tcp_padding();
+    let mut request = Vec::with_capacity(address.len() + padding.len() + 16);
+    encode_quic_varint(TCP_REQUEST_ID, &mut request);
+    encode_quic_varint(address.len() as u64, &mut request);
+    request.extend_from_slice(address.as_bytes());
+    encode_quic_varint(padding.len() as u64, &mut request);
+    request.extend_from_slice(padding.as_bytes());
+    Ok(request)
+}
+
+fn encode_quic_varint(value: u64, output: &mut Vec<u8>) {
+    match value {
+        0..=63 => output.push(value as u8),
+        64..=16_383 => output.extend_from_slice(&((value as u16) | 0x4000).to_be_bytes()),
+        16_384..=1_073_741_823 => {
+            output.extend_from_slice(&((value as u32) | 0x8000_0000).to_be_bytes())
+        }
+        _ => output.extend_from_slice(&(value | 0xc000_0000_0000_0000).to_be_bytes()),
+    }
+}
+
+async fn read_quic_varint<R: AsyncRead + Unpin>(reader: &mut R) -> Result<u64> {
+    let first = reader
+        .read_u8()
+        .await
+        .map_err(|error| tcp_response_error("reading variable-length integer", error))?;
+    let len = 1usize << (first >> 6);
+    let mut encoded = [0u8; 8];
+    encoded[0] = first;
+    if len > 1 {
+        reader
+            .read_exact(&mut encoded[1..len])
+            .await
+            .map_err(|error| tcp_response_error("reading variable-length integer", error))?;
+    }
+    decode_quic_varint(&encoded[..len]).map(|(value, _)| value)
+}
+
+fn decode_quic_varint(encoded: &[u8]) -> Result<(u64, usize)> {
+    let first = *encoded
+        .first()
+        .ok_or_else(|| Error::Protocol("Hysteria 2: empty QUIC variable-length integer".into()))?;
+    let len = 1usize << (first >> 6);
+    if encoded.len() < len {
+        return Err(Error::Protocol(
+            "Hysteria 2: truncated QUIC variable-length integer".into(),
+        ));
+    }
+    let mut value = u64::from(first & 0x3f);
+    for byte in &encoded[1..len] {
+        value = (value << 8) | u64::from(*byte);
+    }
+    Ok((value, len))
+}
+
+async fn read_tcp_response<R: AsyncRead + Unpin>(reader: &mut R) -> Result<()> {
+    let status = reader
+        .read_u8()
+        .await
+        .map_err(|error| tcp_response_error("reading status", error))?;
+    let message_len = read_quic_varint(reader).await?;
+    if message_len > MAX_TCP_RESPONSE_MESSAGE as u64 {
+        return Err(Error::Protocol(
+            "Hysteria 2: TCP response message exceeds the protocol limit".into(),
+        ));
+    }
+    let mut message = vec![0; message_len as usize];
+    reader
+        .read_exact(&mut message)
+        .await
+        .map_err(|error| tcp_response_error("reading message", error))?;
+    let padding_len = read_quic_varint(reader).await?;
+    if padding_len > MAX_TCP_PADDING as u64 {
+        return Err(Error::Protocol(
+            "Hysteria 2: TCP response padding exceeds the protocol limit".into(),
+        ));
+    }
+    let mut remaining = padding_len;
+    let mut discard = [0u8; 512];
+    while remaining > 0 {
+        let count = remaining.min(discard.len() as u64) as usize;
+        reader
+            .read_exact(&mut discard[..count])
+            .await
+            .map_err(|error| tcp_response_error("reading padding", error))?;
+        remaining -= count as u64;
+    }
+
+    match status {
+        0 => Ok(()),
+        1 => Err(Error::Protocol(format!(
+            "Hysteria 2: TCP relay rejected: {}",
+            String::from_utf8_lossy(&message)
+        ))),
+        _ => Err(Error::Protocol(format!(
+            "Hysteria 2: invalid TCP response status {status}"
+        ))),
+    }
+}
+
+fn tcp_response_error(context: &str, error: io::Error) -> Error {
+    Error::Protocol(format!("Hysteria 2: error {context}: {error}"))
+}
+
+fn random_tcp_padding() -> String {
+    use rand::RngExt;
+
+    const ALPHABET: &[u8] = b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+    let mut rng = rand::rng();
+    let len = rng.random_range(64..512);
+    (0..len)
+        .map(|_| char::from(ALPHABET[rng.random_range(0..ALPHABET.len())]))
+        .collect()
+}
+
 fn auth_request(config: &Hysteria2Config) -> Result<Request<()>> {
     let auth = HeaderValue::from_bytes(config.auth.as_deref().unwrap_or("").as_bytes())
         .map_err(|_| Error::Config("Hysteria 2: auth value is not a valid HTTP header".into()))?;
@@ -295,10 +471,13 @@ mod tests {
     use http::{HeaderMap, HeaderValue, Method, StatusCode};
 
     use super::{
-        auth_request, parse_auth_response, validate_supported_options, AuthNegotiation,
-        ServerRxRate, AUTH_HOST, HYSTERIA_AUTH, HYSTERIA_CC_RX, HYSTERIA_PADDING, HYSTERIA_UDP,
+        auth_request, decode_quic_varint, encode_quic_varint, encode_tcp_request,
+        parse_auth_response, read_quic_varint, read_tcp_response, validate_supported_options,
+        AuthNegotiation, ServerRxRate, AUTH_HOST, HYSTERIA_AUTH, HYSTERIA_CC_RX, HYSTERIA_PADDING,
+        HYSTERIA_UDP,
     };
     use crate::hysteria2::Hysteria2Config;
+    use crate::vless::Address;
 
     #[test]
     fn builds_protocol_auth_request_with_unknown_client_rate_and_padding() {
@@ -373,5 +552,91 @@ mod tests {
         let secure =
             Hysteria2Config::parse("hy2://secret@example.com:443?sni=front.example").unwrap();
         assert!(validate_supported_options(&secure).is_ok());
+    }
+
+    #[test]
+    fn encodes_tcp_request_with_quic_varints_and_random_padding() {
+        let request = encode_tcp_request(&Address::Domain("example.com".into()), 443).unwrap();
+        let (request_id, request_id_len) = decode_quic_varint(&request).unwrap();
+        assert_eq!(request_id, 0x401);
+        let (address_len, address_len_len) =
+            decode_quic_varint(&request[request_id_len..]).unwrap();
+        let address_len = address_len as usize;
+        let address_start = request_id_len + address_len_len;
+        assert_eq!(
+            &request[address_start..address_start + address_len],
+            b"example.com:443"
+        );
+        let padding_len_offset = address_start + address_len;
+        let (padding_len, padding_len_len) =
+            decode_quic_varint(&request[padding_len_offset..]).unwrap();
+        let padding_len = padding_len as usize;
+        assert!((64..512).contains(&padding_len));
+        assert_eq!(
+            request.len(),
+            padding_len_offset + padding_len_len + padding_len
+        );
+
+        let ipv6 =
+            encode_tcp_request(&Address::Ipv6("2001:db8::1".parse().unwrap()), 8443).unwrap();
+        assert!(ipv6
+            .windows(b"[2001:db8::1]:8443".len())
+            .any(|w| w == b"[2001:db8::1]:8443"));
+    }
+
+    #[tokio::test]
+    async fn round_trips_quic_varint_width_boundaries() {
+        use tokio::io::AsyncWriteExt;
+
+        for value in [
+            0,
+            63,
+            64,
+            16_383,
+            16_384,
+            1_073_741_823,
+            1_073_741_824,
+            (1u64 << 62) - 1,
+        ] {
+            let mut encoded = Vec::new();
+            encode_quic_varint(value, &mut encoded);
+            let (mut writer, mut reader) = tokio::io::duplex(16);
+            writer.write_all(&encoded).await.unwrap();
+            assert_eq!(read_quic_varint(&mut reader).await.unwrap(), value);
+        }
+    }
+
+    #[tokio::test]
+    async fn accepts_tcp_ok_and_leaves_tunnel_payload_unread() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let (mut writer, mut reader) = tokio::io::duplex(64);
+        writer.write_all(&[0, 0, 0]).await.unwrap(); // status, empty message, no padding
+        writer.write_all(b"tunnel-data").await.unwrap();
+        read_tcp_response(&mut reader).await.unwrap();
+        let mut payload = [0; 11];
+        reader.read_exact(&mut payload).await.unwrap();
+        assert_eq!(&payload, b"tunnel-data");
+    }
+
+    #[tokio::test]
+    async fn rejects_tcp_error_malformed_status_and_oversized_response() {
+        use tokio::io::AsyncWriteExt;
+
+        let (mut writer, mut reader) = tokio::io::duplex(64);
+        writer
+            .write_all(&[1, 4, b'd', b'e', b'n', b'y', 0])
+            .await
+            .unwrap();
+        let error = read_tcp_response(&mut reader).await.unwrap_err();
+        assert!(error.to_string().contains("deny"));
+
+        let (mut writer, mut reader) = tokio::io::duplex(64);
+        writer.write_all(&[2, 0, 0]).await.unwrap();
+        assert!(read_tcp_response(&mut reader).await.is_err());
+
+        let (mut writer, mut reader) = tokio::io::duplex(64);
+        writer.write_all(&[0, 0x48, 0x01]).await.unwrap(); // message length 2049
+        assert!(read_tcp_response(&mut reader).await.is_err());
     }
 }
