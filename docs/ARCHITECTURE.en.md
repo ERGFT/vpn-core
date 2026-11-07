@@ -1022,8 +1022,9 @@ implementation:
     an 8-byte salt and BLAKE2b-256 mask; PSKs shorter than 4 UTF-8 bytes are
     rejected to match the reference implementation, and short or salt-only
     frames are discarded. The UDP payload budget is
-    reduced by the salt length. The wrapper uses Tokio UDP without GSO/ECN; CI
-    passed on the previous head, and the PSK-boundary check is awaiting CI.
+    reduced by the salt length. The wrapper uses Tokio UDP without GSO/ECN; all
+    15 required CI checks passed on head `9a1c1da` (runs #42378078167 and
+    #42378077596), with publish intentionally skipped.
     Reference interoperability and performance have not been measured.
 
 ## 14. Protocols: VLESS, Vision, XUDP, Mux.Cool, Trojan
