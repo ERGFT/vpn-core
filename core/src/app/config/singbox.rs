@@ -319,7 +319,7 @@ fn outbound(o: Obj<'_>) -> Result<OutboundConfig> {
                             "параметры Hysteria 2 содержат неподдерживаемые опции",
                         )
                     })?;
-                out.link = uri;
+                out.link = Some(uri);
                 o.ignore(&[
                     "server",
                     "server_port",
