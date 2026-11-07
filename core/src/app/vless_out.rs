@@ -32,6 +32,25 @@ const MAX_DESTS: usize = 256;
 /// Режим без XUDP: потолок на данные в очередях одной сессии.
 const MAX_QUEUED_BYTES: usize = 4 * 1024 * 1024;
 
+/// Reserve queue memory without allowing concurrent senders to exceed the
+/// per-session byte budget between a load and an increment.
+fn reserve_queued_bytes(budget: &AtomicUsize, len: usize) -> bool {
+    let mut queued = budget.load(Ordering::Relaxed);
+    loop {
+        let Some(total) = queued
+            .checked_add(len)
+            .filter(|total| *total <= MAX_QUEUED_BYTES)
+        else {
+            return false;
+        };
+
+        match budget.compare_exchange_weak(queued, total, Ordering::Relaxed, Ordering::Relaxed) {
+            Ok(_) => return true,
+            Err(actual) => queued = actual,
+        }
+    }
+}
+
 pub struct VlessOutbound {
     tag: String,
     cfg: Arc<VlessConfig>,
@@ -395,10 +414,9 @@ impl UdpSession for PerDestSession {
     fn send(&self, dst: Address, port: u16, data: Vec<u8>) -> BoxFuture<'_, Result<()>> {
         Box::pin(async move {
             let len = data.len();
-            if self.budget.load(Ordering::Relaxed) + len > MAX_QUEUED_BYTES {
+            if !reserve_queued_bytes(&self.budget, len) {
                 return Ok(());
             }
-            self.budget.fetch_add(len, Ordering::Relaxed);
             let mut dests = self.dests.lock().await;
             let key = (dst, port);
             let data = match dests.get(&key) {
@@ -447,5 +465,53 @@ impl UdpSession for PerDestSession {
                 }
             }
         })
+    }
+}
+
+#[cfg(test)]
+mod queue_budget_tests {
+    use super::{reserve_queued_bytes, AtomicUsize, MAX_QUEUED_BYTES};
+    use std::sync::{Arc, Barrier};
+
+    #[test]
+    fn queued_byte_budget_never_exceeds_limit_under_concurrent_reservations() {
+        let budget = Arc::new(AtomicUsize::new(0));
+        let gate = Arc::new(Barrier::new(3));
+        let reservation = MAX_QUEUED_BYTES / 2 + 1;
+        let workers = (0..2)
+            .map(|_| {
+                let budget = budget.clone();
+                let gate = gate.clone();
+                std::thread::spawn(move || {
+                    gate.wait();
+                    reserve_queued_bytes(&budget, reservation)
+                })
+            })
+            .collect::<Vec<_>>();
+
+        gate.wait();
+        let accepted = workers
+            .into_iter()
+            .map(|worker| worker.join().expect("reservation worker panicked"))
+            .filter(|accepted| *accepted)
+            .count();
+
+        assert_eq!(accepted, 1);
+        assert_eq!(
+            budget.load(std::sync::atomic::Ordering::Relaxed),
+            reservation
+        );
+        assert!(budget.load(std::sync::atomic::Ordering::Relaxed) <= MAX_QUEUED_BYTES);
+    }
+
+    #[test]
+    fn queued_byte_budget_rejects_overflow_without_wrapping() {
+        let budget = AtomicUsize::new(usize::MAX - 8);
+
+        assert!(!reserve_queued_bytes(&budget, 16));
+        assert_eq!(
+            budget.load(std::sync::atomic::Ordering::Relaxed),
+            usize::MAX - 8
+        );
     }
 }

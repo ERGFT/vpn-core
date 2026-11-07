@@ -91,12 +91,29 @@ Change the order of PRs 1–5 if evidence shows an extraction does not reduce th
 
 ### Implementation status on 2026-11-07
 
-PRs #178–#182 are merged into `main`: typed settings, the static factory,
-shared transport configuration, outbound capabilities, and typed subscription
-normalization. The required internal test protocol for Stage 2 is being added
-in the current PR behind `cfg(test)` only. After it merges, Stage 2 regression
-acceptance remains: old configs and links, subscriptions, VLESS/Trojan
-interoperability, groups, reload, C ABI/SDK, and RU/EN documentation.
+PRs #178–#183 are merged into `main`: typed settings, the static factory,
+shared transport configuration, outbound capabilities, typed subscription
+normalization, and a test protocol behind `cfg(test)` only. Stage 2 is not
+accepted yet: the failure matrix still needs direct checks for interruption of
+an active connection and core shutdown during an active session.
+
+| Stage 2 requirement | Existing evidence | Status |
+|---|---|---|
+| Settings, TCP/UDP, unavailable TCP, UDP timeout, tracker cancellation, and outbound replacement | `core/src/app/protocol_architecture_test.rs`; fixture passed PR #183 CI | Verified in CI |
+| Wrong Trojan password and real TCP/UDP/TLS/REALITY variants | `core/tests/interop_xray.rs::trojan_against_xray`, run by `scripts/interop_xray.sh` in Linux CI | Verified in CI |
+| Reload preserves current sessions and applies new rules to new ones | `core/tests/app_api.rs::reload_keeps_open_connections_and_applies_new_rules`; fixture also replaces the router | Verified in CI |
+| Groups, subscriptions, and configuration formats | `core/tests/app_groups.rs`, `core/src/app/subscription.rs`, and parser tests | Verified in CI |
+| Public C ABI start/request/reload/stop | `ffi/tests/c_abi.rs::start_request_reload_stop` and CI ABI/SDK jobs | Verified in CI |
+| UDP queue byte limit under concurrent sends | `core/src/app/vless_out.rs::queue_budget_tests`; atomic reservation added in this change | Awaiting CI; local run stopped because MSVC `link.exe` is unavailable |
+| Active proxy connection interruption and core shutdown with an active session | Added `remote_interruption_ends_the_active_proxy_session` and `dropping_running_closes_an_active_proxy_session` in `core/tests/app_api.rs`; `Running::drop` now cancels tracked connections | Awaiting CI |
+
+VLESS queue-budget reservation is now atomic: concurrent senders cannot both
+pass a stale-value check and collectively exceed the 4 MiB session budget. The
+lifecycle check found that dropping `Running` stopped listeners but did not
+signal cancellation to already tracked connections. `Running::drop` now calls
+`Tracker::close_all`; integration tests check remote interruption and closure
+of an active session during shutdown. These changes need CI; start Hysteria 2
+only after the complete matrix passes.
 
 ## Baseline checks
 
