@@ -121,7 +121,7 @@ Android, iOS, MSRV, coverage, audit, and secrets. PR #184 is merged into `main`.
 | Check | Result in this run |
 |---|---|
 | `cargo fmt --all -- --check` | PASS |
-| `python scripts/check_doc_links.py` | PASS, 53 documents |
+| `python scripts/check_doc_links.py` | PASS, 55 documents (PR #185) |
 | `cargo metadata --locked --no-deps --format-version 1` | PASS; 5 packages, MSRV `1.89` |
 | `cargo test --locked --workspace` | Could not start: `link.exe` is missing from the installed MSVC environment; this is an environment limitation, not a confirmed project defect |
 | `cargo clippy --locked --workspace --all-targets -- -D warnings` | Could not start for the same reason |
@@ -133,3 +133,9 @@ Local Rust toolchain: `1.99.0`; active target: `x86_64-pc-windows-msvc`; MSVC li
 ## Hysteria 2 entry criterion
 
 Begin Hysteria 2 after Stage 1 changes, the internal TCP/UDP protocol, and Stage 2 regression checks. Demonstrate operation through the same router and groups, safe settings/secrets, subscription support in applicable formats, correct shutdown and `network_changed`, and unchanged C ABI.
+
+Stages 1 and 2 are marked complete after PR #184 and documentation PR #185. PR #185 CI (run #711) passed all eight check groups on `main` commit [`53ec432`](https://github.com/ERGFT/vpn-core/commit/53ec432da584043b195ec49b9c6c098d67e68409). This confirms the current baseline before a new protocol; it does not test Hysteria 2.
+
+## Hysteria 2 preparation
+
+Implementation has not started. The current code map and verifiable requirements are recorded in the [Hysteria 2 integration plan](HYSTERIA2_IMPLEMENTATION_PLAN.en.md). Reuse the existing `Outbound`/`UdpSession`, `quinn`, and `h3`; the new outbound needs coordinated ownership of one QUIC connection, HTTP/3 authentication, Hysteria QUIC datagrams and fragmentation, safe TLS configuration, and shutdown/network-change lifecycle. Do not claim support until compatibility with the reference server passes.

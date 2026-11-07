@@ -121,7 +121,7 @@ Windows, Android, iOS, MSRV, coverage, audit и secrets. PR #184 влит в `ma
 | Проверка | Результат этого запуска |
 |---|---|
 | `cargo fmt --all -- --check` | PASS |
-| `python scripts/check_doc_links.py` | PASS, 53 документа |
+| `python scripts/check_doc_links.py` | PASS, 55 документов (PR #185) |
 | `cargo metadata --locked --no-deps --format-version 1` | PASS; 5 пакетов, MSRV `1.89` |
 | `cargo test --locked --workspace` | Не стартовал: в установленной среде MSVC отсутствует `link.exe`; это ограничение окружения, не подтверждённый дефект проекта |
 | `cargo clippy --locked --workspace --all-targets -- -D warnings` | Не стартовал по той же причине |
@@ -133,3 +133,9 @@ Windows, Android, iOS, MSRV, coverage, audit и secrets. PR #184 влит в `ma
 ## Условие перехода к Hysteria 2
 
 Начинать Hysteria 2 после изменений этапа 1, внутреннего TCP/UDP протокола и регрессионных проверок этапа 2. Нужно доказать работу через тот же router и группы, безопасную загрузку настроек/секретов, поддержку применимых форматов подписок, корректные остановку и `network_changed`, неизменность существующего C ABI.
+
+Этапы 1 и 2 отмечены завершёнными после PR #184 и документационного PR #185. CI PR #185 (run #711) прошёл все восемь групп проверок на `main` commit [`53ec432`](https://github.com/ERGFT/vpn-core/commit/53ec432da584043b195ec49b9c6c098d67e68409). Это подтверждает текущую базу перед новым протоколом, но ещё не проверяет Hysteria 2.
+
+## Подготовка Hysteria 2
+
+Реализация не начата. Текущая карта кода и проверяемые требования вынесены в [план интеграции Hysteria 2](HYSTERIA2_IMPLEMENTATION_PLAN.md). Архитектурно переиспользуются существующие `Outbound`/`UdpSession`, `quinn` и `h3`; новому выходу потребуются отдельное управление одним QUIC-соединением, HTTP/3-аутентификация, QUIC datagrams с фрагментацией Hysteria, безопасная настройка TLS и lifecycle при остановке/смене сети. До успешной совместимости с эталонным сервером поддержка не заявляется.
