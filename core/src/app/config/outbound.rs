@@ -19,6 +19,7 @@ pub struct OutboundConfig {
 pub(crate) enum OutboundSettings {
     Vless(VlessConfig),
     Trojan(TrojanConfig),
+    Hysteria2(SecretSource),
     Socks5(ProxyConfig),
     HttpConnect(HttpConnectConfig),
     Direct(DirectConfig),
@@ -171,6 +172,7 @@ impl OutboundConfig {
         match &self.settings {
             OutboundSettings::Vless(_) => OutboundKind::Vless,
             OutboundSettings::Trojan(_) => OutboundKind::Trojan,
+            OutboundSettings::Hysteria2(_) => OutboundKind::Hysteria2,
             OutboundSettings::Socks5(_) => OutboundKind::Socks5,
             OutboundSettings::HttpConnect(_) => OutboundKind::HttpConnect,
             OutboundSettings::Direct(_) => OutboundKind::Direct,
@@ -192,6 +194,13 @@ impl OutboundConfig {
     pub(crate) fn trojan(&self) -> Option<&TrojanConfig> {
         match &self.settings {
             OutboundSettings::Trojan(v) => Some(v),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn hysteria2_link(&self) -> Option<&SecretSource> {
+        match &self.settings {
+            OutboundSettings::Hysteria2(link) => Some(link),
             _ => None,
         }
     }
@@ -255,6 +264,7 @@ impl OutboundConfig {
                 .into_iter()
                 .chain(v.ca_file.iter())
                 .collect(),
+            OutboundSettings::Hysteria2(link) => secret_path(link).into_iter().collect(),
             OutboundSettings::Socks5(v) => proxy_auth_path(v.auth.as_ref()),
             OutboundSettings::HttpConnect(v) => v
                 .proxy
@@ -278,6 +288,7 @@ impl OutboundConfig {
                 visit_secret_path(&mut v.link, f);
                 visit_optional_path(&mut v.ca_file, f);
             }
+            OutboundSettings::Hysteria2(link) => visit_secret_path(link, f),
             OutboundSettings::Socks5(v) => visit_proxy_auth_path(v.auth.as_mut(), f),
             OutboundSettings::HttpConnect(v) => {
                 visit_proxy_auth_path(v.proxy.auth.as_mut(), f);
@@ -359,6 +370,9 @@ impl std::fmt::Debug for RedactedSettings<'_> {
                 .field("allow_insecure", &v.allow_insecure)
                 .field("fragment", &v.fragment)
                 .finish(),
+            OutboundSettings::Hysteria2(link) => {
+                f.debug_struct("Hysteria2").field("link", link).finish()
+            }
             OutboundSettings::Socks5(v) => proxy_debug(f, "Socks5", v),
             OutboundSettings::HttpConnect(v) => f
                 .debug_struct("HttpConnect")
@@ -529,7 +543,10 @@ impl RawOutboundConfig {
             return Err(Error::Config(format!("выход {tag}: outbounds, subscriptions, url, interval, tolerance, default — только у групп (selector, urltest, fallback)")));
         }
         let server_fields = self.link.is_some() || self.link_file.is_some() || self.allow_insecure;
-        let server = matches!(self.kind, OutboundKind::Vless | OutboundKind::Trojan);
+        let server = matches!(
+            self.kind,
+            OutboundKind::Vless | OutboundKind::Trojan | OutboundKind::Hysteria2
+        );
         if server {
             match (self.link.is_some(), self.link_file.is_some()) {
                 (true, true) => {
@@ -543,9 +560,15 @@ impl RawOutboundConfig {
                 _ => {}
             }
         }
-        let ca_file_allowed = server || (self.kind == OutboundKind::HttpConnect && self.proxy_tls);
+        if self.kind == OutboundKind::Hysteria2 && self.allow_insecure {
+            return Err(Error::Config(format!(
+                "выход {tag}: allow_insecure не поддерживается для Hysteria 2"
+            )));
+        }
+        let ca_file_allowed = matches!(self.kind, OutboundKind::Vless | OutboundKind::Trojan)
+            || (self.kind == OutboundKind::HttpConnect && self.proxy_tls);
         if (!server && server_fields) || (self.ca_file.is_some() && !ca_file_allowed) {
-            return Err(Error::Config(format!("выход {tag}: link, link_file и allow_insecure — только у vless и trojan; ca_file допустим также у HTTP CONNECT с TLS")));
+            return Err(Error::Config(format!("выход {tag}: link и link_file допустимы у VLESS, Trojan и Hysteria 2; allow_insecure — только у VLESS и Trojan; ca_file допустим также у HTTP CONNECT с TLS")));
         }
         let proxy_fields = self.proxy_server.is_some()
             || self.proxy_port.is_some()
@@ -680,6 +703,7 @@ impl RawOutboundConfig {
                 allow_insecure: self.allow_insecure,
                 fragment: self.fragment,
             }),
+            OutboundKind::Hysteria2 => OutboundSettings::Hysteria2(self.take_link()?),
             OutboundKind::Socks5 => OutboundSettings::Socks5(self.proxy()?),
             OutboundKind::HttpConnect => {
                 let tls = self.proxy_tls;

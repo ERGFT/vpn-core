@@ -233,6 +233,8 @@ pub enum OutboundKind {
     Vless,
     /// Сервер Trojan (ссылка trojan://).
     Trojan,
+    /// Hysteria 2 over QUIC (sharing link in `link` or `link_file`).
+    Hysteria2,
     /// SOCKS5 proxy для исходящих TCP CONNECT-соединений.
     Socks5,
     /// HTTP CONNECT proxy для исходящих TCP-соединений.
@@ -755,14 +757,14 @@ mod tests {
     }
 
     #[test]
-    fn singbox_hysteria2_outbound_reports_runtime_unavailable() {
-        let error = Config::parse(
+    fn singbox_hysteria2_outbound_parses_with_redacted_secret() {
+        let config = Config::parse(
             r#"{"outbounds":[{"type":"hysteria2","tag":"hy2","server":"example.com","server_port":443,"password":"secret","tls":{}}]}"#,
         )
-        .unwrap_err()
-        .to_string();
-        assert!(error.contains("Hysteria 2 outbound распознан"), "{error}");
-        assert!(error.contains("транспорт ещё не реализован"), "{error}");
+        .unwrap();
+        assert_eq!(config.outbounds[0].kind(), OutboundKind::Hysteria2);
+        let debug = format!("{:?}", config.outbounds[0]);
+        assert!(!debug.contains("secret"), "{debug}");
     }
 
     #[test]

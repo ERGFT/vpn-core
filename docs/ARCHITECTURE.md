@@ -961,7 +961,9 @@ flow. `transport::open(&TransportConfig)` открывает только тра
     есть QUIC может идти через VLESS.
 - **Hysteria 2** (`hysteria2_transport.rs`, `hysteria2_udp.rs`, `hysteria2_obfs.rs`):
   - отдельные QUIC/auth, TCP stream и UDP datagram слои; PR #189, #190,
-    #192, #193 и #196 слиты в `main`, production factory пока не подключена;
+    #192, #193, #196 и #197 слиты в `main`; текущая ветка этапа 7 подключает
+    общий `Hysteria2Outbound`, factory, sing-box config и подписки; ветка не
+    слита, CI и reference interop интеграции ещё не выполнены;
   - Stage 6.1 добавляет Salamander socket wrapper: каждый QUIC UDP packet
     получает 8-byte salt и BLAKE2b-256 mask; PSK короче 4 UTF-8 байт
     отклоняется для совместимости с официальной реализацией, короткие и

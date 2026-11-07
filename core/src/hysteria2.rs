@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Hysteria 2 client configuration primitives.
 //!
-//! This module currently parses and validates sharing URIs only. It does not
-//! create a working outbound; protocol transport integration is tracked in
-//! `docs/HYSTERIA2_IMPLEMENTATION_PLAN.md`.
+//! This module parses and validates sharing URIs used by the Hysteria 2
+//! transport and production outbound. Protocol and interoperability status is
+//! tracked in `docs/HYSTERIA2_IMPLEMENTATION_PLAN.md`.
 
 use std::fmt;
 

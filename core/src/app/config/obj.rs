@@ -135,6 +135,12 @@ impl<'a> Obj<'a> {
         (!v.is_null()).then_some(v)
     }
 
+    /// Clone this object as a JSON value for adapters that share an existing
+    /// format conversion path.
+    pub fn to_value(&self) -> Value {
+        Value::Object(self.map.clone())
+    }
+
     pub fn has(&self, key: &str) -> bool {
         self.map.get(key).is_some_and(|v| !v.is_null())
     }

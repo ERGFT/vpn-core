@@ -180,7 +180,7 @@ fn js_str(v: &serde_json::Value, path: &[&str]) -> String {
 
 /// Преобразовать URI-представимое подмножество sing-box Hysteria2 в каноническую
 /// модель URI. Опции, которые нельзя сохранить, пропускаются явно.
-fn singbox_hysteria2_uri(o: &serde_json::Value) -> Result<Option<String>> {
+pub(crate) fn singbox_hysteria2_uri(o: &serde_json::Value) -> Result<Option<String>> {
     let invalid =
         |field: &str| Error::Config(format!("Hysteria 2 sing-box: {field} has the wrong type"));
     let configured = |v: &serde_json::Value| {
@@ -667,7 +667,7 @@ mod tests {
     }
 
     #[test]
-    fn rejects_unrepresentable_hysteria2_options_and_counts_runtime_boundary() {
+    fn rejects_unrepresentable_hysteria2_options_and_preserves_uri_boundary() {
         let json = br#"{"outbounds":[{"type":"hysteria2","tag":"hy2","server":"example.com","server_port":443,"password":"secret","up_mbps":100}]}"#;
         let parsed = parse_typed(json).unwrap();
         assert!(parsed.servers.is_empty());

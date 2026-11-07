@@ -1,7 +1,7 @@
 # Hysteria 2 Integration Plan
 
-**Status:** Stages 1–2 are complete (PRs #187 and #188), and Stages 3–5 are merged into `main` (PRs #189, #190, and #192). Stage 6.1 Salamander was merged in PR #193, Stage 6.2 BBR in PR #196, and Stage 6.3 port hopping in PR #197. CI #759 passed all 8 jobs for BBR; CI #761 passed all 8 jobs for port hopping on head `3762074`. Reference interoperability, performance, network-interface changes, and connection recovery have not been verified; the production outbound is not wired.
-**Code snapshot:** `main` after PR #197, merge commit `1ae04ff`.
+**Status:** Stages 1–2 are complete (PRs #187 and #188); Stages 3–5 and substages 6.1–6.3 are merged (PRs #189, #190, #192, #193, #196, and #197), with CI #759 and #761 passing 8/8 jobs. The unmerged Stage 7 branch wires Hysteria 2 into the outbound factory, sing-box config, and URI subscriptions; its CI and reference interoperability have not run. Production readiness, network changes, and recovery remain unverified.
+**Code snapshot:** base `main` after PR #198 (`c295ede`); Stage 7 work is on `codex/hysteria2-outbound-factory`.
 **Scope:** client proxy outbound in the existing core only.
 
 ## Architectural decision
@@ -29,12 +29,12 @@ Out of scope for `vpn-core`: Hysteria's local SOCKS/HTTP listeners, server-side 
 ## Small PR sequence
 
 1. **Model and URI parsing.** Typed `Hysteria2Config`, secret redaction, strict validation of `hysteria2://`/`hy2://`, SNI/TLS, Salamander/Gecko, and multi-port addresses. This layer does not create a working connection and must not be presented as outbound support.
-2. **Input formats.** Explicit conversion for applicable sing-box outbounds and URI subscriptions. Adapters preserve only fields representable in the URI and count entries with unsupported options separately; recognized Hysteria 2 entries are skipped with a separate exact count because runtime support is unavailable. Do not add the type to the production factory before the transport is ready.
+2. **Input formats (state after PR #188).** At that stage, applicable URIs and sing-box subscription records were parsed but skipped when applying subscriptions, with a separate count; production config and the factory did not yet include Hysteria 2. The current integration is described below.
 3. **QUIC and authentication.** Shared endpoint/connection owner, ALPN, TLS validation (insecure disabled by default), HTTP/3 auth, status 233, rate negotiation, timeouts, and task cancellation. Do not change existing DNS/XHTTP `quinn`/`h3` behavior.
 4. **TCP relay and shutdown.** Each TCP dial opens a dedicated bidirectional QUIC stream on the shared authenticated connection. Send QUIC-varint `0x401`, the length and `host:port` destination, and random padding; strictly parse bounded TCPResponse status/message/padding and expose the stream only after status 0. Verify concurrent streams, half-close, resets, cancellation, and timeouts. Do not add the outbound to the production factory before its separate integration stage.
 5. **UDP relay.** Datagram codec, per-association IDs, packet-ID wrap handling, bounded-memory fragmentation/reassembly, queues, and idle cleanup. Never retain unbounded state based on server traffic.
 6. **Transport options, split into substages.** 6.1 Salamander on the QUIC socket, accounting for its 8-byte overhead in UDP datagram limits. 6.2 Select and wire BBR for directions without a fixed bandwidth; apply a numeric server RX limit only together with a local bandwidth setting. Do not claim Brutal until pacing and loss compensation are implemented and tested: Quinn 0.11.12 exposes `Controller`/`ControllerFactory`, but `pacing_rate` is a metric, not a pacer-control interface. Full rate negotiation first needs a local bandwidth field in outbound config and a pacing backend; the current URI does not carry this setting. 6.3 Port hopping with correct DNS/IPv4/IPv6 and network-change handling. Gecko needs a separate assessment: it is officially experimental and should be implemented separately with bounds and interoperability.
-7. **Integration and compatibility.** Groups, router, accounting, config reload, subscription formats, and C ABI; update Russian and English docs and the feature matrix together.
+7. **Integration and compatibility.** Wire the outbound factory, groups/router, accounting, reload, subscription formats, and C ABI; verify shutdown and network changes; update Russian and English docs and the feature matrix together. Focused tests and reference interoperability are required before claiming support is ready.
 
 Each PR should remain small, carry focused tests, and update both languages. Do not combine separate steps into a claim of a completed protocol without the full verification set.
 
@@ -52,7 +52,7 @@ Full Hysteria 2 status requires codec/config tests plus interop with a pinned ve
 
 ## Current progress
 
-PR #187 added the typed model and strict URI parser and was merged into `main` as [`aa8dab6`](https://github.com/ERGFT/vpn-core/commit/aa8dab644b19cd5e3641d53e62408c705e6c6b5a); all 8 CI groups passed. PR #188 added URI-subscription parsing and conservative sing-box conversion, updated the RU/EN documentation, and was merged as [`e43066b`](https://github.com/ERGFT/vpn-core/commit/e43066ba4fac86d21796e57a4237f9d28f4adafa) after GitHub checks completed (16 successful, one skipped). Entries can be parsed and validated, but subscriptions currently skip them with a separate count; a regular sing-box config returns the precise reason that runtime support is not ready. No working outbound is created.
+PR #187 added the typed model and strict URI parser and was merged into `main` as [`aa8dab6`](https://github.com/ERGFT/vpn-core/commit/aa8dab644b19cd5e3641d53e62408c705e6c6b5a); all 8 CI groups passed. PR #188 added URI-subscription parsing and conservative sing-box conversion, updated the RU/EN documentation, and was merged as [`e43066b`](https://github.com/ERGFT/vpn-core/commit/e43066ba4fac86d21796e57a4237f9d28f4adafa) after GitHub checks completed (16 successful, one skipped). At that point, entries could be parsed and validated, but subscriptions skipped them with a separate count; production sing-box config did not create a working outbound.
 
 Stage 3 is implemented and merged in PR #189: one QUIC endpoint/connection owner, HTTP/3 `POST /auth`, strict acceptance of status 233, and parsing of `Hysteria-UDP`/`Hysteria-CC-RX`. System certificate roots are used; unsupported insecure TLS, pinning, and ECH are rejected.
 
@@ -65,6 +65,8 @@ Stage 6.1 is implemented and merged in PR #193: a dedicated QUIC UDP socket adds
 Stage 6.2 was implemented and merged in PR #196: Hysteria uses a dedicated Quinn BBR controller while existing DNS/XHTTP QUIC clients retain Cubic. CI #759 passed all 8 jobs. Quinn marks BBR experimental. The auth response still parses `auto`, `0`, and a numeric RX limit, but the numeric limit is not applied because the project has no local Hysteria bandwidth setting. Exact Brutal is also not implementable through this Quinn pacing API and must not be claimed as supported.
 
 Stage 6.3 was implemented and merged in PR #197: the initial server port is selected randomly from the configured ranges, and periodic hopping starts 30 seconds after successful authentication. Each hop creates a fresh protected UDP socket; the previous socket remains available for inbound packets for 2 seconds. CI #761 passed all 8 jobs for head `37620742be9e1d9f9f83c5bdb22f810c6ebeeb0b`. The focused local test could not start because MSVC `link.exe` is missing; CI ran the checks on supported runners. Reference-server interoperability, network-interface changes, and connection recovery have not been verified.
+
+The current Stage 7 branch adds `Hysteria2Outbound` with a lazy shared QUIC connection for TCP/UDP and reconnect after a closed connection. The factory accepts sing-box outbounds, `link`/`link_file`, and URI subscriptions now build outbounds that can join groups. The branch is unmerged and has not passed CI. Remaining checks include capabilities/detour behavior, reload and shutdown, TCP/UDP against the official server, real subscription/group flows, network handover/recovery, and unchanged C ABI. Hysteria 2 remains experimental until these checks pass.
 
 An external Android phone is not needed for parser/codec development or local interop. It will help with the final device-level Android VPN/TUN run, Wi-Fi↔cellular handover, and wake-from-sleep recovery; an Android cross-build alone does not prove that behavior.
 
