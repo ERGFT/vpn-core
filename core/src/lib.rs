@@ -58,5 +58,6 @@ pub mod socks5;
 pub mod transport;
 pub mod trojan;
 pub mod vless;
+pub mod vmess;
 
 pub use error::{Error, Result};
