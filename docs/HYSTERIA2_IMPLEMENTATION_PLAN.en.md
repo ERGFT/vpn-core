@@ -1,7 +1,7 @@
 # Hysteria 2 Integration Plan
 
-**Status:** Stages 1–2 are complete (PRs #187 and #188); Stage 3 is PR #189; Stage 4 (TCP relay) is PR #190; Stage 5 (UDP relay) is PR #192; Stage 6.1 (Salamander) is PR #193. All listed PRs are merged into `main`; PR #193 landed as merge commit [`a776d7c`](https://github.com/ERGFT/vpn-core/commit/a776d7cb2ba635b50e392fce9f4e64c69509efcc). On head `32ef01a`, CI #757 passed 8/8 jobs and Release #124 passed 7/7 jobs; GitHub reported 15 successful and 1 skipped check. Stage 6.2 (selecting BBR for Hysteria 2) is implemented on the current work branch and awaits CI. Reference interoperability has not been verified, and the production outbound is not wired.
-**Code snapshot:** `main` after PR #193, merge commit `a776d7c`.
+**Status:** Stages 1–2 are complete (PRs #187 and #188), and Stages 3–5 are merged into `main` (PRs #189, #190, and #192). Stage 6.1 Salamander was merged in PR #193; Stage 6.2 BBR was merged in PR #196. CI #759 for PR #196 passed all 8 jobs on head `4300fc1`. Stage 6.3 port hopping is implemented on the current branch; rebasing it onto `main` and CI remain pending. Reference interoperability and performance have not been measured; the production outbound is not wired.
+**Code snapshot:** `main` after PR #196, merge commit `2d5361a`.
 **Scope:** client proxy outbound in the existing core only.
 
 ## Architectural decision
@@ -62,7 +62,9 @@ Stage 5 is implemented and merged in PR #192. It adds UDPMessage framing, QUIC u
 
 Stage 6.1 is implemented and merged in PR #193: a dedicated QUIC UDP socket adds a random 8-byte salt and a BLAKE2b-256(`key || salt`) XOR mask to every packet. UDPMessage framing reduces the available datagram budget by 8 bytes. PSKs shorter than 4 UTF-8 bytes are rejected to match the reference implementation; short and salt-only frames are discarded. The implementation uses Tokio UDP without GSO/ECN. Salamander is obfuscation, not authenticated encryption; QUIC discards packets produced with the wrong key. On head `32ef01a`, CI #757 passed 8/8 jobs and Release #124 passed 7/7 jobs; one separate publish check was skipped. Reference interoperability has not run. The production factory remains unwired.
 
-Stage 6.2 has started: Hysteria receives its own Quinn BBR selection; existing DNS/XHTTP QUIC clients keep their default configuration. Quinn marks BBR experimental. The auth response still parses `auto`, `0`, and a numeric RX limit, but the numeric limit is not applied yet because the project has no local Hysteria bandwidth setting. Exact Brutal is also not implementable through this Quinn pacing API and must not be claimed as supported.
+Stage 6.2 was implemented and merged in PR #196: Hysteria uses a dedicated Quinn BBR controller while existing DNS/XHTTP QUIC clients retain Cubic. CI #759 passed all 8 jobs. Quinn marks BBR experimental. The auth response still parses `auto`, `0`, and a numeric RX limit, but the numeric limit is not applied because the project has no local Hysteria bandwidth setting. Exact Brutal is also not implementable through this Quinn pacing API and must not be claimed as supported.
+
+Stage 6.3 is implemented and rebased onto the current `main`: the initial server port is selected randomly from the configured ranges, and periodic hopping starts 30 seconds after successful authentication. Each hop creates a fresh protected UDP socket while keeping the previous socket available briefly for inbound packets. CI and reference-server interoperability remain pending. Network-interface changes and connection recovery have not been verified.
 
 An external Android phone is not needed for parser/codec development or local interop. It will help with the final device-level Android VPN/TUN run, Wi-Fi↔cellular handover, and wake-from-sleep recovery; an Android cross-build alone does not prove that behavior.
 

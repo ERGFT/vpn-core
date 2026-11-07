@@ -1017,8 +1017,8 @@ implementation:
     UDP session, so QUIC can run over VLESS.
 - **Hysteria 2** (`hysteria2_transport.rs`, `hysteria2_udp.rs`, `hysteria2_obfs.rs`):
   - separate QUIC/authentication, TCP stream, and UDP datagram layers; PRs
-    #189, #190, #192, and #193 are merged, while the production factory is
-    not wired;
+    #189, #190, #192, #193, and #196 are merged into `main`, while the
+    production factory is not wired;
   - Stage 6.1 adds a Salamander socket wrapper: each QUIC UDP packet receives
     an 8-byte salt and BLAKE2b-256 mask; PSKs shorter than 4 UTF-8 bytes are
     rejected to match the reference implementation, and short or salt-only
@@ -1028,7 +1028,13 @@ implementation:
     (15 successful checks and 1 skipped publish check).
     Reference interoperability and performance have not been measured;
   - Stage 6.2 selects BBR only for Hysteria 2; other QUIC users keep Cubic.
-    Full rate negotiation and Brutal are not supported.
+    CI #759 passed all 8 jobs on head `4300fc1`; full rate negotiation and
+    Brutal are not supported;
+  - Stage 6.3 implements a random initial port from the configured ranges
+    and a port hop every 30 seconds after authentication. A fresh protected
+    UDP socket starts before the previous one is retired so it can receive
+    late packets. This stage is rebased onto the current `main`; CI, reference
+    interoperability and network-interface changes have not been verified.
 
 ## 14. Protocols: VLESS, Vision, XUDP, Mux.Cool, Trojan
 
