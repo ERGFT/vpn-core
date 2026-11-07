@@ -104,9 +104,7 @@ impl Reassembler {
             );
         }
 
-        let Some(set) = self.pending.get_mut(&key) else {
-            return None;
-        };
+        let set = self.pending.get_mut(&key)?;
         if set.parts.len() != count || set.address != fragment.address || set.port != fragment.port
         {
             self.remove(key);
