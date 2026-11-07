@@ -296,6 +296,98 @@ mod tests {
         assert_eq!(received, 1);
         assert_eq!(&buffer[..packet_len], b"late packet");
     }
+
+    #[tokio::test]
+    async fn hop_sends_to_the_new_remote_port() {
+        use quinn::udp::Transmit;
+
+        let (first, second) = (20_000..60_000)
+            .find_map(|port| {
+                let first = std::net::UdpSocket::bind((Ipv4Addr::LOCALHOST, port)).ok()?;
+                let second = std::net::UdpSocket::bind((Ipv4Addr::LOCALHOST, port + 1)).ok()?;
+                Some((first, second))
+            })
+            .expect("two consecutive localhost UDP ports should be available");
+        first.set_nonblocking(true).unwrap();
+        second.set_nonblocking(true).unwrap();
+        let first = tokio::net::UdpSocket::from_std(first).unwrap();
+        let second = tokio::net::UdpSocket::from_std(second).unwrap();
+        let first_addr = first.local_addr().unwrap();
+        let second_addr = second.local_addr().unwrap();
+        let ports = vec![PortRange {
+            first: first_addr.port(),
+            last: second_addr.port(),
+        }];
+        let state = PortHopState::new(ports, first_addr.port(), false).unwrap();
+        let socket = PortHopSocket {
+            state: Arc::clone(&state),
+        };
+
+        socket
+            .try_send(&Transmit {
+                destination: first_addr,
+                ecn: None,
+                contents: b"before hop",
+                segment_size: None,
+                src_ip: None,
+            })
+            .unwrap();
+        let mut buffer = [0u8; 32];
+        let (len, _) = tokio::time::timeout(Duration::from_secs(2), first.recv_from(&mut buffer))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(&buffer[..len], b"before hop");
+
+        let selected = state.rotate(false).unwrap();
+        assert_eq!(selected, second_addr.port());
+        socket
+            .try_send(&Transmit {
+                destination: first_addr,
+                ecn: None,
+                contents: b"after hop",
+                segment_size: None,
+                src_ip: None,
+            })
+            .unwrap();
+        let (len, _) = tokio::time::timeout(Duration::from_secs(2), second.recv_from(&mut buffer))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(&buffer[..len], b"after hop");
+    }
+
+    #[test]
+    fn port_hop_state_can_bind_ipv6_sockets() {
+        let state = PortHopState::new(
+            vec![PortRange {
+                first: 443,
+                last: 444,
+            }],
+            443,
+            true,
+        )
+        .unwrap();
+        let first_addr = state
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .active
+            .local_addr()
+            .unwrap();
+        assert!(first_addr.is_ipv6());
+
+        state.rotate(true).unwrap();
+        let second_addr = state
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .active
+            .local_addr()
+            .unwrap();
+        assert!(second_addr.is_ipv6());
+        assert_ne!(first_addr.port(), second_addr.port());
+    }
 }
 
 /// Точка QUIC на настоящем UDP-сокете (с меткой `net_protect`).
