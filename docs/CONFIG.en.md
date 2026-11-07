@@ -118,8 +118,9 @@ themselves (sing-box and Xray will not accept them):
   `server_port`, `method`, and `password`; Xray accepts one
   `settings.servers` record. Supported methods are `aes-128-gcm`,
   `aes-256-gcm`, and `chacha20-ietf-poly1305`, over TCP and native UDP.
-  A separate work branch is adding Shadowsocks 2022; it is not verified support
-  until full CI and interoperability pass. The methods
+  A separate SIP022/2022 branch supports TCP and native UDP; full CI and Xray
+  interoperability passed on head `2c0d14e`, while inclusion in `main` awaits
+  the target PR. The methods
   `2022-blake3-aes-128-gcm`/
   `2022-blake3-aes-256-gcm` use 16/32-byte base64 PSKs. Legacy stream ciphers,
   SIP003 plugins, UDP-over-TCP, and

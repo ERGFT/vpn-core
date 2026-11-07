@@ -8,16 +8,15 @@ the other.
 
 ## Current state: classic AEAD
 
-The implementation is in [PR #204](https://github.com/ERGFT/vpn-core/pull/204)
-from branch `codex/shadowsocks-aead-outbound`. CI is running; see the PR for its
-results and implementation limits. The table describes PR code, not completed
-or released support.
+The classic outbound was merged into `main` through
+[PR #204](https://github.com/ERGFT/vpn-core/pull/204). Required CI passed;
+implementation limits are listed below and in the feature matrix.
 
 | Area | Branch implementation | Verification/limit |
 |---|---|---|
 | Protocol | Official Rust crate `shadowsocks-rust`; only `aes-128-gcm`, `aes-256-gcm`, `chacha20-ietf-poly1305` | Link validation rejects stream ciphers and Shadowsocks 2022 |
-| TCP | Shared resolver and protected TCP dialer | Independent Xray TCP echo test added, awaiting CI |
-| UDP | Native Shadowsocks UDP through an adapter for the protected UDP socket; bounded queues | Independent Xray UDP echo test added, awaiting CI; drops on queue overflow are intentional |
+| TCP | Shared resolver and protected TCP dialer | Xray TCP echo passed in CI |
+| UDP | Native Shadowsocks UDP through an adapter for the protected UDP socket; bounded queues | Xray UDP echo passed in CI; drops on queue overflow are intentional |
 | Configuration | `ss://`, sing-box fields, one Xray record; common outbound and factory | Plugins, UDP-over-TCP, network restrictions, detour, and unsupported transport-security settings are rejected |
 | Subscriptions | SIP002, sing-box JSON, Clash YAML Shadowsocks nodes | Unrepresentable records are skipped and included in counters |
 | Secrets | Uses `SecretSource`; settings debug output redacts the link | Redaction checks are included in unit tests |
@@ -34,7 +33,11 @@ or released support.
 - RU/EN README, CONFIG, FEATURES, ARCHITECTURE, TESTING, and this plan agree on
   supported formats, methods, transports, and limitations.
 
-## Next substage: Shadowsocks 2022 / SIP022 — in progress
+Classic AEAD exit criteria are met: PR #204 was merged after CI passed; Xray
+verified TCP/UDP echo. Plugin and additional transport limits remain intentional
+and are documented above.
+
+## Shadowsocks 2022 / SIP022 — implementation and interop verified
 
 The [SIP022 specification](https://shadowsocks.org/doc/sip022.html) has been
 checked against the pinned official `shadowsocks-rust` 1.24.0 crate. It
@@ -43,31 +46,35 @@ salts/chunks, and UDP session/packet IDs with sliding-window replay protection.
 The core does not duplicate cryptography or protocol codecs; it uses this
 crate's client TCP/UDP paths.
 
-Implementation has started in a separate worktree based on PR #204 for
+The implementation is in a separate branch based on the classic outbound for
 `2022-blake3-aes-128-gcm` and `2022-blake3-aes-256-gcm`. The official
 `shadowsocks-rust` AEAD-2022 feature is enabled; separate method validation,
 PSK validation through `ServerConfig`, and URI/factory/import unit tests have
-been added. This is not verified support yet: TCP/UDP interoperability, full
-CI, and review of all input formats remain required. The UDP adapter assigns a
+been added. The UDP adapter assigns a
 random client session ID and monotonic packet IDs, validates response session
 IDs, and retains bounded replay windows for the current and previous server
 sessions for 60 seconds. Xray TCP/UDP interop covers both methods and concurrent
-repeated datagrams. Support remains unverified until CI/interoperability pass;
-the local build is blocked by the missing MSVC `link.exe`.
+repeated datagrams. On exact head `2c0d14e`, GitHub CI completed all 16
+non-publish jobs successfully (the publish job is skipped for PRs); Linux CI ran
+28 Xray interop tests, including `shadowsocks_2022_tcp_udp_against_xray`. Local
+Rust tests and interop were not run because MSVC `link.exe` is absent.
 
-Do not add 2022 to the classic validator/decoder. Next, satisfy these criteria:
+Do not add 2022 to the classic validator/decoder. Verified coverage:
 
-1. Method names, key format, and minimum PSK length for each targeted
-   `2022-blake3-*` variant.
-2. TCP framing, salt/chunk lengths, nonce handling, and frame authentication.
-3. UDP nonce and replay filter with bounded memory/time and per-association
-   state.
-4. SIP002 URI variants and sing-box/Xray/subscription fields without changing
-   classic-link semantics.
-5. Interop against an independent implementation over TCP and UDP, protocol
-   vectors, malformed/replayed frames, and secret handling.
+1. Tests check both method names, base64 PSKs, and invalid key lengths through
+   `ServerConfig`.
+2. TCP framing, salts/chunks, nonce handling, and AEAD remain in the official
+   crate; Xray TCP echo interop passed for both methods.
+3. Unit tests cover session IDs, replays, packet-ID ordering, the bounded replay
+   window, and server-session TTL; Xray checks UDP echo and concurrent identical
+   datagrams.
+4. Config and subscription tests cover sing-box and Xray fields, SIP002 URIs,
+   and Clash YAML while preserving classic methods and restrictions.
+5. Secret redaction is covered by shared secret-handling tests; full CI and all
+   28 Xray interop tests passed on the head recorded above.
 
-Do not claim Shadowsocks 2022 support until these criteria pass and bilingual
-documentation is reviewed separately. SIP003 plugins and other transport
-plugins remain a separate design decision: process lifecycle, platform support,
-UDP, and secret delivery need explicit design first.
+The implementation criteria and bilingual documentation have been reviewed;
+green CI for the PR targeting `main` is still required before merging. SIP003
+plugins and other transport plugins remain a separate design decision: process
+lifecycle, platform support, UDP, and secret delivery need explicit design
+first.

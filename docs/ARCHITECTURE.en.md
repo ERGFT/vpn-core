@@ -1130,12 +1130,12 @@ Clash YAML records with unsupported plugins, UDP-over-TCP, or `udp: false` are
 skipped and counted. SIP003 plugins, custom transport restrictions, and
 Shadowsocks detours are rejected for now. Legacy stream ciphers and Shadowsocks
 2022 cannot enter this mode: 2022 has distinct key and replay-protection rules.
-An independent Xray TCP/UDP echo test is included in `interop_xray.sh`; its
-result is established only after CI passes.
+Independent Xray TCP/UDP echo tests are included in `interop_xray.sh`; both
+passed in CI with PR #204.
 
 ### 14.7. SIP022 / Shadowsocks 2022 — separate profile
 
-A separate work branch enables the official crate's `aead-cipher-2022`
+A separate branch enables the official crate's `aead-cipher-2022`
 feature, and the validator allows only SIP022's two required methods:
 `2022-blake3-aes-128-gcm` and `2022-blake3-aes-256-gcm`. `ServerConfig`
 validates the base64 PSK and exact key length; classic AEAD passwords still
@@ -1144,9 +1144,9 @@ in the reference crate. The UDP adapter assigns a random client session ID and
 monotonic packet IDs, validates client/server session IDs on replies, and drops
 replays with a fixed-size window; it remembers the current and previous server
 sessions for at least 60 seconds. Unit and Xray TCP/UDP echo tests cover both
-methods, including concurrent identical UDP datagrams. Results remain
-unverified until CI passes; this describes the work branch, not a released
-capability.
+methods, including concurrent identical UDP datagrams. On head `2c0d14e`, full
+CI passed; the Linux job confirmed 28 Xray interop tests, including SIP022
+TCP/UDP. The branch is not in `main` until CI for the target PR passes.
 
 ## 15. REALITY and TLS fingerprints
 

@@ -118,9 +118,9 @@ MetaCubeX/meta-rules-dat) и исходный `.json`, только `type: local
   Классические методы и их форматы остаются без изменений. Без расширения sing-box принимает `server`, `server_port`,
   `method` и `password`, Xray — одну запись `settings.servers`.
   Классические методы: `aes-128-gcm`, `aes-256-gcm` и
-  `chacha20-ietf-poly1305`, TCP и нативный UDP. В отдельной рабочей ветке
-  добавляется Shadowsocks 2022; до полного CI и межоперабельности он не
-  считается подтверждённой поддержкой. Методы
+  `chacha20-ietf-poly1305`, TCP и нативный UDP. Ветка SIP022/2022 поддерживает
+  TCP и нативный UDP; полный CI и Xray interop прошли на head `2c0d14e`, а
+  включение в `main` ожидает целевого PR. Методы
   `2022-blake3-aes-128-gcm`/`2022-blake3-aes-256-gcm` требуют base64 PSK
   длиной 16/32 байта. Устаревшие stream-cipher методы, SIP003 plugins, UDP-over-TCP и ограничения
   `network` явно отклоняются; неподдерживаемые записи подписки пропускаются
