@@ -1,6 +1,6 @@
 # План интеграции Hysteria 2
 
-**Статус:** этапы 1–2 завершены (PR #187 и #188); этап 3 реализован в PR #189; этап 4 (TCP relay) реализован в PR #190; этап 5 (UDP relay и unit tests) реализован в PR #192. Все 8 CI jobs PR #192 прошли на commit `f0c8456`; PR остаётся открытым поверх #190. Подэтап 6.1 (Salamander) реализуется в PR #193 из `codex/hysteria2-salamander`, поверх #192. На commit `16da35e` прошли 12 из 15 CI checks, 3 ещё выполняются; reference interop не проводился. Production outbound и reference interop ещё не готовы.
+**Статус:** этапы 1–2 завершены (PR #187 и #188); этап 3 реализован в PR #189; этап 4 (TCP relay) реализован в PR #190; этап 5 (UDP relay и unit tests) реализован в PR #192. Все 8 CI jobs PR #192 прошли на commit `f0c8456`; PR остаётся открытым поверх #190. Подэтап 6.1 (Salamander) реализуется в PR #193 из `codex/hysteria2-salamander`, поверх #192. Head `c2c41a1` прошёл все 15 CI checks, кроме штатно пропущенного publish; follow-up, добавляющий проверку минимальной длины PSK, отправлен и ожидает CI. Reference interop не проводился. Production outbound и reference interop ещё не готовы.
 **Срез кода:** `main`, commit `e43066b` (PR #188).
 **Область:** только клиентский прокси-выход в существующем ядре.
 
@@ -20,7 +20,7 @@ Hysteria 2 — QUIC-протокол с TCP-потоками и UDP datagrams. �
 - Для каждого TCP назначения — новый QUIC bidirectional stream с TCPRequest и проверкой TCPResponse до выдачи потока вызывающему коду.
 - Для UDP — QUIC unreliable datagrams с отдельным session ID на UDP-ассоциацию, последовательными packet IDs и протокольной фрагментацией/сборкой. Утеря любого фрагмента отбрасывает всю датаграмму.
 - Согласование RX rate из auth-ответа; `0` и `auto` имеют разные значения. Локальный bandwidth limit и серверное согласование нельзя смешивать или молча игнорировать.
-- Опциональный Salamander оборачивает QUIC-пакеты salted BLAKE2b-256 маскировкой. Соль генерируется для каждого пакета; неверный пакет отбрасывается.
+- Опциональный Salamander оборачивает QUIC-пакеты salted BLAKE2b-256 маскировкой. Соль генерируется для каждого пакета; неверный пакет отбрасывается; PSK для совместимости с официальной реализацией должен содержать не менее 4 UTF-8 байт.
 
 Настройки должны следовать текущей [официальной клиентской конфигурации](https://v2.hysteria.network/docs/advanced/Full-Client-Config/): адрес/порт и SNI, проверка сертификата, пользовательский CA, fingerprint pinning, mTLS, ECH, Salamander, port hopping, bandwidth и congestion controller. Поддерживаемые поля и ограничения надо сверить с актуальными URI и sing-box форматами при реализации. Если опция не поддерживается в первой версии, парсер должен отклонить её с понятной ошибкой; нельзя принять и проигнорировать её.
 
@@ -60,7 +60,7 @@ PR #187 добавил типизированную модель и строги
 
 Этап 5 реализован в PR #192 (`codex/hysteria2-udp-relay`), stacked on #190. Добавлены UDPMessage, QUIC unreliable datagrams, возрастающие Session ID на QUIC connection, wrapping Packet ID, фрагментация по `max_datagram_size`, сборка переставленных фрагментов и пределы состояния: до 128 незавершённых пакетов, до 256 KiB буфера сборки и TTL 5 секунд. UDP association имеет очередь до 256 ответов и idle timeout 120 секунд; payload ограничен 4096 байтами. Все 8 CI jobs прошли на `f0c8456`, включая workspace tests, coverage и платформенные проверки. Эталонная server/client interop ещё не выполнена; PR остаётся открытым. TCP и UDP не доступны через production outbound.
 
-Подэтап 6.1 реализуется в PR #193 из `codex/hysteria2-salamander`, stacked on #192: отдельный QUIC UDP socket добавляет к каждому пакету случайную 8-byte соль и XOR-маску BLAKE2b-256(`key || salt`), а UDPMessage framing уменьшает доступный datagram budget на 8 байт. Реализация использует Tokio UDP без GSO/ECN. Это не аутентифицированное шифрование: неверный ключ приводит к пакетам, которые QUIC отбросит. На commit `16da35e` прошли 12 из 15 CI checks, 3 выполняются; reference interop ещё не проводился. Factory по-прежнему не подключена.
+Подэтап 6.1 реализуется в PR #193 из `codex/hysteria2-salamander`, stacked on #192: отдельный QUIC UDP socket добавляет к каждому пакету случайную 8-byte соль и XOR-маску BLAKE2b-256(`key || salt`), а UDPMessage framing уменьшает доступный datagram budget на 8 байт. PSK короче 4 UTF-8 байт отклоняется согласно официальной реализации. Реализация использует Tokio UDP без GSO/ECN. Это не аутентифицированное шифрование: неверный ключ приводит к пакетам, которые QUIC отбросит. На head `c2c41a1` прошли все 15 CI checks, кроме штатно пропущенного publish; follow-up с проверкой границы PSK отправлен и ожидает CI. Reference interop ещё не проводился. Factory по-прежнему не подключена.
 
 Внешний Android-телефон не требуется для разработки parser/codec и локального interop. Он станет полезен для финального device-level прогона Android VPN/TUN, Wi-Fi↔cellular handover и восстановления после sleep; одна Android cross-build этого поведения не доказывает.
 
