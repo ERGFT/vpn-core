@@ -300,6 +300,7 @@ mod tests {
     #[tokio::test]
     async fn hop_sends_to_the_new_remote_port() {
         use quinn::udp::Transmit;
+        use quinn::AsyncUdpSocket;
 
         let (first, second) = (20_000..60_000)
             .find_map(|port| {
@@ -373,6 +374,7 @@ mod tests {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .active
+            .0
             .local_addr()
             .unwrap();
         assert!(first_addr.is_ipv6());
@@ -383,6 +385,7 @@ mod tests {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .active
+            .0
             .local_addr()
             .unwrap();
         assert!(second_addr.is_ipv6());
