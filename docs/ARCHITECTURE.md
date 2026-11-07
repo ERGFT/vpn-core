@@ -961,7 +961,7 @@ flow. `transport::open(&TransportConfig)` открывает только тра
     есть QUIC может идти через VLESS.
 - **Hysteria 2** (`hysteria2_transport.rs`, `hysteria2_udp.rs`, `hysteria2_obfs.rs`):
   - отдельные QUIC/auth, TCP stream и UDP datagram слои; PR #189, #190,
-    #192 и #193 слиты, production factory пока не подключена;
+    #192, #193 и #196 слиты в `main`, production factory пока не подключена;
   - Stage 6.1 добавляет Salamander socket wrapper: каждый QUIC UDP packet
     получает 8-byte salt и BLAKE2b-256 mask; PSK короче 4 UTF-8 байт
     отклоняется для совместимости с официальной реализацией, короткие и
@@ -971,7 +971,13 @@ flow. `transport::open(&TransportConfig)` открывает только тра
     `32ef01a` (15 успешных checks и 1 пропущенный publish check);
     interop и производительность ещё не измерялись;
   - Stage 6.2 задаёт BBR только для Hysteria 2; прочие потребители QUIC
-    сохраняют Cubic. Полный rate negotiation и Brutal не поддерживаются.
+    сохраняют Cubic. CI #759 прошёл 8/8 jobs на head `4300fc1`; полный
+    rate negotiation и Brutal не поддерживаются;
+  - Stage 6.3 реализует случайный начальный порт из диапазонов и смену
+    порта раз в 30 секунд после auth. Новый защищённый UDP socket начинает
+    работать до закрытия предыдущего, чтобы принимать запоздавшие пакеты.
+    Этап перенесён на актуальную `main`; CI, reference interop и смена сетевого
+    интерфейса ещё не проверялись.
 
 ## 14. Протоколы: VLESS, Vision, XUDP, Mux.Cool, Trojan
 
