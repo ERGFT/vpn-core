@@ -2,7 +2,6 @@
 //! Hysteria 2 unreliable-datagram relay and bounded UDPMessage framing.
 
 use std::collections::HashMap;
-use std::io;
 use std::net::IpAddr;
 use std::sync::{Arc, Mutex as StdMutex};
 use std::time::{Duration, Instant};
