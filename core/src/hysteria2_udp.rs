@@ -246,10 +246,7 @@ impl UdpDatagramMux {
                     let Some(packet) = packet else { continue };
                     let mut routes = self.routes.lock().await;
                     routes.retain(|_, sender| !sender.is_closed());
-                    if let Some(sender) = routes.get(&session_id) {
-                        // A full queue drops this UDP packet; it never blocks QUIC receive.
-                        let _ = sender.try_send(packet);
-                    }
+                    try_route_packet(&routes, session_id, packet);
                 }
                 _ = cleanup.tick() => {
                     self.routes.lock().await.retain(|_, sender| !sender.is_closed());
@@ -283,6 +280,13 @@ impl UdpDatagramMux {
         for key in keys {
             reassembler.remove(key);
         }
+    }
+}
+
+fn try_route_packet(routes: &HashMap<u32, mpsc::Sender<Packet>>, session_id: u32, packet: Packet) {
+    if let Some(sender) = routes.get(&session_id) {
+        // A full queue drops this UDP packet; it never blocks QUIC receive.
+        let _ = sender.try_send(packet);
     }
 }
 
@@ -539,11 +543,14 @@ fn protocol_error(message: &str) -> Error {
 #[cfg(test)]
 mod tests {
     use super::{
-        decode_udp_message, encode_udp_fragments, next_packet_id, parse_authority, Address,
-        Reassembler, MAX_FRAGMENTS, MAX_IN_FLIGHT_PACKETS, MAX_REASSEMBLY_BYTES, MAX_UDP_PAYLOAD,
+        decode_udp_message, encode_udp_fragments, next_packet_id, parse_authority,
+        try_route_packet, Address, Reassembler, MAX_FRAGMENTS, MAX_IN_FLIGHT_PACKETS,
+        MAX_REASSEMBLY_BYTES, MAX_UDP_PAYLOAD, UDP_QUEUE,
     };
+    use std::collections::HashMap;
     use std::sync::atomic::AtomicU16;
     use std::time::{Duration, Instant};
+    use tokio::sync::mpsc;
 
     #[test]
     fn encodes_and_decodes_udp_messages_with_ipv4_and_ipv6_authorities() {
@@ -637,6 +644,114 @@ mod tests {
         reassembler.expire(now + Duration::from_secs(6));
         assert!(reassembler.pending.is_empty());
         assert_eq!(reassembler.bytes, 0);
+    }
+
+    #[test]
+    fn reassembles_interleaved_destinations_in_one_udp_association() {
+        let now = Instant::now();
+        let first_payload = vec![0x11; 2500];
+        let second_payload = vec![0x22; 3100];
+        let first_frames = encode_udp_fragments(
+            8,
+            100,
+            &Address::Ipv4("192.0.2.10".parse().unwrap()),
+            53,
+            &first_payload,
+            1200,
+        )
+        .unwrap();
+        let second_frames = encode_udp_fragments(
+            8,
+            101,
+            &Address::Ipv6("2001:db8::10".parse().unwrap()),
+            5353,
+            &second_payload,
+            1200,
+        )
+        .unwrap();
+
+        let mut reassembler = Reassembler::default();
+        let mut completed = Vec::new();
+        for index in 0..first_frames.len().max(second_frames.len()) {
+            for frames in [&first_frames, &second_frames] {
+                if let Some(frame) = frames.get(index) {
+                    if let Some(packet) = reassembler.push(decode_udp_message(frame).unwrap(), now)
+                    {
+                        completed.push(packet);
+                    }
+                }
+            }
+        }
+
+        assert_eq!(
+            completed,
+            vec![
+                (
+                    Address::Ipv4("192.0.2.10".parse().unwrap()),
+                    53,
+                    first_payload,
+                ),
+                (
+                    Address::Ipv6("2001:db8::10".parse().unwrap()),
+                    5353,
+                    second_payload,
+                ),
+            ]
+        );
+        assert!(reassembler.pending.is_empty());
+        assert_eq!(reassembler.bytes, 0);
+    }
+
+    #[test]
+    fn full_udp_session_queue_drops_replies_without_blocking_other_sessions() {
+        let mut routes = HashMap::new();
+        let (full_tx, mut full_rx) = mpsc::channel(UDP_QUEUE);
+        let (other_tx, mut other_rx) = mpsc::channel(UDP_QUEUE);
+        routes.insert(1, full_tx);
+        routes.insert(2, other_tx);
+
+        for sequence in 0..UDP_QUEUE {
+            try_route_packet(
+                &routes,
+                1,
+                (
+                    Address::Domain("full.example".into()),
+                    53,
+                    vec![sequence as u8, (sequence >> 8) as u8],
+                ),
+            );
+        }
+        try_route_packet(
+            &routes,
+            1,
+            (Address::Domain("full.example".into()), 53, vec![0xff, 0xff]),
+        );
+        try_route_packet(
+            &routes,
+            2,
+            (
+                Address::Domain("other.example".into()),
+                443,
+                b"reply".to_vec(),
+            ),
+        );
+
+        assert_eq!(full_rx.len(), UDP_QUEUE);
+        assert_eq!(
+            full_rx.try_recv().unwrap(),
+            (Address::Domain("full.example".into()), 53, vec![0, 0])
+        );
+        assert_eq!(
+            other_rx.try_recv().unwrap(),
+            (
+                Address::Domain("other.example".into()),
+                443,
+                b"reply".to_vec()
+            )
+        );
+        let remaining: Vec<_> = std::iter::from_fn(|| full_rx.try_recv().ok()).collect();
+        assert_eq!(remaining.len(), UDP_QUEUE - 1);
+        assert!(!remaining.iter().any(|packet| packet.2 == vec![0xff, 0xff]));
     }
 
     #[test]
