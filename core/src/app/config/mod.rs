@@ -235,6 +235,8 @@ pub enum OutboundKind {
     Trojan,
     /// Hysteria 2 over QUIC (sharing link in `link` or `link_file`).
     Hysteria2,
+    /// Shadowsocks classic AEAD proxy (sharing link in `link` or `link_file`).
+    Shadowsocks,
     /// SOCKS5 proxy для исходящих TCP CONNECT-соединений.
     Socks5,
     /// HTTP CONNECT proxy для исходящих TCP-соединений.
@@ -674,6 +676,16 @@ mod tests {
             .unwrap_err()
             .to_string();
         assert!(e.contains("TOML"), "{e}");
+    }
+
+    #[test]
+    fn xray_shadowsocks_outbound_normalizes_one_aead_server() {
+        let config = Config::parse(
+            r#"{"outbounds":[{"protocol":"shadowsocks","tag":"ss","settings":{"servers":[{"address":"ss.example","port":8388,"method":"chacha20-poly1305","password":"secret","level":0}]}}]}"#,
+        )
+        .unwrap();
+        assert_eq!(config.outbounds[0].kind(), OutboundKind::Shadowsocks);
+        assert!(!format!("{:?}", config.outbounds[0]).contains("secret"));
     }
 
     #[test]

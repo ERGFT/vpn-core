@@ -37,6 +37,7 @@ pub mod proxy_in;
 pub mod router;
 pub mod rules;
 pub mod ruleset;
+pub mod shadowsocks_out;
 pub mod sniff;
 pub mod sniff_quic;
 pub mod socks_out;
@@ -999,6 +1000,7 @@ fn router_pinned_servers(
             OutboundKind::Vless
             | OutboundKind::Trojan
             | OutboundKind::Hysteria2
+            | OutboundKind::Shadowsocks
             | OutboundKind::Socks5
             | OutboundKind::HttpConnect => router.get(&o.tag).and_then(|b| b.server()),
             _ => None,
@@ -1142,6 +1144,7 @@ fn build_core(
             OutboundKind::Vless
             | OutboundKind::Trojan
             | OutboundKind::Hysteria2
+            | OutboundKind::Shadowsocks
             | OutboundKind::Socks5
             | OutboundKind::HttpConnect => outbound_factory::build_proxy(o, &detour_slots)?,
             OutboundKind::Direct => Arc::new(build_direct(
@@ -1402,6 +1405,16 @@ fn server_from_link(
             None,
             true,
             o.fragment.clone(),
+        )?));
+    }
+    if link.starts_with("ss://") {
+        if o.allow_insecure || o.mux.is_some() || o.fragment.is_some() {
+            return Err(Error::Config(format!(
+                "подписка {tag}: allow_insecure, mux и fragment не применимы к Shadowsocks"
+            )));
+        }
+        return Ok(Arc::new(shadowsocks_out::ShadowsocksOutbound::from_link(
+            tag, link,
         )?));
     }
     let mut v = vless_from_link(

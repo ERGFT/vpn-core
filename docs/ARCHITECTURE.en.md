@@ -27,7 +27,7 @@ Contents:
 11. [Server groups and subscriptions](#11-server-groups-and-subscriptions)
 12. [DNS](#12-dns)
 13. [Transports](#13-transports)
-14. [Protocols: VLESS, Vision, XUDP, Mux.Cool, Trojan](#14-protocols-vless-vision-xudp-muxcool-trojan)
+14. [Protocols: VLESS, Vision, XUDP, Mux.Cool, Trojan, and Shadowsocks](#14-protocols-vless-vision-xudp-muxcool-trojan-and-shadowsocks)
 15. [REALITY and TLS fingerprints](#15-reality-and-tls-fingerprints)
 16. [API, connection tracking and events](#16-api-connection-tracking-and-events)
 17. [Security](#17-security)
@@ -96,6 +96,7 @@ Inside `core/src/`:
 | Module | What it does |
 |---|---|
 | `app/` | the application: inbounds → router → outbounds (including SOCKS5 and HTTP CONNECT), config, DNS, TUN, groups, subscriptions, API |
+| `app/shadowsocks_out.rs`, `shadowsocks_protocol.rs` | classic Shadowsocks AEAD: TCP/UDP relay, strict method validation and SIP002 URI normalization; codec and cryptography come from the official `shadowsocks-rust` crate |
 | `connection_owner.rs` | trusted connection-owner metadata supplied by the host app |
 | `vless/` | `vless://` links (`uri.rs`), VLESS headers (`protocol.rs`), Vision, UDP, XUDP, Mux.Cool |
 | `trojan.rs` | Trojan header and UDP packets |
@@ -229,7 +230,8 @@ protocol-specific network-change action today.
     through other groups);
   - expands presets (`route.presets`) into rules, and rule sets
     (`rule_set`) into rule and DNS conditions;
-  - builds outbounds in order: VLESS, Trojan, SOCKS5, and HTTP CONNECT through
+  - builds outbounds in order: VLESS, Trojan, Hysteria 2, Shadowsocks, SOCKS5,
+    and HTTP CONNECT through
     the static `outbound_factory`; `direct`, `block`, `dns`, and groups remain
     in `build_core`;
   - once all outbounds exist, fills group members and checks `default`;
@@ -514,7 +516,7 @@ a trusted network or through a separate protected transport.
   - one VLESS stream with the Mux command carries all destinations;
   - this gives Full Cone NAT and a single handshake for all destinations;
   - with a Vision account, Xray accepts UDP only this way;
-  - details in [section 14](#14-protocols-vless-vision-xudp-muxcool-trojan).
+  - details in [section 14](#14-protocols-vless-vision-xudp-muxcool-trojan-and-shadowsocks).
 - **vless, one stream per destination** (`xudp: false`):
   - the UDP command, one source–destination pair per stream;
   - for servers without XUDP;
@@ -1040,7 +1042,7 @@ implementation:
     all 8 jobs on head `3762074`. Reference interoperability, performance,
     network-interface changes, and recovery have not been verified.
 
-## 14. Protocols: VLESS, Vision, XUDP, Mux.Cool, Trojan
+## 14. Protocols: VLESS, Vision, XUDP, Mux.Cool, Trojan, and Shadowsocks
 
 ### 14.1. VLESS (`vless/protocol.rs`)
 
@@ -1113,6 +1115,40 @@ UDP packet: address | port | length(2) | CRLF | data
 - Transports and TLS/REALITY are the same as for VLESS.
 - `TrojanConfig` stores a `TransportConfig`; its password remains in the
   Trojan model, and parsing no longer creates a placeholder VLESS UUID.
+
+### 14.6. Classic Shadowsocks AEAD (`shadowsocks_out.rs`)
+
+The implementation uses the official `shadowsocks-rust` crate for SIP002,
+AEAD framing, and encryption. The core opens its TCP server stream through the
+shared protected-socket path; native UDP uses the same codec through an adapter
+for the protected UDP socket. UDP queues are bounded, idle sessions stop their
+task, and packets are dropped when queues fill or datagrams exceed the limit.
+
+Only `aes-128-gcm`, `aes-256-gcm`, and `chacha20-ietf-poly1305` are accepted.
+sing-box, Xray, and subscription records normalize to a classic `ss://` link.
+Clash YAML records with unsupported plugins, UDP-over-TCP, or `udp: false` are
+skipped and counted. SIP003 plugins, custom transport restrictions, and
+Shadowsocks detours are rejected for now. Legacy stream ciphers and Shadowsocks
+2022 cannot enter this mode: 2022 has distinct key and replay-protection rules.
+An independent Xray TCP/UDP echo test is included in `interop_xray.sh`; its
+result is established only after CI passes.
+
+### 14.6. Classic Shadowsocks AEAD (`shadowsocks_out.rs`)
+
+The implementation uses the official `shadowsocks-rust` crate for SIP002,
+AEAD framing, and encryption. The core opens its TCP server stream through the
+shared protected-socket path; native UDP uses the same codec through an adapter
+for the protected UDP socket. UDP queues are bounded, idle sessions stop their
+task, and packets are dropped when queues fill or datagrams exceed the limit.
+
+Only `aes-128-gcm`, `aes-256-gcm`, and `chacha20-ietf-poly1305` are accepted.
+sing-box, Xray, and subscription records normalize to a classic `ss://` link.
+Clash YAML records with unsupported plugins, UDP-over-TCP, or `udp: false` are
+skipped and counted. SIP003 plugins, custom transport restrictions, and
+Shadowsocks detours are rejected for now. Legacy stream ciphers and Shadowsocks
+2022 cannot enter this mode: 2022 has distinct key and replay-protection rules.
+An independent Xray TCP/UDP echo test is included in `interop_xray.sh`; its
+result is established only after CI passes.
 
 ## 15. REALITY and TLS fingerprints
 

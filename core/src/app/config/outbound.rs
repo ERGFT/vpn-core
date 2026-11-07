@@ -20,6 +20,7 @@ pub(crate) enum OutboundSettings {
     Vless(VlessConfig),
     Trojan(TrojanConfig),
     Hysteria2(Hysteria2OutboundConfig),
+    Shadowsocks(ShadowsocksOutboundConfig),
     Socks5(ProxyConfig),
     HttpConnect(HttpConnectConfig),
     Direct(DirectConfig),
@@ -73,6 +74,11 @@ pub(crate) struct TrojanConfig {
 pub(crate) struct Hysteria2OutboundConfig {
     pub link: SecretSource,
     pub ca_file: Option<PathBuf>,
+}
+
+#[derive(Clone)]
+pub(crate) struct ShadowsocksOutboundConfig {
+    pub link: SecretSource,
 }
 
 #[derive(Clone)]
@@ -179,6 +185,7 @@ impl OutboundConfig {
             OutboundSettings::Vless(_) => OutboundKind::Vless,
             OutboundSettings::Trojan(_) => OutboundKind::Trojan,
             OutboundSettings::Hysteria2(_) => OutboundKind::Hysteria2,
+            OutboundSettings::Shadowsocks(_) => OutboundKind::Shadowsocks,
             OutboundSettings::Socks5(_) => OutboundKind::Socks5,
             OutboundSettings::HttpConnect(_) => OutboundKind::HttpConnect,
             OutboundSettings::Direct(_) => OutboundKind::Direct,
@@ -214,6 +221,13 @@ impl OutboundConfig {
     pub(crate) fn hysteria2_ca_file(&self) -> Option<&PathBuf> {
         match &self.settings {
             OutboundSettings::Hysteria2(settings) => settings.ca_file.as_ref(),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn shadowsocks_link(&self) -> Option<&SecretSource> {
+        match &self.settings {
+            OutboundSettings::Shadowsocks(settings) => Some(&settings.link),
             _ => None,
         }
     }
@@ -281,6 +295,7 @@ impl OutboundConfig {
                 .into_iter()
                 .chain(v.ca_file.iter())
                 .collect(),
+            OutboundSettings::Shadowsocks(v) => secret_path(&v.link).into_iter().collect(),
             OutboundSettings::Socks5(v) => proxy_auth_path(v.auth.as_ref()),
             OutboundSettings::HttpConnect(v) => v
                 .proxy
@@ -308,6 +323,7 @@ impl OutboundConfig {
                 visit_secret_path(&mut v.link, f);
                 visit_optional_path(&mut v.ca_file, f);
             }
+            OutboundSettings::Shadowsocks(v) => visit_secret_path(&mut v.link, f),
             OutboundSettings::Socks5(v) => visit_proxy_auth_path(v.auth.as_mut(), f),
             OutboundSettings::HttpConnect(v) => {
                 visit_proxy_auth_path(v.proxy.auth.as_mut(), f);
@@ -393,6 +409,10 @@ impl std::fmt::Debug for RedactedSettings<'_> {
                 .debug_struct("Hysteria2")
                 .field("link", &v.link)
                 .field("ca_file", &v.ca_file)
+                .finish(),
+            OutboundSettings::Shadowsocks(v) => f
+                .debug_struct("Shadowsocks")
+                .field("link", &v.link)
                 .finish(),
             OutboundSettings::Socks5(v) => proxy_debug(f, "Socks5", v),
             OutboundSettings::HttpConnect(v) => f
@@ -566,7 +586,10 @@ impl RawOutboundConfig {
         let server_fields = self.link.is_some() || self.link_file.is_some() || self.allow_insecure;
         let server = matches!(
             self.kind,
-            OutboundKind::Vless | OutboundKind::Trojan | OutboundKind::Hysteria2
+            OutboundKind::Vless
+                | OutboundKind::Trojan
+                | OutboundKind::Hysteria2
+                | OutboundKind::Shadowsocks
         );
         if server {
             match (self.link.is_some(), self.link_file.is_some()) {
@@ -586,12 +609,17 @@ impl RawOutboundConfig {
                 "выход {tag}: allow_insecure не поддерживается для Hysteria 2"
             )));
         }
+        if self.kind == OutboundKind::Shadowsocks && self.allow_insecure {
+            return Err(Error::Config(format!(
+                "выход {tag}: allow_insecure не применим к Shadowsocks"
+            )));
+        }
         let ca_file_allowed = matches!(
             self.kind,
             OutboundKind::Vless | OutboundKind::Trojan | OutboundKind::Hysteria2
         ) || (self.kind == OutboundKind::HttpConnect && self.proxy_tls);
         if (!server && server_fields) || (self.ca_file.is_some() && !ca_file_allowed) {
-            return Err(Error::Config(format!("выход {tag}: link и link_file допустимы у VLESS, Trojan и Hysteria 2; allow_insecure — только у VLESS и Trojan; ca_file допустим у VLESS, Trojan, Hysteria 2 и HTTP CONNECT с TLS")));
+            return Err(Error::Config(format!("выход {tag}: link и link_file допустимы у VLESS, Trojan, Hysteria 2 и Shadowsocks; allow_insecure — только у VLESS и Trojan; ca_file допустим у VLESS, Trojan, Hysteria 2 и HTTP CONNECT с TLS")));
         }
         let proxy_fields = self.proxy_server.is_some()
             || self.proxy_port.is_some()
@@ -729,6 +757,9 @@ impl RawOutboundConfig {
             OutboundKind::Hysteria2 => OutboundSettings::Hysteria2(Hysteria2OutboundConfig {
                 link: self.take_link()?,
                 ca_file: self.ca_file,
+            }),
+            OutboundKind::Shadowsocks => OutboundSettings::Shadowsocks(ShadowsocksOutboundConfig {
+                link: self.take_link()?,
             }),
             OutboundKind::Socks5 => OutboundSettings::Socks5(self.proxy()?),
             OutboundKind::HttpConnect => {

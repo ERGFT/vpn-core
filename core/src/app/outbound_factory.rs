@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 use super::config::{self, OutboundKind};
 use super::outbound::{self, Outbound};
-use super::{http_connect_out, hysteria2_out, socks_out, trojan_out};
+use super::{http_connect_out, hysteria2_out, shadowsocks_out, socks_out, trojan_out};
 use crate::error::{Error, Result};
 
 /// Build one server-backed proxy outbound from its validated typed config.
@@ -25,6 +25,7 @@ pub(super) fn build_proxy(
         OutboundKind::Vless => Arc::new(build_vless(config)?),
         OutboundKind::Trojan => Arc::new(build_trojan(config)?),
         OutboundKind::Hysteria2 => Arc::new(build_hysteria2(config)?),
+        OutboundKind::Shadowsocks => Arc::new(build_shadowsocks(config)?),
         OutboundKind::Socks5 => {
             let settings = config
                 .socks5()
@@ -67,7 +68,7 @@ pub(super) fn build_proxy(
         }
         _ => {
             return Err(Error::Config(format!(
-                "выход «{}»: фабрика собирает только VLESS, Trojan, Hysteria 2, SOCKS5 и HTTP CONNECT",
+                "выход «{}»: фабрика собирает только VLESS, Trojan, Hysteria 2, Shadowsocks, SOCKS5 и HTTP CONNECT",
                 config.tag
             )));
         }
@@ -91,6 +92,20 @@ fn build_hysteria2(config: &config::OutboundConfig) -> Result<hysteria2_out::Hys
         .map(|path| config::load_ca(path))
         .transpose()?;
     Ok(hysteria2_out::Hysteria2Outbound::new(config.tag.clone(), hysteria).with_roots(roots))
+}
+
+#[allow(
+    clippy::expect_used,
+    reason = "invariant: called only for an outbound of type Shadowsocks"
+)]
+fn build_shadowsocks(
+    config: &config::OutboundConfig,
+) -> Result<shadowsocks_out::ShadowsocksOutbound> {
+    let link = config
+        .shadowsocks_link()
+        .expect("Shadowsocks settings match outbound kind")
+        .read()?;
+    shadowsocks_out::ShadowsocksOutbound::from_link(config.tag.clone(), &link)
 }
 
 #[allow(
@@ -200,6 +215,34 @@ mod tests {
             outbound.capabilities(),
             outbound::OutboundCapabilities::TCP_UDP_TERMINAL
         );
+    }
+
+    #[test]
+    fn factory_builds_shadowsocks_from_singbox_aead_config_and_redacts_password() {
+        let config = config::Config::parse(
+            r#"{"outbounds":[{"type":"shadowsocks","tag":"ss","server":"ss.example","server_port":8388,"method":"aes-256-gcm","password":"private-secret"}]}"#,
+        )
+        .unwrap();
+        let debug = format!("{:?}", config.outbounds[0]);
+        assert!(!debug.contains("private-secret"), "{debug}");
+        let outbound = build_proxy(&config.outbounds[0], &HashMap::new()).unwrap();
+        assert_eq!(outbound.tag(), "ss");
+        assert_eq!(outbound.clash_type(), "Shadowsocks");
+        assert_eq!(outbound.server(), Some(("ss.example".into(), 8388)));
+        assert_eq!(
+            outbound.capabilities(),
+            outbound::OutboundCapabilities::TCP_UDP
+        );
+    }
+
+    #[test]
+    fn classic_shadowsocks_rejects_legacy_and_2022_ciphers() {
+        for method in ["aes-256-cfb", "2022-blake3-aes-128-gcm"] {
+            let text = format!(
+                r#"{{"outbounds":[{{"type":"shadowsocks","tag":"ss","server":"ss.example","server_port":8388,"method":"{method}","password":"secret"}}]}}"#
+            );
+            assert!(config::Config::parse(&text).is_err(), "{method}");
+        }
     }
 
     #[test]

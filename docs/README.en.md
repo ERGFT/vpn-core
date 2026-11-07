@@ -10,6 +10,7 @@ and first run. This is the detailed reference.
 | Page | About |
 |---|---|
 | [FEATURES.en.md](FEATURES.en.md) | all features, their status and how each was tested; known limitations |
+| [SHADOWSOCKS_IMPLEMENTATION_PLAN.en.md](SHADOWSOCKS_IMPLEMENTATION_PLAN.en.md) | status and scope of classic Shadowsocks AEAD and the separate Shadowsocks 2022 stage |
 | [CLI.en.md](CLI.en.md) | command-line options, autostart (Windows service, systemd) |
 | [CONFIG.en.md](CONFIG.en.md) | supported subsets of the sing-box/Xray formats: inbounds, outbounds, rules, rule sets, server groups, subscriptions, `fragment`, and `noises` |
 | [DNS.en.md](DNS.en.md) | own DNS: DoH/DoT/DoQ servers, rules, cache, fake-IP |

@@ -12,6 +12,7 @@ pub(super) enum NormalizedProtocol {
     Vless,
     Trojan,
     Hysteria2,
+    Shadowsocks,
 }
 
 impl NormalizedProtocol {
@@ -20,6 +21,7 @@ impl NormalizedProtocol {
             Self::Vless => "vless",
             Self::Trojan => "trojan",
             Self::Hysteria2 => "hysteria2",
+            Self::Shadowsocks => "shadowsocks",
         }
     }
 }
@@ -54,6 +56,7 @@ impl NormalizedSubscription {
             "vless" => NormalizedProtocol::Vless,
             "trojan" => NormalizedProtocol::Trojan,
             "hysteria2" | "hy2" => NormalizedProtocol::Hysteria2,
+            "ss" => NormalizedProtocol::Shadowsocks,
             _ => return,
         };
         self.servers.push(NormalizedServer {
@@ -146,6 +149,24 @@ fn parse_lines(text: &str, out: &mut NormalizedSubscription) {
             }
             continue;
         }
+        if scheme == "ss" {
+            match shadowsocks::config::ServerConfig::from_url(line) {
+                Ok(config) if crate::shadowsocks_protocol::validate_classic(&config).is_ok() => {
+                    let name = config
+                        .remarks()
+                        .filter(|name| !name.is_empty())
+                        .map(str::to_owned)
+                        .unwrap_or_else(|| config.addr().to_string());
+                    out.servers.push(NormalizedServer {
+                        protocol: NormalizedProtocol::Shadowsocks,
+                        name,
+                        link: line.to_string(),
+                    });
+                }
+                _ => out.invalid += 1,
+            }
+            continue;
+        }
         if scheme != "vless" && scheme != "trojan" {
             *out.skipped.entry(scheme).or_default() += 1;
             continue;
@@ -161,6 +182,50 @@ fn parse_lines(text: &str, out: &mut NormalizedSubscription) {
         };
         out.push_server(&scheme, name, line.to_string());
     }
+}
+
+/// Convert the Shadowsocks profile representable by a standard sing-box
+/// outbound. Plugins and transport extensions are rejected until implemented.
+pub(crate) fn singbox_shadowsocks_uri(o: &serde_json::Value) -> Result<Option<String>> {
+    let configured = |v: &serde_json::Value| {
+        !v.is_null()
+            && v.as_bool() != Some(false)
+            && v.as_str() != Some("")
+            && !v.as_array().is_some_and(Vec::is_empty)
+            && !v.as_object().is_some_and(serde_json::Map::is_empty)
+    };
+    let allowed = ["type", "tag", "server", "server_port", "method", "password"];
+    if o.as_object().is_some_and(|map| {
+        map.iter()
+            .any(|(k, v)| !allowed.contains(&k.as_str()) && configured(v))
+    }) {
+        return Ok(None);
+    }
+    for field in ["server", "method", "password"] {
+        if o.get(field).is_some_and(|v| !v.is_string()) {
+            return Err(Error::Config(format!(
+                "Shadowsocks sing-box: {field} has the wrong type"
+            )));
+        }
+    }
+    let server = o
+        .get("server")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| Error::Config("Shadowsocks sing-box: missing server".into()))?;
+    let method = o
+        .get("method")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| Error::Config("Shadowsocks sing-box: missing method".into()))?;
+    let password = o
+        .get("password")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| Error::Config("Shadowsocks sing-box: missing password".into()))?;
+    let port = port_of(o.get("server_port")).ok_or_else(|| {
+        Error::Config("Shadowsocks sing-box: missing or invalid server_port".into())
+    })?;
+    crate::shadowsocks_protocol::uri_from_fields(server, port, method, password).map(Some)
 }
 
 fn js<'a>(v: &'a serde_json::Value, path: &[&str]) -> Option<&'a serde_json::Value> {
@@ -417,6 +482,30 @@ fn parse_singbox(text: &str, out: &mut NormalizedSubscription) -> Result<()> {
                 }
                 continue;
             }
+            "shadowsocks" => {
+                match singbox_shadowsocks_uri(&o) {
+                    Ok(Some(link)) => {
+                        let name = js_str(&o, &["tag"]);
+                        let name = if name.is_empty() {
+                            js_str(&o, &["server"])
+                        } else {
+                            name
+                        };
+                        out.servers.push(NormalizedServer {
+                            protocol: NormalizedProtocol::Shadowsocks,
+                            name,
+                            link,
+                        });
+                    }
+                    Ok(None) => {
+                        *out.skipped
+                            .entry("shadowsocks (unsupported sing-box options)".into())
+                            .or_default() += 1;
+                    }
+                    Err(_) => out.invalid += 1,
+                }
+                continue;
+            }
             // Служебные выходы sing-box — не серверы.
             "direct" | "block" | "dns" | "selector" | "urltest" | "" => continue,
             other => {
@@ -494,7 +583,7 @@ fn parse_singbox(text: &str, out: &mut NormalizedSubscription) -> Result<()> {
     Ok(())
 }
 
-/// YAML Clash: `proxies` с `type: vless`.
+/// YAML Clash: supported `proxies` records.
 fn parse_clash(text: &str, out: &mut NormalizedSubscription) -> Result<()> {
     let v: serde_json::Value = yaml_serde::from_str(text)
         .map_err(|e| Error::Config(format!("подписка: YAML Clash: {e}")))?;
@@ -505,6 +594,44 @@ fn parse_clash(text: &str, out: &mut NormalizedSubscription) -> Result<()> {
         .unwrap_or_default();
     for p in list {
         let ty = js_str(&p, &["type"]);
+        if ty == "ss" || ty == "shadowsocks" {
+            let unsupported = ["plugin", "plugin-opts", "udp-over-tcp"];
+            if unsupported.iter().any(|key| {
+                p.get(*key).is_some_and(|v| {
+                    !v.is_null() && v.as_bool() != Some(false) && v.as_str() != Some("")
+                })
+            }) || p.get("udp").and_then(|v| v.as_bool()) == Some(false)
+            {
+                *out.skipped
+                    .entry("shadowsocks (unsupported Clash options)".into())
+                    .or_default() += 1;
+                continue;
+            }
+            let server = js_str(&p, &["server"]);
+            let port = port_of(js(&p, &["port"]));
+            let method = js_str(&p, &["cipher"]);
+            let password = js_str(&p, &["password"]);
+            let Some(port) = port else {
+                out.invalid += 1;
+                continue;
+            };
+            match crate::shadowsocks_protocol::uri_from_fields(&server, port, &method, &password) {
+                Ok(link) => {
+                    let name = js_str(&p, &["name"]);
+                    out.servers.push(NormalizedServer {
+                        protocol: NormalizedProtocol::Shadowsocks,
+                        name: if name.is_empty() {
+                            format!("{server}:{port}")
+                        } else {
+                            name
+                        },
+                        link,
+                    });
+                }
+                Err(_) => out.invalid += 1,
+            }
+            continue;
+        }
         let scheme = match ty.as_str() {
             "vless" => "vless",
             "trojan" => "trojan",
@@ -641,6 +768,39 @@ mod tests {
         assert_eq!(parsed.servers[0].name, "VLESS");
         assert_eq!(parsed.servers[1].protocol, NormalizedProtocol::Trojan);
         assert_eq!(parsed.servers[1].name, "Trojan");
+    }
+
+    #[test]
+    fn imports_classic_shadowsocks_from_sip002_singbox_and_clash() {
+        let sip002 = b"ss://YWVzLTI1Ni1nY206cGFzc3dvcmQ@ss.example:8388#node";
+        let parsed = parse_typed(sip002).unwrap();
+        assert_eq!(parsed.servers.len(), 1);
+        assert_eq!(parsed.servers[0].protocol, NormalizedProtocol::Shadowsocks);
+        let config = shadowsocks::config::ServerConfig::from_url(&parsed.servers[0].link).unwrap();
+        assert_eq!(config.method().to_string(), "aes-256-gcm");
+
+        let singbox = br#"{"outbounds":[{"type":"shadowsocks","tag":"ss","server":"ss.example","server_port":8388,"method":"chacha20-ietf-poly1305","password":"password"}]}"#;
+        let parsed = parse_typed(singbox).unwrap();
+        assert_eq!(parsed.servers.len(), 1);
+        assert_eq!(parsed.servers[0].protocol, NormalizedProtocol::Shadowsocks);
+
+        let clash = br#"proxies:
+  - {name: ss, type: ss, server: ss.example, port: 8388, cipher: aes-128-gcm, password: password}
+"#;
+        let parsed = parse_typed(clash).unwrap();
+        assert_eq!(parsed.servers.len(), 1);
+        assert_eq!(parsed.servers[0].protocol, NormalizedProtocol::Shadowsocks);
+    }
+
+    #[test]
+    fn skips_classic_shadowsocks_records_with_unimplemented_extensions() {
+        let singbox = br#"{"outbounds":[{"type":"shadowsocks","tag":"ss","server":"ss.example","server_port":8388,"method":"aes-256-gcm","password":"password","plugin":"v2ray-plugin"}]}"#;
+        let parsed = parse_typed(singbox).unwrap();
+        assert!(parsed.servers.is_empty());
+        assert_eq!(
+            parsed.skipped["shadowsocks (unsupported sing-box options)"],
+            1
+        );
     }
 
     #[test]

@@ -232,6 +232,7 @@ fn outbound(o: Obj<'_>) -> Result<OutboundConfig> {
     let kind = match proto.as_str() {
         "vless" => OutboundKind::Vless,
         "trojan" => OutboundKind::Trojan,
+        "shadowsocks" => OutboundKind::Shadowsocks,
         "freedom" => OutboundKind::Direct,
         "blackhole" => OutboundKind::Block,
         "dns" => OutboundKind::Dns,
@@ -239,7 +240,7 @@ fn outbound(o: Obj<'_>) -> Result<OutboundConfig> {
             return Err(o.err(
                 "protocol",
                 format!(
-                "выход «{other}» не поддерживается (есть: vless, trojan, freedom, blackhole, dns)"
+                "выход «{other}» не поддерживается (есть: vless, trojan, shadowsocks, freedom, blackhole, dns)"
             ),
             ))
         }
@@ -253,6 +254,19 @@ fn outbound(o: Obj<'_>) -> Result<OutboundConfig> {
         OutboundKind::Vless | OutboundKind::Trojan => {
             let s = settings.ok_or_else(|| o.err("settings", "не задано"))?;
             server(&o, s, &mut out)?;
+        }
+        OutboundKind::Shadowsocks => {
+            let s = settings.ok_or_else(|| o.err("settings", "не задано"))?;
+            shadowsocks_server(&o, s, &mut out)?;
+            if let Some(stream) = o.obj("streamSettings")? {
+                let network = stream.str("network")?.unwrap_or_else(|| "raw".into());
+                let security = stream.str("security")?.unwrap_or_else(|| "none".into());
+                if !matches!(network.as_str(), "raw" | "tcp") || security != "none" {
+                    return Err(stream.err("network/security", "для Shadowsocks пока поддерживаются только raw TCP и нативный UDP без дополнительного transport security"));
+                }
+                stream.unsupported("sockopt", "параметры сокета Xray")?;
+                stream.finish()?;
+            }
         }
         OutboundKind::Direct => {
             if let Some(s) = settings {
@@ -310,6 +324,33 @@ fn outbound(o: Obj<'_>) -> Result<OutboundConfig> {
     out.check_fields()?;
     o.finish()?;
     out.finish()
+}
+
+fn shadowsocks_server(o: &Obj<'_>, settings: Obj<'_>, out: &mut RawOutboundConfig) -> Result<()> {
+    let mut servers = settings.objs("servers")?;
+    let server = match servers.len() {
+        1 => servers
+            .pop()
+            .ok_or_else(|| settings.err("servers", "не задано"))?,
+        0 => return Err(settings.err("servers", "требуется ровно один сервер")),
+        _ => return Err(settings.err("servers", "поддерживается один сервер в одном outbound")),
+    };
+    let address = server.req_str("address")?;
+    let port = server
+        .u16("port")?
+        .ok_or_else(|| server.err("port", "не задано"))?;
+    let method = server.req_str("method")?;
+    let password = server.req_str("password")?;
+    server.ignore(&["email", "level"]);
+    server.finish()?;
+    settings.finish()?;
+    out.link = Some(crate::shadowsocks_protocol::uri_from_fields(
+        &address, port, &method, &password,
+    )?);
+    // Outbound-wide transport/mux features not applied by this protocol are
+    // surfaced by the parent parser instead of being silently discarded.
+    o.ignore(&["settings"]);
+    Ok(())
 }
 
 /// vless/trojan: settings + streamSettings + mux → ссылка.

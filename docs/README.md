@@ -10,6 +10,7 @@
 | Страница | О чём |
 |---|---|
 | [FEATURES.md](FEATURES.md) | все возможности, их статус и как каждая проверена; известные ограничения |
+| [SHADOWSOCKS_IMPLEMENTATION_PLAN.md](SHADOWSOCKS_IMPLEMENTATION_PLAN.md) | статус и границы реализации классического Shadowsocks AEAD и отдельного этапа Shadowsocks 2022 |
 | [CLI.md](CLI.md) | ключи командной строки, автозапуск (служба Windows, systemd) |
 | [CONFIG.md](CONFIG.md) | поддерживаемые подмножества форматов sing-box/Xray: входы, выходы, правила, наборы правил, группы серверов, подписки, `fragment` и `noises` |
 | [DNS.md](DNS.md) | свой DNS: серверы DoH/DoT/DoQ, правила, кеш, fake-IP |
