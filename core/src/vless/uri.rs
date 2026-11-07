@@ -197,48 +197,13 @@ impl VlessConfig {
         Ok(())
     }
 
-    /// Проверить всю ссылку на совместимость с сервером Xray-core до
-    /// соединения: flow (см. [`Self::ensure_flow_supported`]) и
-    /// сочетание REALITY с транспортом — Xray принимает REALITY только
-    /// поверх tcp, grpc и xhttp ("REALITY only supports RAW, XHTTP and
-    /// gRPC"), так что ws/httpupgrade + reality не заработают ни с одним
-    /// сервером. Библиотечный `transport::dial` такие сочетания не
-    /// запрещает (их используют тесты верификатора REALITY), а клиент
-    /// проверяет ссылку этим методом при старте.
+    /// Проверить VLESS flow и совместимость общего транспорта до
+    /// соединения. Остальные правила транспорта находятся в
+    /// [`TransportConfig::validate`], чтобы их можно было применять и к
+    /// другим протоколам.
     pub fn validate(&self) -> Result<()> {
         self.ensure_flow_supported()?;
-        // `path=`, `host=` и `serviceName=` декодируются из percent-encoding
-        // и попадают в сырую строку HTTP/1.1-запроса (httpupgrade, xhttp).
-        // `%0d%0a` иначе добавил бы произвольные заголовки или разбил бы
-        // запрос на два — отказ здесь, до соединения.
-        for (name, value) in [
-            ("path", self.raw_params.get("path")),
-            ("host", self.raw_params.get("host")),
-            ("serviceName", self.raw_params.get("serviceName")),
-        ] {
-            if let Some(v) = value {
-                if !crate::http1::request_part_ok(v) {
-                    return Err(Error::InvalidUri(format!(
-                        "{name}= содержит управляющие символы или пробелы — так можно \
-                         подменить HTTP-запрос"
-                    )));
-                }
-            }
-        }
-        if self.security == Security::Reality
-            && matches!(self.network, NetworkType::Ws | NetworkType::HttpUpgrade)
-        {
-            return Err(Error::InvalidUri(format!(
-                "security=reality с type={:?} не поддерживает сервер Xray-core \
-                 (REALITY работает только с tcp, grpc и xhttp)",
-                self.network
-            )));
-        }
-        if self.network == NetworkType::Xhttp {
-            // Параметры xhttp (mode=, extra=, alpn) — тоже до соединения.
-            crate::transport::xhttp::XhttpSettings::from_config(&TransportConfig::from(self))?;
-        }
-        Ok(())
+        TransportConfig::from(self).validate()
     }
 
     /// `alpn=` из ссылки (через запятую). `None` — не задан, транспорт

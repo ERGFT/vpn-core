@@ -142,6 +142,42 @@ impl TransportConfig {
         })
     }
 
+    /// Validate compatibility rules that belong to the shared transport,
+    /// before a protocol outbound starts opening connections.
+    pub fn validate(&self) -> Result<()> {
+        // These values are percent-decoded and later inserted into raw
+        // HTTP/1.1 request fields by HTTPUpgrade and XHTTP.
+        for (name, value) in [
+            ("path", self.raw_params.get("path")),
+            ("host", self.raw_params.get("host")),
+            ("serviceName", self.raw_params.get("serviceName")),
+        ] {
+            if let Some(value) = value {
+                if !crate::http1::request_part_ok(value) {
+                    return Err(Error::InvalidUri(format!(
+                        "{name}= содержит управляющие символы или пробелы — так можно \
+                         подменить HTTP-запрос"
+                    )));
+                }
+            }
+        }
+        if self.security == Security::Reality
+            && matches!(self.network, NetworkType::Ws | NetworkType::HttpUpgrade)
+        {
+            return Err(Error::InvalidUri(format!(
+                "security=reality с type={:?} не поддерживает сервер Xray-core \
+                 (REALITY работает только с tcp, grpc и xhttp)",
+                self.network
+            )));
+        }
+        if self.network == NetworkType::Xhttp {
+            // Parse XHTTP settings before dialing, even for protocols that
+            // reuse this transport without using the VLESS adapter.
+            crate::transport::xhttp::XhttpSettings::from_config(self)?;
+        }
+        Ok(())
+    }
+
     pub fn pool_key(&self) -> String {
         let mut params: Vec<(&String, &String)> = self.raw_params.iter().collect();
         params.sort();
