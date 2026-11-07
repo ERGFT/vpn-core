@@ -1106,11 +1106,21 @@ mod callback_gate_tests {
 #[cfg(all(test, target_os = "linux"))]
 mod tun_fd_ownership_tests {
     use super::rc_start;
-    use std::{ffi::CString, fs::File, os::fd::IntoRawFd, path::PathBuf};
+    use std::{ffi::CString, fs::File, os::fd::AsRawFd, path::PathBuf};
 
     #[test]
     fn rc_start_closes_system_tun_fd_when_config_parse_fails() {
-        let fd = File::open("/dev/null").unwrap().into_raw_fd();
+        const F_DUPFD_CLOEXEC: std::ffi::c_int = 1030;
+        unsafe extern "C" {
+            fn fcntl(fd: std::ffi::c_int, cmd: std::ffi::c_int, ...) -> std::ffi::c_int;
+        }
+
+        let source = File::open("/dev/null").unwrap();
+        // Allocate well above normal test descriptors so another parallel test
+        // is unlikely to reuse this number before the assertion below.
+        let fd = unsafe { fcntl(source.as_raw_fd(), F_DUPFD_CLOEXEC, 10_000) };
+        assert!(fd >= 0, "could not allocate an isolated test descriptor");
+        drop(source);
         let config = CString::new("{invalid json").unwrap();
         let base = CString::new(".").unwrap();
         let mut error = std::ptr::null_mut();
@@ -1118,14 +1128,6 @@ mod tun_fd_ownership_tests {
         assert!(core.is_null());
         assert!(!error.is_null());
         let open = PathBuf::from(format!("/proc/self/fd/{fd}")).exists();
-        if open {
-            unsafe extern "C" {
-                fn close(fd: i32) -> i32;
-            }
-            unsafe {
-                let _ = close(fd);
-            }
-        }
         assert!(
             !open,
             "rc_start leaked the TUN descriptor on a parse failure"
