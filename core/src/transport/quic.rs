@@ -358,8 +358,8 @@ mod tests {
         assert_eq!(&buffer[..len], b"after hop");
     }
 
-    #[test]
-    fn port_hop_state_can_bind_ipv6_sockets() {
+    #[tokio::test]
+    async fn port_hop_state_can_bind_ipv6_sockets() {
         let state = PortHopState::new(
             vec![PortRange {
                 first: 443,
