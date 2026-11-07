@@ -288,6 +288,12 @@ fn outbound(o: Obj<'_>) -> Result<OutboundConfig> {
         "selector" => OutboundKind::Selector,
         "urltest" => OutboundKind::Urltest,
         "fallback" => OutboundKind::Fallback,
+        "hysteria2" => {
+            return Err(o.err(
+                "type",
+                "Hysteria 2 outbound распознан, но транспорт ещё не реализован; URI можно проверить, но подключение невозможно",
+            ))
+        }
         other => {
             return Err(o.err(
                 "type",

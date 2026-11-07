@@ -755,6 +755,17 @@ mod tests {
     }
 
     #[test]
+    fn singbox_hysteria2_outbound_reports_runtime_unavailable() {
+        let error = Config::parse(
+            r#"{"outbounds":[{"type":"hysteria2","tag":"hy2","server":"example.com","server_port":443,"password":"secret","tls":{}}]}"#,
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(error.contains("Hysteria 2 outbound распознан"), "{error}");
+        assert!(error.contains("транспорт ещё не реализован"), "{error}");
+    }
+
+    #[test]
     fn singbox_socks_rejects_unsupported_or_incomplete_settings() {
         for (config, expected) in [
             (
