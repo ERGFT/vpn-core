@@ -10,7 +10,7 @@
 
 | Путь | Назначение |
 |---|---|
-| `core/` | Rust-библиотека `reality-core`: входы, маршрутизация, DNS, TUN, прокси-выходы, VLESS/Trojan, транспорты и REALITY |
+| `core/` | Rust-библиотека `reality-core`: входы, маршрутизация, DNS, TUN, прокси-выходы VLESS/Trojan/Hysteria 2, транспорты и REALITY |
 | `bin/client/` | `reality-client`: CLI, запуск ядра, службы Windows и системный прокси |
 | `bin/fpcheck/` | инструмент для захвата и анализа JA3/JA4 ClientHello |
 | `ffi/` | `reality-ffi`: C ABI, `reality.h`, примеры и эталон ABI для интеграции приложений |
