@@ -23,6 +23,7 @@ use uuid::Uuid;
 
 use reality_core::transport::grpc::{connect_and_handshake_grpc, encode_hunk_frame, HunkDecoder};
 use reality_core::transport::tcp_tls::{connect_tls_with_roots_alpn, ensure_crypto_provider};
+use reality_core::transport::TransportConfig;
 use reality_core::vless::protocol::vless_connect;
 use reality_core::vless::{Address, Command, VlessConfig};
 
@@ -140,12 +141,13 @@ async fn grpc_full_roundtrip_over_real_h2() {
         addr.port()
     ))
     .unwrap();
+    let transport = TransportConfig::from(&cfg);
 
     // connect_and_handshake_grpc сам поднимает TLS через встроенный набор
     // публичных корней — для теста нужен наш тестовый корень, поэтому
     // соединение до h2 собираем вручную (как внутри transport::grpc), а
     // дальше используем ту же функцию рукопожатия VLESS, что и клиент.
-    let tls = connect_tls_with_roots_alpn(&cfg, roots, vec![b"h2".to_vec()])
+    let tls = connect_tls_with_roots_alpn(&transport, roots, vec![b"h2".to_vec()])
         .await
         .unwrap();
 
