@@ -675,7 +675,8 @@ mod bootstrap_tests {
     #[test]
     fn quic_dns_rejects_a_tcp_only_detour_before_startup() {
         let err = build_bootstrap("quic://1.1.1.1", "socks", "quic")
-            .unwrap_err()
+            .err()
+            .expect("TCP-only detour must be rejected")
             .to_string();
         assert!(err.contains("не поддерживает нужные TCP/UDP-пути"));
     }

@@ -437,7 +437,7 @@ impl Outbound for Group {
             ),
             // Groups are deliberately excluded as detour targets by config
             // validation; a changing member set cannot promise a stable chain.
-            tcp_detour: false,
+            tcp_detour: Some(false),
         }
     }
 
