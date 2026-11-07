@@ -17,7 +17,7 @@ use tokio::sync::{mpsc, Mutex};
 use super::outbound::{Outbound, Packet, UdpSession, UDP_IDLE};
 use super::Metadata;
 use crate::error::{Error, Result};
-use crate::transport::{self, AsyncStream};
+use crate::transport::{self, AsyncStream, TransportConfig};
 use crate::vless::mux::MuxPool;
 use crate::vless::{xudp, Address, Command, VlessConfig};
 
@@ -35,6 +35,7 @@ const MAX_QUEUED_BYTES: usize = 4 * 1024 * 1024;
 pub struct VlessOutbound {
     tag: String,
     cfg: Arc<VlessConfig>,
+    transport: Arc<TransportConfig>,
     xudp: bool,
     /// Mux.Cool для TCP (если включён).
     mux: Option<MuxPool>,
@@ -49,9 +50,11 @@ impl VlessOutbound {
     }
 
     pub fn new(tag: impl Into<String>, cfg: VlessConfig, xudp: bool) -> Self {
+        let transport = Arc::new(TransportConfig::from(&cfg));
         VlessOutbound {
             tag: tag.into(),
             cfg: Arc::new(cfg),
+            transport,
             xudp,
             mux: None,
             mux_opening: Mutex::new(()),
@@ -90,6 +93,7 @@ impl VlessOutbound {
                         None => {
                             let s = dial(
                                 &self.cfg,
+                                &self.transport,
                                 Command::Mux,
                                 Address::Domain(xudp::MUX_COOL_DOMAIN.into()),
                                 xudp::XUDP_PORT,
@@ -119,13 +123,14 @@ impl VlessOutbound {
 
 async fn dial(
     cfg: &VlessConfig,
+    transport_cfg: &TransportConfig,
     command: Command,
     target: Address,
     port: u16,
 ) -> Result<Box<dyn AsyncStream>> {
     tokio::time::timeout(
         DIAL_TIMEOUT,
-        transport::dial(cfg, &cfg.id, command, target, port),
+        transport::dial_config(transport_cfg, &cfg.id, cfg.flow, command, target, port),
     )
     .await
     .map_err(|_| {
@@ -155,6 +160,7 @@ impl Outbound for VlessOutbound {
         }
         Box::pin(dial(
             &self.cfg,
+            &self.transport,
             Command::Tcp,
             meta.target.clone(),
             meta.port,
@@ -164,9 +170,12 @@ impl Outbound for VlessOutbound {
     fn udp<'a>(&'a self, _meta: &'a Metadata) -> BoxFuture<'a, Result<Arc<dyn UdpSession>>> {
         Box::pin(async move {
             let s: Arc<dyn UdpSession> = if self.xudp {
-                Arc::new(XudpSession::start(self.cfg.clone()))
+                Arc::new(XudpSession::start(self.cfg.clone(), self.transport.clone()))
             } else {
-                Arc::new(PerDestSession::new(self.cfg.clone()))
+                Arc::new(PerDestSession::new(
+                    self.cfg.clone(),
+                    self.transport.clone(),
+                ))
             };
             Ok(s)
         })
@@ -181,7 +190,7 @@ struct XudpSession {
 }
 
 impl XudpSession {
-    fn start(cfg: Arc<VlessConfig>) -> Self {
+    fn start(cfg: Arc<VlessConfig>, transport: Arc<TransportConfig>) -> Self {
         let (tx, mut up_rx) = mpsc::channel::<Packet>(QUEUE);
         let (down_tx, down_rx) = mpsc::channel::<Packet>(QUEUE);
         // GlobalID — один на сессию: сервер закрепляет за ней внешний порт.
@@ -190,6 +199,7 @@ impl XudpSession {
         tokio::spawn(async move {
             let stream = match dial(
                 &cfg,
+                &transport,
                 Command::Mux,
                 Address::Domain(xudp::MUX_COOL_DOMAIN.into()),
                 xudp::XUDP_PORT,
@@ -301,6 +311,7 @@ type DestMap = HashMap<(Address, u16), mpsc::Sender<Vec<u8>>>;
 
 struct PerDestSession {
     cfg: Arc<VlessConfig>,
+    transport: Arc<TransportConfig>,
     dests: Mutex<DestMap>,
     down_tx: mpsc::Sender<Packet>,
     down_rx: Mutex<mpsc::Receiver<Packet>>,
@@ -308,10 +319,11 @@ struct PerDestSession {
 }
 
 impl PerDestSession {
-    fn new(cfg: Arc<VlessConfig>) -> Self {
+    fn new(cfg: Arc<VlessConfig>, transport: Arc<TransportConfig>) -> Self {
         let (down_tx, down_rx) = mpsc::channel(QUEUE);
         PerDestSession {
             cfg,
+            transport,
             dests: Mutex::new(HashMap::new()),
             down_tx,
             down_rx: Mutex::new(down_rx),
@@ -322,11 +334,12 @@ impl PerDestSession {
     fn spawn_dest(&self, addr: Address, port: u16) -> mpsc::Sender<Vec<u8>> {
         let (tx, mut rx) = mpsc::channel::<Vec<u8>>(QUEUE);
         let cfg = self.cfg.clone();
+        let transport = self.transport.clone();
         let down = self.down_tx.clone();
         let budget = self.budget.clone();
         tokio::spawn(async move {
             let session = async {
-                let stream = match dial(&cfg, Command::Udp, addr.clone(), port).await {
+                let stream = match dial(&cfg, &transport, Command::Udp, addr.clone(), port).await {
                     Ok(s) => s,
                     Err(e) => {
                         tracing::warn!(error = %e, "UDP: не удалось открыть поток");

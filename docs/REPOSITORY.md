@@ -38,7 +38,7 @@
 | `app/tun/` | TUN-потоки, маршруты, UDP и платформенная реализация WFP |
 | `connection_owner.rs` | доверенные метаданные владельца соединения от приложения-хоста |
 | `vless/`, `trojan.rs` | форматы ссылок и протоколов VLESS/Trojan, Vision, UDP, XUDP и Mux.Cool |
-| `transport/` | TCP/TLS/REALITY, WebSocket, gRPC, HTTPUpgrade, XHTTP, QUIC/DoQ/HTTP/3, пулы HTTP/2, фрагментация и имитация браузера |
+| `transport/` | независимая `TransportConfig`; TCP/TLS/REALITY, WebSocket, gRPC, HTTPUpgrade, XHTTP, QUIC/DoQ/HTTP/3, пулы HTTP/2, фрагментация и имитация браузера |
 | `reality/`, `fingerprint/` | рукопожатие и проверка REALITY; профили ClientHello, захват, JA3/JA4 |
 | `socks5/`, `relay.rs`, `http1.rs` | протокольный framing, двусторонний relay и разбор ответов HTTP/1.1 |
 | `net_protect.rs`, `hostname.rs`, `fsutil.rs`, `redact.rs` | обход TUN для собственных сокетов и общие сетевые/файловые помощники с очисткой секретов |

@@ -369,12 +369,11 @@ changes elsewhere.
 
 ### 5.3. Outbounds as links
 
-`LinkBuilder` turns the fields of a `vless`/`trojan` outbound (server,
-uuid, tls, reality, transport…) into a `vless://…`/`trojan://…` link. The
-link then goes through the same parser (`VlessConfig::parse`) as a
-command-line link or a subscription server. So there is one check for all
-three sources: an unsupported `security`/`type`/`flow` gives the same
-clear error everywhere.
+`LinkBuilder` turns a `vless`/`trojan` outbound's server, credentials,
+TLS/REALITY, and transport fields into the matching link. Each link uses
+its protocol parser (`VlessConfig::parse` or `TrojanConfig::parse`); both
+get shared network and transport settings from `TransportConfig::from_url`.
+VLESS `flow` is validated separately and is not part of the Trojan model.
 
 SOCKS5 uses a separate sing-box outbound with `type: "socks"` and requires
 `network: "tcp"` (without it, the config enables both TCP and UDP by default).
@@ -911,9 +910,14 @@ Users of the DNS module:
 
 ## 13. Transports
 
-`transport/`. The entry points are `transport::dial(cfg, uuid, command,
-address, port)` (a VLESS session) and `transport::open(cfg)` (transport
-only, for Trojan). The transport is picked by the link's `type=`:
+`transport/`. `TransportConfig` contains only shared connection settings:
+address, network, TLS/REALITY, SNI, browser fingerprint, transport
+parameters, CA roots, and fragment settings. It has no UUID, Trojan
+password, or VLESS flow. `transport::open(&TransportConfig)` opens only the
+transport; VLESS passes its ID and flow separately through
+`transport::dial_config`. `transport::dial` remains a convenience entry
+point for the existing `VlessConfig`. The link's `type=` selects the
+implementation:
 
 | `type` | File | How |
 |---|---|---|
@@ -1063,6 +1067,8 @@ UDP packet: address | port | length(2) | CRLF | data
 
 - The server sends no response; data follows immediately.
 - Transports and TLS/REALITY are the same as for VLESS.
+- `TrojanConfig` stores a `TransportConfig`; its password remains in the
+  Trojan model, and parsing no longer creates a placeholder VLESS UUID.
 
 ## 15. REALITY and TLS fingerprints
 

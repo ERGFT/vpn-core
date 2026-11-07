@@ -353,12 +353,12 @@ SOCKS5 не может оказаться TLS-настройки HTTP CONNECT, �
 
 ### 5.3. Выходы как ссылки
 
-Поля выхода `vless`/`trojan` (сервер, uuid, tls, reality, transport…)
-`LinkBuilder` собирает в ссылку `vless://…`/`trojan://…`, которая
-проходит тот же разбор (`VlessConfig::parse`), что ссылка из командной
-строки и серверы из подписок. Одна проверка на все три источника:
-неподдерживаемый `security`/`type`/`flow` — одна и та же понятная
-ошибка.
+Поля выхода `vless`/`trojan` (сервер, credentials, tls, reality,
+transport…) `LinkBuilder` собирает в соответствующую ссылку. Каждая ссылка
+проходит свой протокольный разбор (`VlessConfig::parse` или
+`TrojanConfig::parse`); общие сетевые и транспортные параметры обоим
+разборам предоставляет `TransportConfig::from_url`. Настройки VLESS `flow`
+проверяются отдельно и не попадают в модель Trojan.
 
 SOCKS5 задаётся отдельным sing-box выходом `type: "socks"` с обязательным
 `network: "tcp"` (без него конфиг по умолчанию включает TCP и UDP). На этой
@@ -860,9 +860,13 @@ SOCKS5 задаётся отдельным sing-box выходом `type: "socks
 
 ## 13. Транспорты
 
-`transport/`. Вход — `transport::dial(cfg, uuid, команда, адрес, порт)`
-(VLESS-сессия) или `transport::open(cfg)` (только транспорт — для Trojan).
-Выбор по `type=` ссылки:
+`transport/`. `TransportConfig` хранит только общие параметры соединения:
+адрес, сеть, TLS/REALITY, SNI, отпечаток браузера, параметры транспорта,
+корневые сертификаты и fragment. В нём нет UUID, пароля Trojan или VLESS
+flow. `transport::open(&TransportConfig)` открывает только транспорт; VLESS
+отдельно передаёт идентификатор и flow через `transport::dial_config`.
+`transport::dial` остаётся удобной точкой входа для существующего
+`VlessConfig`. Выбор реализации идёт по `type=` ссылки:
 
 | `type` | Файл | Как |
 |---|---|---|
@@ -1005,6 +1009,8 @@ UDP-пакет: адрес | порт | длина(2) | CRLF | данные
 
 - Ответа у сервера нет, дальше сразу идут данные.
 - Транспорты и TLS/REALITY — те же, что у VLESS.
+- `TrojanConfig` хранит `TransportConfig`; пароль остаётся в модели Trojan,
+  а разбор ссылки больше не создаёт фиктивный VLESS UUID.
 
 ## 15. REALITY и TLS-отпечатки
 

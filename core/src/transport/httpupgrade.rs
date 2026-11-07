@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! Транспорт `type=httpupgrade` (Xray-core, `transport/internet/httpupgrade`):
+//! Общий транспорт `type=httpupgrade` (Xray-core, `transport/internet/httpupgrade`):
 //! обычный HTTP/1.1-запрос Upgrade, как у WebSocket, но после ответа
 //! `101 Switching Protocols` данные идут по соединению как есть — без
 //! кадров WebSocket. Дешевле ws по накладным расходам и так же проходит
@@ -20,8 +20,8 @@ use uuid::Uuid;
 use crate::error::{Error, Result};
 use crate::transport::browser_headers::Variant;
 use crate::transport::tcp_tls::{connect_tls_by_security, SecureStream};
+use crate::transport::TransportConfig;
 use crate::vless::protocol::{vless_connect, Address, Command, VlessStream};
-use crate::vless::VlessConfig;
 
 /// Потолок на размер заголовков ответа — защита от сервера, который шлёт
 /// бесконечный ответ вместо 101.
@@ -144,7 +144,7 @@ pub fn parse_response(buf: &[u8]) -> Result<Option<usize>> {
 }
 
 /// Поднять TCP (+TLS или REALITY) и выполнить HTTP Upgrade.
-pub async fn connect_httpupgrade(cfg: &VlessConfig) -> Result<HttpUpgradeVlessStream> {
+pub async fn connect_httpupgrade(cfg: &TransportConfig) -> Result<HttpUpgradeVlessStream> {
     // Как Xray: ALPN для httpupgrade — http/1.1 (`WithNextProto("http/1.1")`).
     let alpn = cfg.alpn().unwrap_or_else(|| vec![b"http/1.1".to_vec()]);
     let mut stream = connect_tls_by_security(cfg, alpn).await?;
@@ -190,14 +190,13 @@ pub async fn connect_httpupgrade(cfg: &VlessConfig) -> Result<HttpUpgradeVlessSt
 }
 
 /// Полное открытие соединения: транспорт + заголовок VLESS.
-pub async fn connect_command_httpupgrade(
-    cfg: &VlessConfig,
+pub async fn connect_command_httpupgrade_config(
+    cfg: &TransportConfig,
     id: &Uuid,
     command: Command,
     target: Address,
     target_port: u16,
 ) -> Result<VlessStream<HttpUpgradeVlessStream>> {
-    cfg.ensure_flow_supported()?;
     let stream = connect_httpupgrade(cfg).await?;
     vless_connect(stream, id, command, &target, target_port).await
 }
