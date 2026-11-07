@@ -109,10 +109,8 @@ pub(crate) async fn connect(config: &Hysteria2Config) -> Result<Hysteria2Connect
                 }
             };
         let driver = tokio::spawn(async move {
-            let result = std::future::poll_fn(|cx| h3_connection.poll_close(cx)).await;
-            if let Err(error) = result {
-                tracing::debug!(error = %error, "Hysteria 2: HTTP/3 connection closed");
-            }
+            let error = std::future::poll_fn(|cx| h3_connection.poll_close(cx)).await;
+            tracing::debug!(error = %error, "Hysteria 2: HTTP/3 connection closed");
         });
 
         let authenticated = tokio::time::timeout(AUTH_TIMEOUT, async {
@@ -208,7 +206,7 @@ async fn authenticate(
     };
 
     let mut received = 0usize;
-    while let Some(mut chunk) = stream.recv_data().await.map_err(|error| {
+    while let Some(chunk) = stream.recv_data().await.map_err(|error| {
         Error::Protocol(format!("Hysteria 2: auth response body failed: {error}"))
     })? {
         received = received.saturating_add(chunk.remaining());
