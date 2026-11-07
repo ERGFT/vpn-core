@@ -38,6 +38,7 @@ pub mod fsutil;
 pub mod hostname;
 pub mod http1;
 pub mod hysteria2;
+pub(crate) mod hysteria2_obfs;
 #[allow(
     dead_code,
     reason = "Hysteria transport is implemented in stages before production factory wiring"

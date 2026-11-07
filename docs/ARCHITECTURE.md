@@ -959,6 +959,17 @@ flow. `transport::open(&TransportConfig)` открывает только тра
   - нужен для xhttp через HTTP/3 и DoQ;
   - сокет — настоящий UDP (с `net_protect`) или UDP-сессия выхода, то
     есть QUIC может идти через VLESS.
+- **Hysteria 2** (`hysteria2_transport.rs`, `hysteria2_udp.rs`, `hysteria2_obfs.rs`):
+  - отдельные QUIC/auth, TCP stream и UDP datagram слои; production factory
+    пока не подключена, а PR #189–#192 остаются открытыми;
+  - Stage 6.1 добавляет Salamander socket wrapper: каждый QUIC UDP packet
+    получает 8-byte salt и BLAKE2b-256 mask; PSK короче 4 UTF-8 байт
+    отклоняется для совместимости с официальной реализацией, короткие и
+    salt-only кадры отбрасываются. UDP payload
+    budget уменьшается на размер соли. Wrapper использует Tokio UDP без
+    GSO/ECN; все 15 обязательных CI checks прошли на head `9a1c1da`
+    (runs #42378078167 и #42378077596), publish штатно пропущен;
+    interop и производительность ещё не измерялись.
 
 ## 14. Протоколы: VLESS, Vision, XUDP, Mux.Cool, Trojan
 

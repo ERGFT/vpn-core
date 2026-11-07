@@ -33,6 +33,7 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 clap = { version = "4", features = ["derive", "env"] }
 rand = "0.10"
+blake2b_simd = "1"
 regex = "1"
 yaml_serde = "0.10"
 hickory-proto = { version = "0.26", default-features = false, features = ["std"] }
