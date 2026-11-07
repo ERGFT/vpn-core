@@ -834,7 +834,7 @@ pub(crate) fn salamander_endpoint(ipv6: bool, key: &[u8]) -> Result<quinn::Endpo
     let sock = crate::net_protect::udp_bind(bind)?.into_std()?;
     sock.set_nonblocking(true)?;
     let sock = tokio::net::UdpSocket::from_std(sock)?;
-    let socket = SalamanderSocket::new(sock, key);
+    let socket = SalamanderSocket::new(Arc::new(PlainSocket(sock)), key);
     Ok(quinn::Endpoint::new_with_abstract_socket(
         quinn::EndpointConfig::default(),
         None,
