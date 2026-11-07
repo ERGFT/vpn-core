@@ -35,9 +35,9 @@ use tokio::net::{TcpListener, TcpStream, UdpSocket};
 use tokio_rustls::{TlsAcceptor, TlsConnector};
 use x25519_dalek::{PublicKey, StaticSecret};
 
-use reality_core::app::outbound::{Outbound, UdpSession};
+use reality_core::app::outbound::Outbound;
 use reality_core::app::shadowsocks_out::ShadowsocksOutbound;
-use reality_core::app::{Metadata, Network};
+use reality_core::app::Network;
 use reality_core::transport::tcp_tls::{
     connect_and_handshake, connect_command_config, ensure_crypto_provider,
 };
