@@ -426,6 +426,21 @@ impl Outbound for Group {
         }
     }
 
+    fn capabilities(&self) -> super::outbound::OutboundCapabilities {
+        let members = self.members();
+        super::outbound::OutboundCapabilities {
+            tcp: super::outbound::OutboundCapabilities::any_member(
+                members.iter().map(|m| m.out.capabilities().tcp),
+            ),
+            udp: super::outbound::OutboundCapabilities::any_member(
+                members.iter().map(|m| m.out.capabilities().udp),
+            ),
+            // Groups are deliberately excluded as detour targets by config
+            // validation; a changing member set cannot promise a stable chain.
+            tcp_detour: Some(false),
+        }
+    }
+
     fn connect<'a>(&'a self, meta: &'a Metadata) -> BoxFuture<'a, Result<Box<dyn AsyncStream>>> {
         Box::pin(self.try_members(meta, |m, meta| {
             Box::pin(async move { m.out.connect(meta).await })

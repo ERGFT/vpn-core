@@ -150,10 +150,12 @@ mod tests {
         let socks = build_proxy(&config.outbounds[0], &detour_slots).unwrap();
         assert_eq!(socks.tag(), "socks");
         assert_eq!(socks.server(), Some(("127.0.0.1".into(), 1080)));
+        assert_eq!(socks.capabilities(), outbound::OutboundCapabilities::TCP);
 
         let http = build_proxy(&config.outbounds[1], &detour_slots).unwrap();
         assert_eq!(http.tag(), "http");
         assert_eq!(http.server(), Some(("proxy.example".into(), 8080)));
+        assert_eq!(http.capabilities(), outbound::OutboundCapabilities::TCP);
     }
 
     #[test]
