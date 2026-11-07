@@ -1,7 +1,7 @@
 # Hysteria 2 Integration Plan
 
-**Status:** Stage 1 has started: URI model and parsing; a working Hysteria 2 outbound is not available yet.
-**Code snapshot:** `main`, commit `b7fb39b` (PR #186).
+**Status:** Stage 1 is complete (PR #187); Stage 2 has started: URI and sing-box adapters. A working Hysteria 2 outbound is not available yet.
+**Code snapshot:** `main`, commit `aa8dab6` (PR #187).
 **Scope:** client proxy outbound in the existing core only.
 
 ## Architectural decision
@@ -29,7 +29,7 @@ Out of scope for `vpn-core`: Hysteria's local SOCKS/HTTP listeners, server-side 
 ## Small PR sequence
 
 1. **Model and URI parsing.** Typed `Hysteria2Config`, secret redaction, strict validation of `hysteria2://`/`hy2://`, SNI/TLS, Salamander/Gecko, and multi-port addresses. This layer does not create a working connection and must not be presented as outbound support.
-2. **Input formats.** Explicit conversion for applicable sing-box outbounds and URI subscriptions. If runtime support is unavailable, return a specific error or skip with an accurate count; do not add the type to the production factory before the transport is ready.
+2. **Input formats.** Explicit conversion for applicable sing-box outbounds and URI subscriptions. Adapters preserve only fields representable in the URI and count entries with unsupported options separately; recognized Hysteria 2 entries are skipped with a separate exact count because runtime support is unavailable. Do not add the type to the production factory before the transport is ready.
 3. **QUIC and authentication.** Shared endpoint/connection owner, ALPN, TLS validation (insecure disabled by default), HTTP/3 auth, status 233, rate negotiation, timeouts, and task cancellation. Do not change existing DNS/XHTTP `quinn`/`h3` behavior.
 4. **TCP relay and shutdown.** TCPRequest/Response codec, stream forwarding, concurrent streams, cancellation on either side closing and when `Running` stops.
 5. **UDP relay.** Datagram codec, per-association IDs, packet-ID wrap handling, bounded-memory fragmentation/reassembly, queues, and idle cleanup. Never retain unbounded state based on server traffic.
@@ -50,6 +50,10 @@ Full Hysteria 2 status requires codec/config tests plus interop with a pinned ve
 - single link and subscription import, groups/failover, and configuration reload;
 - regular CI: fmt, clippy, workspace tests, coverage, Linux interop/TUN, Windows, Android/iOS builds, MSRV, audit, and secrets; preserve Rust/C ABI compatibility.
 
+## Current progress
+
+PR #187 added the typed model and strict URI parser and was merged into `main` as [`aa8dab6`](https://github.com/ERGFT/vpn-core/commit/aa8dab644b19cd5e3641d53e62408c705e6c6b5a); all 8 CI groups passed. Stage 2 is adding URI-subscription parsing and conservative sing-box conversion. Entries can be parsed and validated, but subscriptions currently skip them with a separate count; a regular sing-box config returns the precise reason that runtime support is not ready. No working outbound is created. Local Rust tests on this Windows host are limited by the missing MSVC linker `link.exe`, so merge decisions rely on Linux/Windows CI.
+
 An external Android phone is not needed for parser/codec development or local interop. It will help with the final device-level Android VPN/TUN run, Wi-Fi↔cellular handover, and wake-from-sleep recovery; an Android cross-build alone does not prove that behavior.
 
 ## Sources
@@ -58,4 +62,5 @@ An external Android phone is not needed for parser/codec development or local in
 - [Hysteria 2 protocol specification](https://v2.hysteria.network/docs/developers/Protocol/)
 - [Hysteria 2 full client configuration](https://v2.hysteria.network/docs/advanced/Full-Client-Config/)
 - [Hysteria 2 changelog](https://v2.hysteria.network/docs/Changelog/)
+- [sing-box Hysteria2 outbound](https://sing-box.sagernet.org/configuration/outbound/hysteria2/)
 - [Quinn congestion control API](https://docs.rs/quinn/latest/quinn/congestion/index.html)

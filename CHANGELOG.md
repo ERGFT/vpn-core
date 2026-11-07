@@ -8,6 +8,9 @@
 
 ## [Не выпущено]
 
+### Hysteria 2
+- Добавлены разбор URI Hysteria 2 в подписках и консервативный адаптер ограниченного подмножества sing-box JSON. Записи с непредставимыми опциями учитываются отдельно; runtime outbound ещё не реализован, поэтому подписки пропускают распознанные записи, а обычный sing-box конфиг сообщает об этом явно.
+
 ### SDK и C ABI
 - Добавлены manifest архива с SHA-256 каждого файла и сведениями о сборке,
   переносимые CMake/pkg-config metadata и native link arguments для статической
@@ -254,6 +257,9 @@ and the project follows [SemVer](https://semver.org/). The detailed
 stage-by-stage decision history is in [PLAN.md](PLAN.md) (in Russian).
 
 ## [Unreleased]
+
+### Hysteria 2
+- Added Hysteria 2 URI parsing in subscriptions and a conservative adapter for a limited sing-box JSON subset. Entries with unrepresentable options are counted separately; the runtime outbound is not implemented, so subscriptions skip recognized entries and regular sing-box configs report this explicitly.
 
 ### SDK and C ABI
 - SDK archives now include a per-file SHA-256 manifest and build metadata,

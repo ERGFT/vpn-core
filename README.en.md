@@ -117,6 +117,7 @@ from an extracted ZIP. Public headers and examples are in [`ffi/`](ffi/).
 | Experimental | `fragment`, `noises`, and application routing integration |
 | Not supported | KCP transport; ICMP/ping through TUN |
 Importing an Xray-core or sing-box config does not imply support for every option in those formats.
+Hysteria 2 URIs can be validated and recognized in subscriptions, but a working Hysteria 2 outbound is not supported yet.
 
 The [feature matrix](docs/FEATURES.en.md) lists capabilities, maturity, and specific checks. Scenarios and test results are documented in the [testing guide](docs/TESTING.en.md).
 

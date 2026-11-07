@@ -1,7 +1,7 @@
 # План интеграции Hysteria 2
 
-**Статус:** начат этап 1 — модель и разбор URI; рабочий Hysteria 2 outbound пока отсутствует.
-**Срез кода:** `main`, commit `b7fb39b` (PR #186).
+**Статус:** этап 1 завершён (PR #187); начат этап 2 — адаптеры URI и sing-box; рабочий Hysteria 2 outbound пока отсутствует.
+**Срез кода:** `main`, commit `aa8dab6` (PR #187).
 **Область:** только клиентский прокси-выход в существующем ядре.
 
 ## Решение по архитектуре
@@ -29,7 +29,7 @@ Hysteria 2 — QUIC-протокол с TCP-потоками и UDP datagrams. �
 ## План небольших PR
 
 1. **Модель и разбор URI.** Типизированный `Hysteria2Config`, маскирование секретов, строгая валидация `hysteria2://`/`hy2://`, SNI/TLS, Salamander/Gecko и multi-port. Этот слой не создаёт рабочее соединение и не должен заявляться как поддержка outbound.
-2. **Входные форматы.** Явное преобразование применимых sing-box outbound и URI-подписок. Неподдерживаемый runtime должен выдавать конкретную ошибку или пропускаться с точным счётчиком; не включать тип в производственный factory до готовности транспорта.
+2. **Входные форматы.** Явное преобразование применимых sing-box outbound и URI-подписок. Адаптеры сохраняют только URI-представимые поля и считают записи с неподдержанными опциями отдельно; распознанные Hysteria 2 записи пропускаются с отдельным точным счётчиком, поскольку runtime отсутствует. Не включать тип в производственный factory до готовности транспорта.
 3. **QUIC и аутентификация.** Общий owner endpoint/connection, ALPN, TLS validation (без insecure по умолчанию), HTTP/3 auth, статус 233, rate negotiation, timeout и отмена задач. Не менять поведение уже существующих DNS/XHTTP клиентов `quinn`/`h3`.
 4. **TCP relay и закрытие.** TCPRequest/Response codec, передача потока, одновременные потоки, отмена при закрытии стороны и при остановке `Running`.
 5. **UDP relay.** Datagram codec, per-association IDs, packet ID wrap handling, фрагментация/сборка с пределами памяти, очереди и idle cleanup. Никакого неограниченного состояния на данных сервера.
@@ -50,6 +50,10 @@ Hysteria 2 — QUIC-протокол с TCP-потоками и UDP datagrams. �
 - одиночную ссылку и подписку, группу/переключение, конфигурационный reload;
 - обычные CI: fmt, clippy, workspace tests, coverage, Linux interop/TUN, Windows, Android/iOS build, MSRV, audit и secrets; Rust/C ABI остаётся совместимым.
 
+## Текущее продвижение
+
+PR #187 добавил типизированную модель и строгий URI parser и объединён в `main` как [`aa8dab6`](https://github.com/ERGFT/vpn-core/commit/aa8dab644b19cd5e3641d53e62408c705e6c6b5a); все 8 групп CI прошли. Этап 2 добавляет URI-подписки и консервативное преобразование sing-box. Записи можно разобрать и проверить, но подписка пока пропускает их с отдельным счётчиком; обычный sing-box конфиг сообщает точную причину, что runtime ещё не готов. Рабочий выход не создаётся. Локальный Windows запуск Rust-тестов ограничен отсутствующим MSVC linker `link.exe`, поэтому решение о слиянии опирается на Linux/Windows CI.
+
 Внешний Android-телефон не требуется для разработки parser/codec и локального interop. Он станет полезен для финального device-level прогона Android VPN/TUN, Wi-Fi↔cellular handover и восстановления после sleep; одна Android cross-build этого поведения не доказывает.
 
 ## Источники
@@ -58,4 +62,5 @@ Hysteria 2 — QUIC-протокол с TCP-потоками и UDP datagrams. �
 - [Hysteria 2 protocol specification](https://v2.hysteria.network/docs/developers/Protocol/)
 - [Hysteria 2 full client configuration](https://v2.hysteria.network/docs/advanced/Full-Client-Config/)
 - [Hysteria 2 changelog](https://v2.hysteria.network/docs/Changelog/)
+- [sing-box Hysteria2 outbound](https://sing-box.sagernet.org/configuration/outbound/hysteria2/)
 - [Quinn congestion control API](https://docs.rs/quinn/latest/quinn/congestion/index.html)
