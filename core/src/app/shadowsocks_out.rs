@@ -7,7 +7,7 @@ use std::time::Duration;
 
 use futures_util::future::BoxFuture;
 use shadowsocks::config::{ServerAddr, ServerConfig, ServerType};
-use shadowsocks::context::SharedContext;
+use shadowsocks::context::{Context, SharedContext};
 use shadowsocks::relay::socks5::Address as ShadowsocksAddress;
 use shadowsocks::relay::udprelay::proxy_socket::{ProxySocket, UdpSocketType};
 use shadowsocks::relay::udprelay::{DatagramReceive, DatagramSend, DatagramSocket};
@@ -43,7 +43,7 @@ impl ShadowsocksOutbound {
         Ok(Self {
             tag: tag.into(),
             config: Arc::new(config),
-            context: SharedContext::new_shared(ServerType::Local),
+            context: Context::new_shared(ServerType::Local),
         })
     }
 
@@ -229,7 +229,8 @@ impl ShadowsocksUdp {
                             received = socket.recv(&mut buffer) => {
                                 match received {
                                     Ok((len, source, _)) => {
-                                        let packet = (from_shadowsocks_address(source)?, buffer[..len].to_vec());
+                                        let (dst, port) = from_shadowsocks_address(source)?;
+                                        let packet = (dst, port, buffer[..len].to_vec());
                                         match down_tx.try_send(packet) {
                                             Ok(()) | Err(mpsc::error::TrySendError::Full(_)) => Ok(false),
                                             Err(mpsc::error::TrySendError::Closed(_)) => Ok(true),

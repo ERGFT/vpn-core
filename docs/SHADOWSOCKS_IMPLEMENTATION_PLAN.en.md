@@ -8,8 +8,9 @@ the other.
 
 ## Current state: classic AEAD
 
-The implementation is on branch `codex/shadowsocks-aead-outbound`; no PR or CI
-run exists for this change yet. The table describes branch code, not completed
+The implementation is in [PR #204](https://github.com/ERGFT/vpn-core/pull/204)
+from branch `codex/shadowsocks-aead-outbound`. CI is running; see the PR for its
+results and implementation limits. The table describes PR code, not completed
 or released support.
 
 | Area | Branch implementation | Verification/limit |
