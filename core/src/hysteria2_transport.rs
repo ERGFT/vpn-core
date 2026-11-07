@@ -156,7 +156,7 @@ pub(crate) async fn connect(config: &Hysteria2Config) -> Result<Hysteria2Connect
         .ok_or_else(|| Error::Config("Hysteria 2: не задан порт сервера".into()))?;
     let addrs = tcp_tls::resolve_server(&config.server, port).await?;
     let tls_name = config.sni.as_deref().unwrap_or(&config.server);
-    let client_config = quic::client_config(None, vec![b"h3".to_vec()])?;
+    let client_config = quic::hysteria2_client_config(None, vec![b"h3".to_vec()])?;
     let mut last_error = None;
 
     for addr in addrs {
