@@ -17,6 +17,7 @@ use tokio::{
 
 use crate::error::{Error, Result};
 use crate::hysteria2::{Hysteria2Config, Obfuscation};
+use crate::hysteria2_obfs::SALAMANDER_OVERHEAD;
 use crate::hysteria2_udp::UdpDatagramMux;
 use crate::transport::{quic, tcp_tls, AsyncStream};
 use crate::vless::Address;
@@ -140,8 +141,8 @@ fn allocate_udp_session_id(next: &AtomicU64) -> Result<u32> {
 }
 
 /// Connect securely to a single-port Hysteria 2 server and authenticate it.
-/// Advanced TLS, port hopping, and obfuscation options are rejected until
-/// their dedicated transport stages are implemented.
+/// Salamander packet obfuscation is supported; other advanced options remain
+/// rejected until their dedicated transport stages are implemented.
 #[allow(
     dead_code,
     reason = "wired into the production outbound in a later stage"
@@ -159,7 +160,12 @@ pub(crate) async fn connect(config: &Hysteria2Config) -> Result<Hysteria2Connect
     let mut last_error = None;
 
     for addr in addrs {
-        let endpoint = quic::direct_endpoint(addr.is_ipv6())?;
+        let endpoint = match config.obfuscation.as_ref() {
+            Some(Obfuscation::Salamander { password }) => {
+                quic::salamander_endpoint(addr.is_ipv6(), password.as_bytes())?
+            }
+            _ => quic::direct_endpoint(addr.is_ipv6())?,
+        };
         let connecting = endpoint
             .connect_with(client_config.clone(), addr, tls_name)
             .map_err(|error| quic::connect_error("Hysteria 2", error))?;
@@ -213,7 +219,15 @@ pub(crate) async fn connect(config: &Hysteria2Config) -> Result<Hysteria2Connect
             }
         };
 
-        let udp_mux = UdpDatagramMux::new(connection.clone());
+        let datagram_overhead = if matches!(
+            config.obfuscation.as_ref(),
+            Some(Obfuscation::Salamander { .. })
+        ) {
+            SALAMANDER_OVERHEAD
+        } else {
+            0
+        };
+        let udp_mux = UdpDatagramMux::new(connection.clone(), datagram_overhead);
         let udp_driver = udp_mux.clone().spawn();
         return Ok(Hysteria2Connection {
             _endpoint: endpoint,
@@ -250,11 +264,6 @@ fn validate_supported_options(config: &Hysteria2Config) -> Result<()> {
     }
     if config.ech.is_some() {
         return Err(Error::Config("Hysteria 2: ECH is not supported yet".into()));
-    }
-    if matches!(config.obfuscation, Some(Obfuscation::Salamander { .. })) {
-        return Err(Error::Config(
-            "Hysteria 2: Salamander obfuscation is not supported yet".into(),
-        ));
     }
     if matches!(config.obfuscation, Some(Obfuscation::Gecko { .. })) {
         return Err(Error::Config(
@@ -589,7 +598,6 @@ mod tests {
             "hy2://secret@example.com:443?sni=front.example&insecure=1",
             "hy2://secret@example.com:443?pinSHA256=abcd",
             "hy2://secret@example.com:443?ech=YWJj",
-            "hy2://secret@example.com:443?obfs=salamander&obfs-password=secret",
             "hy2://secret@example.com:443?obfs=gecko&obfs-password=secret",
         ] {
             let config = Hysteria2Config::parse(uri).unwrap();
@@ -598,6 +606,11 @@ mod tests {
         let secure =
             Hysteria2Config::parse("hy2://secret@example.com:443?sni=front.example").unwrap();
         assert!(validate_supported_options(&secure).is_ok());
+        let salamander = Hysteria2Config::parse(
+            "hy2://secret@example.com:443?obfs=salamander&obfs-password=secret",
+        )
+        .unwrap();
+        assert!(validate_supported_options(&salamander).is_ok());
     }
 
     #[test]

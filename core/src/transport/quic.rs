@@ -22,6 +22,7 @@ use tokio::sync::mpsc;
 
 use crate::app::outbound::UdpSession;
 use crate::error::{Error, Result};
+use crate::hysteria2_obfs::{salamander_unwrap, salamander_wrap};
 use crate::vless::Address;
 
 /// Настройки клиента QUIC: проверка сертификата по `roots` (или по
@@ -150,6 +151,133 @@ impl AsyncUdpSocket for PlainSocket {
     fn local_addr(&self) -> io::Result<SocketAddr> {
         self.0.local_addr()
     }
+}
+
+/// QUIC socket wrapper that applies the Hysteria 2 Salamander packet format.
+pub(crate) struct SalamanderSocket {
+    inner: Arc<PlainSocket>,
+    key: Arc<[u8]>,
+}
+
+impl fmt::Debug for SalamanderSocket {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("SalamanderSocket")
+            .field("inner", &self.inner)
+            .field("key", &crate::redact::Redacted)
+            .finish()
+    }
+}
+
+impl SalamanderSocket {
+    fn new(sock: tokio::net::UdpSocket, key: &[u8]) -> Arc<Self> {
+        Arc::new(Self {
+            inner: Arc::new(PlainSocket(sock)),
+            key: Arc::from(key),
+        })
+    }
+}
+
+impl AsyncUdpSocket for SalamanderSocket {
+    fn create_io_poller(self: Arc<Self>) -> Pin<Box<dyn UdpPoller>> {
+        self.inner.clone().create_io_poller()
+    }
+
+    fn try_send(&self, transmit: &Transmit) -> io::Result<()> {
+        let send_one = |payload: &[u8]| {
+            let frame = salamander_wrap(&self.key, payload);
+            self.inner.try_send(&Transmit {
+                destination: transmit.destination,
+                ecn: transmit.ecn,
+                contents: &frame,
+                segment_size: None,
+                src_ip: transmit.src_ip,
+            })
+        };
+        match transmit.segment_size {
+            Some(segment_size) if segment_size < transmit.contents.len() => {
+                if segment_size == 0 {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidInput,
+                        "QUIC provided a zero-sized UDP segment",
+                    ));
+                }
+                for packet in transmit.contents.chunks(segment_size) {
+                    send_one(packet)?;
+                }
+                Ok(())
+            }
+            _ => send_one(transmit.contents),
+        }
+    }
+
+    fn poll_recv(
+        &self,
+        cx: &mut Context,
+        bufs: &mut [IoSliceMut<'_>],
+        meta: &mut [RecvMeta],
+    ) -> Poll<io::Result<usize>> {
+        loop {
+            let received = std::task::ready!(self.inner.poll_recv(cx, bufs, meta))?;
+            if received == 0 {
+                return Poll::Ready(Ok(0));
+            }
+            let meta = meta.first_mut().ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "QUIC did not provide receive metadata",
+                )
+            })?;
+            let packet = bufs.first_mut().ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "QUIC did not provide a receive buffer",
+                )
+            })?;
+            let packet = packet.get_mut(..meta.len).ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "UDP datagram length exceeds its receive buffer",
+                )
+            })?;
+            match salamander_unwrap(&self.key, packet) {
+                Ok(len) => {
+                    meta.len = len;
+                    meta.stride = len;
+                    return Poll::Ready(Ok(1));
+                }
+                // Salamander has no authentication tag. QUIC rejects packets
+                // produced with the wrong key; malformed short frames are dropped.
+                Err(_) => continue,
+            }
+        }
+    }
+
+    fn local_addr(&self) -> io::Result<SocketAddr> {
+        self.inner.local_addr()
+    }
+
+    fn max_transmit_segments(&self) -> usize {
+        1
+    }
+}
+
+/// QUIC endpoint that wraps each UDP packet in Hysteria 2 Salamander framing.
+pub(crate) fn salamander_endpoint(ipv6: bool, key: &[u8]) -> Result<quinn::Endpoint> {
+    let bind = if ipv6 {
+        SocketAddr::from((std::net::Ipv6Addr::UNSPECIFIED, 0))
+    } else {
+        SocketAddr::from((Ipv4Addr::UNSPECIFIED, 0))
+    };
+    let sock = crate::net_protect::udp_bind(bind)?.into_std()?;
+    sock.set_nonblocking(true)?;
+    let sock = tokio::net::UdpSocket::from_std(sock)?;
+    let socket = SalamanderSocket::new(sock, key);
+    Ok(quinn::Endpoint::new_with_abstract_socket(
+        quinn::EndpointConfig::default(),
+        None,
+        socket,
+        Arc::new(quinn::TokioRuntime),
+    )?)
 }
 
 /// Точка QUIC поверх UDP-сессии выхода. Все пакеты уходят на

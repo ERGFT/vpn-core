@@ -1015,6 +1015,13 @@ implementation:
   - used for xhttp over HTTP/3 and for DoQ;
   - the socket is a real UDP socket (with `net_protect`) or an outbound's
     UDP session, so QUIC can run over VLESS.
+- **Hysteria 2** (`hysteria2_transport.rs`, `hysteria2_udp.rs`, `hysteria2_obfs.rs`):
+  - separate QUIC/authentication, TCP stream, and UDP datagram layers; the
+    production factory is not wired, and PRs #189–#192 remain open;
+  - Stage 6.1 adds a Salamander socket wrapper: each QUIC UDP packet receives
+    an 8-byte salt and BLAKE2b-256 mask. The UDP payload budget is reduced by
+    the salt length. The wrapper uses Tokio UDP without GSO/ECN; interoperability
+    and performance have not been measured.
 
 ## 14. Protocols: VLESS, Vision, XUDP, Mux.Cool, Trojan
 

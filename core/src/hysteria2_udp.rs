@@ -176,14 +176,16 @@ impl Reassembler {
 /// One QUIC datagram reader demultiplexes replies to bounded per-association queues.
 pub(crate) struct UdpDatagramMux {
     connection: Connection,
+    datagram_overhead: usize,
     routes: Mutex<HashMap<u32, mpsc::Sender<Packet>>>,
     reassembler: StdMutex<Reassembler>,
 }
 
 impl UdpDatagramMux {
-    pub(crate) fn new(connection: Connection) -> Arc<Self> {
+    pub(crate) fn new(connection: Connection, datagram_overhead: usize) -> Arc<Self> {
         Arc::new(Self {
             connection,
+            datagram_overhead,
             routes: Mutex::new(HashMap::new()),
             reassembler: StdMutex::new(Reassembler::default()),
         })
@@ -213,6 +215,7 @@ impl UdpDatagramMux {
         Ok(Arc::new(Hysteria2UdpSession {
             connection: self.connection.clone(),
             mux: self.clone(),
+            datagram_overhead: self.datagram_overhead,
             session_id,
             next_packet_id: std::sync::atomic::AtomicU16::new(0),
             last_activity: StdMutex::new(Instant::now()),
@@ -286,6 +289,7 @@ impl UdpDatagramMux {
 struct Hysteria2UdpSession {
     connection: Connection,
     mux: Arc<UdpDatagramMux>,
+    datagram_overhead: usize,
     session_id: u32,
     next_packet_id: std::sync::atomic::AtomicU16,
     last_activity: StdMutex<Instant>,
@@ -304,6 +308,13 @@ impl UdpSession for Hysteria2UdpSession {
             let max_wire = self.connection.max_datagram_size().ok_or_else(|| {
                 Error::Protocol("Hysteria 2: QUIC datagrams are no longer available".into())
             })?;
+            let max_wire = max_wire
+                .checked_sub(self.datagram_overhead)
+                .ok_or_else(|| {
+                    Error::Protocol(
+                        "Hysteria 2: obfuscation overhead exceeds QUIC datagram limit".into(),
+                    )
+                })?;
             let frames =
                 encode_udp_fragments(self.session_id, packet_id, &dst, port, &data, max_wire)?;
             *self
