@@ -8,22 +8,6 @@ use std::str::FromStr;
 
 use crate::error::{Error, Result};
 
-/// Enforce the classic protocol's modern AEAD-only profile and reject
-/// optional plugin layers until their process and UDP semantics are wired in.
-pub(crate) fn validate_classic(config: &shadowsocks::config::ServerConfig) -> Result<()> {
-    validate_plugin(config)?;
-    let method = config.method().to_string();
-    if matches!(
-        method.as_str(),
-        "aes-128-gcm" | "aes-256-gcm" | "chacha20-ietf-poly1305"
-    ) {
-        return Ok(());
-    }
-    Err(Error::Config(format!(
-        "shadowsocks: method «{method}» is deprecated or belongs to Shadowsocks 2022"
-    )))
-}
-
 pub(crate) fn validate_supported(config: &shadowsocks::config::ServerConfig) -> Result<()> {
     validate_plugin(config)?;
     let method = config.method().to_string();
@@ -139,7 +123,6 @@ mod tests {
             let parsed = shadowsocks::config::ServerConfig::from_url(&uri).unwrap();
             assert_eq!(parsed.method().to_string(), method);
             validate_supported(&parsed).unwrap();
-            assert!(validate_classic(&parsed).is_err());
         }
         assert!(
             uri_from_fields("ss.example", 8388, "2022-blake3-aes-128-gcm", "c2hvcnQ=").is_err()
