@@ -31,6 +31,29 @@ pub fn client_config(
     roots: Option<RootCertStore>,
     alpn: Vec<Vec<u8>>,
 ) -> Result<quinn::ClientConfig> {
+    client_config_inner(roots, alpn, None)
+}
+
+/// Build a QUIC client config for Hysteria 2 with Quinn's BBR controller.
+///
+/// Hysteria uses BBR by default when no per-direction Brutal bandwidth is
+/// configured. Keep the default for the repository's other QUIC users intact.
+pub(crate) fn hysteria2_client_config(
+    roots: Option<RootCertStore>,
+    alpn: Vec<Vec<u8>>,
+) -> Result<quinn::ClientConfig> {
+    client_config_inner(
+        roots,
+        alpn,
+        Some(Arc::new(quinn::congestion::BbrConfig::default())),
+    )
+}
+
+fn client_config_inner(
+    roots: Option<RootCertStore>,
+    alpn: Vec<Vec<u8>>,
+    controller: Option<Arc<dyn quinn::congestion::ControllerFactory + Send + Sync>>,
+) -> Result<quinn::ClientConfig> {
     super::tcp_tls::ensure_crypto_provider();
     let roots = roots.unwrap_or_else(|| {
         let mut r = RootCertStore::empty();
@@ -49,6 +72,9 @@ pub fn client_config(
         .map_err(|e| Error::Protocol(format!("QUIC: TLS: {e}")))?;
     let mut cc = quinn::ClientConfig::new(Arc::new(qc));
     let mut tr = quinn::TransportConfig::default();
+    if let Some(controller) = controller {
+        tr.congestion_controller_factory(controller);
+    }
     tr.keep_alive_interval(Some(Duration::from_secs(15)));
     #[allow(
         clippy::expect_used,
