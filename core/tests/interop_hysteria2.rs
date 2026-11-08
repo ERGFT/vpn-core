@@ -163,6 +163,11 @@ async fn udp_round_trip(
 #[tokio::test]
 #[ignore = "requires the pinned official Hysteria 2 server; run scripts/interop_hysteria2.sh"]
 async fn official_server_tcp_and_udp_ipv4_ipv6_large_and_multiple_destinations() {
+    let _ = tracing_subscriber::fmt()
+        .with_test_writer()
+        .with_max_level(tracing::Level::DEBUG)
+        .try_init();
+
     let tcp_target = tcp_echo().await;
     let udp_v4 = udp_echo_v4().await;
     let udp_v6 = udp_echo_v6().await;

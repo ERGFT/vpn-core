@@ -84,6 +84,10 @@ if ! grep -q 'server up and running' "$WORK/server.log"; then
 fi
 
 cd "$ROOT"
-HYSTERIA2_PORT="$PORT" HYSTERIA2_CA_FILE="$WORK/server.crt" \
+if ! HYSTERIA2_PORT="$PORT" HYSTERIA2_CA_FILE="$WORK/server.crt" \
     cargo test --locked -p reality-core --test interop_hysteria2 \
-    -- --ignored --nocapture
+    -- --ignored --nocapture; then
+    echo "official Hysteria server log:" >&2
+    cat "$WORK/server.log" >&2
+    exit 1
+fi
