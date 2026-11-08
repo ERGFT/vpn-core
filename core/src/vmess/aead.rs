@@ -76,8 +76,7 @@ pub fn create_auth_id(command_key: &[u8; 16], timestamp: u64, random: [u8; 4]) -
     let checksum = crc32_ieee(&plain[..12]);
     plain[12..].copy_from_slice(&checksum.to_be_bytes());
 
-    let mut block =
-        Block::<Aes128>::try_from(plain.as_slice()).expect("AES block has the fixed 16-byte size");
+    let mut block = Block::<Aes128>::from(plain);
     cipher.encrypt_block(&mut block);
     block.into()
 }
@@ -110,12 +109,11 @@ pub fn seal_header(
     length_key_128.copy_from_slice(&length_key[..16]);
     let length_cipher = Aes128Gcm::new(&length_key_128.into());
     let length_bytes = (plaintext.len() as u16).to_be_bytes();
-    let length_nonce: [u8; 12] = length_nonce[..12]
-        .try_into()
-        .expect("AES-GCM nonce has the fixed 12-byte size");
+    let mut length_nonce_96 = [0u8; 12];
+    length_nonce_96.copy_from_slice(&length_nonce[..12]);
     let encrypted_length = length_cipher
         .encrypt(
-            &Nonce::from(length_nonce),
+            &Nonce::from(length_nonce_96),
             Payload {
                 msg: &length_bytes,
                 aad: auth_id,
@@ -127,12 +125,11 @@ pub fn seal_header(
     let mut payload_key_128 = [0u8; 16];
     payload_key_128.copy_from_slice(&payload_key[..16]);
     let payload_cipher = Aes128Gcm::new(&payload_key_128.into());
-    let payload_nonce: [u8; 12] = payload_nonce[..12]
-        .try_into()
-        .expect("AES-GCM nonce has the fixed 12-byte size");
+    let mut payload_nonce_96 = [0u8; 12];
+    payload_nonce_96.copy_from_slice(&payload_nonce[..12]);
     let encrypted_payload = payload_cipher
         .encrypt(
-            &Nonce::from(payload_nonce),
+            &Nonce::from(payload_nonce_96),
             Payload {
                 msg: plaintext,
                 aad: auth_id,
