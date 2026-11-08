@@ -262,18 +262,25 @@ mod tests {
         };
         let peer = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
         let peer_addr = peer.local_addr().unwrap();
-        std::future::poll_fn(|cx| socket.poll_send_ready(cx))
-            .await
-            .unwrap();
-        socket
-            .try_send(&Transmit {
-                destination: peer_addr,
-                ecn: None,
-                contents: b"initial packet",
-                segment_size: None,
-                src_ip: None,
-            })
-            .unwrap();
+        tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                match socket.try_send(&Transmit {
+                    destination: peer_addr,
+                    ecn: None,
+                    contents: b"initial packet",
+                    segment_size: None,
+                    src_ip: None,
+                }) {
+                    Ok(()) => break,
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        tokio::task::yield_now().await;
+                    }
+                    Err(error) => panic!("initial UDP send failed: {error}"),
+                }
+            }
+        })
+        .await
+        .unwrap();
         let mut peer_buffer = [0; 32];
         let (len, _) =
             tokio::time::timeout(Duration::from_secs(2), peer.recv_from(&mut peer_buffer))
