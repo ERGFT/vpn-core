@@ -21,13 +21,13 @@ fn required(name: &str) -> String {
 }
 
 async fn start_app() -> Running {
-    let port = required("HYSTERIA2_PORT");
+    let ports = required("HYSTERIA2_PORTS");
     let ca_file = serde_json::to_string(&required("HYSTERIA2_CA_FILE")).unwrap();
     let json = format!(
         r#"{{
           "inbounds": [{{"type":"socks","listen":"127.0.0.1","listen_port":0}}],
           "outbounds": [{{"type":"hysteria2","tag":"hy2",
-            "link":"hysteria2://interop-password@127.0.0.1:{port}?sni=localhost",
+            "link":"hysteria2://interop-password@127.0.0.1:{ports}?sni=localhost",
             "ca_file":{ca_file}}}],
           "route": {{"final":"hy2"}}
         }}"#
@@ -220,6 +220,42 @@ async fn official_server_tcp_and_udp_ipv4_ipv6_large_and_multiple_destinations()
     )
     .await;
     drop(control);
+
+    // The production outbound starts hopping 30 seconds after authentication.
+    // Keep the same QUIC connection alive across that interval, then verify
+    // both relay types through the server's configured port range.
+    tokio::time::sleep(Duration::from_secs(31)).await;
+    let mut hopped_tcp = TcpStream::connect(app.listen_addrs[0]).await.unwrap();
+    let (reply, _) = socks_request(&mut hopped_tcp, 1, tcp_target).await;
+    assert_eq!(reply, 0, "TCP CONNECT must survive a Hysteria port hop");
+    let hopped_message = b"hysteria2 TCP after port hop";
+    hopped_tcp.write_all(hopped_message).await.unwrap();
+    let mut hopped_echo = vec![0; hopped_message.len()];
+    tokio::time::timeout(TIMEOUT, hopped_tcp.read_exact(&mut hopped_echo))
+        .await
+        .expect("Hysteria TCP echo timed out after port hop")
+        .unwrap();
+    assert_eq!(&hopped_echo, hopped_message);
+
+    let hopped_udp = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
+    let mut hopped_control = TcpStream::connect(app.listen_addrs[0]).await.unwrap();
+    let (reply, hopped_relay) =
+        socks_request(&mut hopped_control, 3, hopped_udp.local_addr().unwrap()).await;
+    assert_eq!(
+        reply, 0,
+        "UDP ASSOCIATE must work after a Hysteria port hop"
+    );
+    let hopped_payload = b"hysteria2 UDP after port hop";
+    udp_round_trip(
+        &hopped_udp,
+        hopped_relay,
+        udp_v4,
+        hopped_payload,
+        hopped_payload,
+    )
+    .await;
+    drop(hopped_control);
+    drop(hopped_tcp);
 
     // A host-reported network transition must close existing relays and let
     // the same outbound establish a new authenticated QUIC connection.
