@@ -240,12 +240,15 @@ mod tests {
         use quinn::udp::Transmit;
         use quinn::AsyncUdpSocket;
 
+        let peer = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let peer_addr = peer.local_addr().unwrap();
+        assert_ne!(peer_addr.port(), u16::MAX);
         let state = PortHopState::new(
             vec![PortRange {
-                first: 443,
-                last: 444,
+                first: peer_addr.port(),
+                last: peer_addr.port() + 1,
             }],
-            443,
+            peer_addr.port(),
             false,
         )
         .unwrap();
@@ -260,8 +263,6 @@ mod tests {
         let socket = PortHopSocket {
             state: Arc::clone(&state),
         };
-        let peer = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
-        let peer_addr = peer.local_addr().unwrap();
         tokio::time::timeout(Duration::from_secs(2), async {
             loop {
                 match socket.try_send(&Transmit {
