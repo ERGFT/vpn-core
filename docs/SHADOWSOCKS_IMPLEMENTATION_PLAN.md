@@ -72,8 +72,10 @@ interop здесь не запускались: Windows-среде недост�
 5. Redaction покрыта общими secret-handling тестами; полный CI и все 28 Xray
    interop tests прошли на указанном head.
 
-Кодовые критерии этой реализации и двуязычная документация проверены; для
-включения в `main` требуется зелёный CI целевого PR. SIP003 plugins и другие
-transport plugins остаются отдельным решением: их жизненный цикл процесса,
-platform support, UDP и безопасная передача секретов должны быть спроектированы
-заранее.
+Кодовые критерии этой реализации выполнены. PR
+[#206](https://github.com/ERGFT/vpn-core/pull/206) слит в `main` через merge
+commit [`226b735`](https://github.com/ERGFT/vpn-core/commit/226b735). Для PR
+прошли все 16 непубликационных CI jobs, а зафиксированный implementation head
+`2c0d14e` прошёл 28 Xray interop тестов. SIP003 plugins и другие transport
+plugins остаются отдельным решением: их жизненный цикл процесса, platform
+support, UDP и безопасная передача секретов должны быть спроектированы заранее.

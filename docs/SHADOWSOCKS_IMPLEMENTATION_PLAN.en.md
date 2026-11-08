@@ -73,8 +73,10 @@ Do not add 2022 to the classic validator/decoder. Verified coverage:
 5. Secret redaction is covered by shared secret-handling tests; full CI and all
    28 Xray interop tests passed on the head recorded above.
 
-The implementation criteria and bilingual documentation have been reviewed;
-green CI for the PR targeting `main` is still required before merging. SIP003
-plugins and other transport plugins remain a separate design decision: process
-lifecycle, platform support, UDP, and secret delivery need explicit design
-first.
+The implementation criteria are met. PR
+[#206](https://github.com/ERGFT/vpn-core/pull/206) was merged into `main` by
+merge commit [`226b735`](https://github.com/ERGFT/vpn-core/commit/226b735). All
+16 non-publish CI jobs passed for the PR, and the recorded implementation head
+`2c0d14e` passed 28 Xray interoperability tests. SIP003 plugins and other
+transport plugins remain a separate design decision: process lifecycle,
+platform support, UDP, and secret delivery need explicit design first.
