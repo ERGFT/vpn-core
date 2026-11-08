@@ -13,7 +13,7 @@ use serde_json::Value;
 use uuid::Uuid;
 
 use crate::error::{Error, Result};
-use crate::transport::{NetworkType, TransportConfig};
+use crate::transport::TransportConfig;
 
 /// Data protection used by modern VMess AEAD.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -290,7 +290,6 @@ fn bracket_host(host: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use base64::Engine as _;
 
     fn link(value: Value) -> String {
         let encoded = base64::engine::general_purpose::STANDARD
