@@ -50,6 +50,7 @@ x25519-dalek.workspace = true
 hkdf.workspace = true
 hmac.workspace = true
 aes-gcm.workspace = true
+aes.workspace = true
 base64.workspace = true
 x509-parser.workspace = true
 rand.workspace = true

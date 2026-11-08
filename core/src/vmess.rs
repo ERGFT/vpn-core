@@ -15,6 +15,8 @@ use uuid::Uuid;
 use crate::error::{Error, Result};
 use crate::transport::TransportConfig;
 
+pub mod aead;
+
 /// Data protection used by modern VMess AEAD.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Cipher {
