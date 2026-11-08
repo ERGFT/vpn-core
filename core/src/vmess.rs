@@ -290,6 +290,7 @@ fn bracket_host(host: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::transport::NetworkType;
 
     fn link(value: Value) -> String {
         let encoded = base64::engine::general_purpose::STANDARD
