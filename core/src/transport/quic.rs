@@ -262,6 +262,9 @@ mod tests {
         };
         let peer = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
         let peer_addr = peer.local_addr().unwrap();
+        std::future::poll_fn(|cx| socket.poll_send_ready(cx))
+            .await
+            .unwrap();
         socket
             .try_send(&Transmit {
                 destination: peer_addr,
