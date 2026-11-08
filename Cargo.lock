@@ -2621,6 +2621,7 @@ dependencies = [
 name = "reality-core"
 version = "0.1.0"
 dependencies = [
+ "aes 0.9.3",
  "aes-gcm 0.11.1",
  "anyhow",
  "async-tungstenite",

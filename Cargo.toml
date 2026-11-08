@@ -81,6 +81,7 @@ x25519-dalek = { version = "3", features = ["static_secrets", "zeroize"] }
 hkdf = "0.13"
 hmac = "0.13"
 aes-gcm = "0.11"
+aes = "0.9"
 base64 = "0.23"
 x509-parser = "0.18"
 # Крипто-ревью (см. PLAN.md, Этап 5): секреты, которые живут дольше

@@ -5,9 +5,9 @@
 //! VMess AEAD implementation. These low-level helpers do not constitute a
 //! complete or interoperably verified VMess client and are not yet stable API.
 
+use aes::cipher::{Block, BlockEncrypt, KeyInit as BlockKeyInit};
+use aes::Aes128;
 use aes_gcm::aead::{Aead, KeyInit, Payload};
-use aes_gcm::aes::cipher::{Block, BlockEncrypt};
-use aes_gcm::aes::Aes128;
 use aes_gcm::{Aes128Gcm, Nonce};
 use md5::Md5;
 use sha2::{Digest, Sha256};
