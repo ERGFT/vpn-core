@@ -155,6 +155,8 @@ struct BuiltInbound {
 /// маршрутизатора — он отдаётся отдельно).
 struct Core {
     dns: Option<Arc<Dns>>,
+    /// All configured outbound roots, used for lifecycle notifications.
+    outbounds: Vec<Arc<dyn Outbound>>,
     /// Имена серверов (VLESS, DNS), которые надо разрешить до включения
     /// маршрутов TUN.
     pinned_hosts: Vec<(String, u16)>,
@@ -197,6 +199,7 @@ pub struct Controller {
     routers: Arc<RouterHandle>,
     tracker: Arc<Tracker>,
     state: std::sync::Mutex<State>,
+    outbounds: std::sync::RwLock<Vec<Arc<dyn Outbound>>>,
     groups: std::sync::RwLock<Vec<Arc<Group>>>,
     subs: std::sync::RwLock<Vec<Arc<Subscription>>>,
     config_path: std::sync::RwLock<Option<std::path::PathBuf>>,
@@ -1354,6 +1357,7 @@ fn build_core(
         .and_then(|o| outbounds.iter().find(|x| x.tag() == o.tag))
         .cloned()
         .unwrap_or_else(|| Arc::new(DirectOutbound::new("direct".to_string())));
+    let controller_outbounds = outbounds.clone();
     let mut router = Router::new(outbounds, &route, tags, &geo)?;
     router.set_modes(global, direct);
     if let Some(d) = &dns {
@@ -1371,6 +1375,7 @@ fn build_core(
         router,
         Core {
             dns,
+            outbounds: controller_outbounds,
             pinned_hosts,
             groups,
             subs,
@@ -1615,6 +1620,7 @@ impl App {
         } = self;
         let Core {
             dns,
+            outbounds,
             pinned_hosts,
             groups,
             mut subs,
@@ -1754,6 +1760,7 @@ impl App {
                 core_tasks,
                 inbounds: live,
             }),
+            outbounds: std::sync::RwLock::new(outbounds),
             groups: std::sync::RwLock::new(groups),
             subs: std::sync::RwLock::new(subs.into_iter().map(|(s, _)| s).collect()),
             config_path: std::sync::RwLock::new(None),
@@ -1792,6 +1799,23 @@ impl App {
     }
 }
 
+fn collect_network_change_outbounds(
+    outbound: Arc<dyn Outbound>,
+    seen: &mut std::collections::HashSet<String>,
+    result: &mut Vec<Arc<dyn Outbound>>,
+) {
+    if !seen.insert(outbound.tag().to_string()) {
+        return;
+    }
+    if let Some(group) = outbound.as_group() {
+        for member in group.members() {
+            collect_network_change_outbounds(member.out.clone(), seen, result);
+        }
+    } else {
+        result.push(outbound);
+    }
+}
+
 impl Controller {
     /// Invalidate network-dependent caches and close streams bound to the
     /// previous network. The core does not observe operating-system network
@@ -1807,6 +1831,19 @@ impl Controller {
             .clone();
         if let Some(dns) = dns {
             dns.network_changed();
+        }
+        let roots = self
+            .outbounds
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
+        let mut seen = std::collections::HashSet::new();
+        let mut network_bound = Vec::new();
+        for outbound in roots {
+            collect_network_change_outbounds(outbound, &mut seen, &mut network_bound);
+        }
+        for outbound in network_bound {
+            outbound.network_changed();
         }
         let closed = self.tracker.close_all();
         tracing::info!(connections = closed, "network change signal applied");
@@ -1920,9 +1957,9 @@ impl Controller {
         }
 
         // Дальше ошибок настроек уже нет — применяем.
-        self.routers.set(Arc::new(router));
         let Core {
             dns,
+            outbounds,
             pinned_hosts,
             groups,
             subs,
@@ -1949,6 +1986,11 @@ impl Controller {
             .groups
             .write()
             .unwrap_or_else(std::sync::PoisonError::into_inner) = groups.clone();
+        *self
+            .outbounds
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = outbounds;
+        self.routers.set(Arc::new(router));
         *self
             .subs
             .write()

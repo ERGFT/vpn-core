@@ -1,7 +1,11 @@
 # Hysteria 2 Integration Plan
 
 **Status:** Stages 1–2 are complete (PRs #187 and #188); Stages 3–5 and substages 6.1–6.3 are merged (PRs #189, #190, #192, #193, #196, and #197/#198). Stage 7 outbound integration was merged in PR #199. PR #201 added custom CA support and retained the HTTP/3 sender; it was merged as `1dd433b` after 16 successful checks and one skipped publish job, and the benchmark passed. PR #202 synchronized the bilingual interoperability record and was merged as `4b410d8` after all 8 checks passed. On 2026-11-08, limited Windows interoperability with the official v2.13.0 server passed TCP/UDP echo using a custom CA; without that CA the certificate was rejected (`UnknownIssuer`), and an incorrect password/SNI were rejected (HTTP 404 plus SOCKS5 REP=1, and QUIC TLS handshake failure, respectively). Overall production readiness, network handover, and recovery remain unverified, so Hysteria 2 remains experimental.
-**Code snapshot:** `main` after PR #202 (`4b410d8`).
+**Code snapshot:** `main` after PR #211 (`e0b4aa4`).
+The current follow-up forwards the host network-change signal to Hysteria 2,
+drops its shared QUIC session, and extends loopback interoperability to check
+TCP/UDP recovery after the signal. A real operating-system interface transition
+and production readiness remain unverified.
 **Scope:** client proxy outbound in the existing core only.
 
 ## Architectural decision
@@ -46,7 +50,7 @@ Full Hysteria 2 status requires codec/config tests plus interop with a pinned ve
 - TCP echo, concurrent streams, remote close, timeout, and core shutdown;
 - IPv4/IPv6 UDP echo, multiple destinations per association, large datagrams, fragment loss/reordering, queue overflow, and session cleanup;
 - configured and negotiated rates, and BBR/Reno/Brutal only for controllers actually implemented;
-- Salamander with correct/incorrect passwords, port hopping, network changes, and reconnection;
+- Salamander with correct/incorrect passwords, port hopping, host-reported network changes, and reconnection; a real interface transition needs a separate system/device-level run;
 - single link and subscription import, groups/failover, and configuration reload;
 - regular CI: fmt, clippy, workspace tests, coverage, Linux interop/TUN, Windows, Android/iOS builds, MSRV, audit, and secrets; preserve Rust/C ABI compatibility.
 
@@ -69,6 +73,8 @@ Stage 6.3 was implemented and merged in PR #197: the initial server port is sele
 Stage 7 adds `Hysteria2Outbound` with a lazy shared QUIC connection for TCP/UDP and reconnect after a closed connection. The factory accepts sing-box outbounds and `link`/`link_file`; URI subscriptions build outbounds that can join groups. The integration was merged in PR #199. PR #201 added custom CA support and retained the HTTP/3 `SendRequest` for the Hysteria connection lifetime; it was merged into `main` as `1dd433b`. The PR checks completed with 16 successes and one skipped publish job; the benchmark workflow also passed. On Windows on 2026-11-08, the client used a custom CA and SNI `localhost` to connect to the official Hysteria v2.13.0 Go server; TCP and UDP echo both passed. The same server certificate was rejected without the custom CA (`UnknownIssuer`), the server rejected an incorrect password (HTTP 404, SOCKS5 REP=1), and an incorrect SNI caused the QUIC TLS handshake to fail (error 80). The first TCP/UDP run exposed premature H3/QUIC closure after authentication because the last `SendRequest` was dropped; retaining the sender in PR #201 fixed it. This remains limited loopback interoperability, not a production-readiness proof. Branch `codex/hysteria2-udp-session-regressions` adds unit regressions for interleaved fragmented IPv4/IPv6 destinations in one UDP association and a full session queue that must not block another session. These tests validate codec and queue behavior but do not replace reference-server interoperability. Reference interop for IPv6, large UDP packets, and multiple destinations, along with network failures, reload/shutdown, handover, and recovery, still needs validation; Hysteria 2 remains experimental.
 
 A reproducible `scripts/interop_hysteria2.sh` scenario has been added for the official `app/v2.13.0` server, pinned by the SHA-256 published in the upstream release. Its ignored integration test exercises the SOCKS inbound and production outbound factory: TCP echo, IPv4/IPv6 UDP destinations within one association, and delivery of a 4096-byte payload. For the maximum payload, the echo target validates every byte and returns a short acknowledgement because the official server's UDPMessage buffer limits the reply size including its header. The script creates a temporary CA and a server certificate signed by it, starts the server, and removes temporary files. CI run #812 on commit `0da78f8` passed all 8 jobs; its Linux log confirms `PASS` for interoperability with the official Hysteria server, including the 4096-byte payload. This suite does not cover loss/reordering, network failure, reload/shutdown, port hopping, interface changes, or recovery; Hysteria 2 remains experimental.
+
+The current follow-up extends that scenario to call `Running::network_changed()`, verify that the old TCP relay closes, and verify fresh TCP/UDP echo after the signal. PR #212 CI run #819 passed all 8 jobs; its Linux job reran the official-server interoperability scenario with the network-change signal and TCP/UDP recovery. This covers host-signaled loopback recovery only; it does not simulate an operating-system interface transition. Loss/reordering, real network failure, reload/shutdown, and port-hopping interoperability remain unverified.
 
 An external Android phone is not needed for parser/codec development or local interop. It will help with the final device-level Android VPN/TUN run, Wi-Fi↔cellular handover, and wake-from-sleep recovery; an Android cross-build alone does not prove that behavior.
 

@@ -129,6 +129,10 @@ pub trait Outbound: Send + Sync {
     fn capabilities(&self) -> OutboundCapabilities {
         OutboundCapabilities::UNKNOWN
     }
+    /// Notify this outbound that the host observed a network transition.
+    /// Implementations with pooled, network-bound transports should discard
+    /// them so the next request establishes a fresh connection.
+    fn network_changed(&self) {}
     /// TCP-соединение с `meta.target:meta.port`.
     fn connect<'a>(&'a self, meta: &'a Metadata) -> BoxFuture<'a, Result<Box<dyn AsyncStream>>>;
     /// UDP-сессия для ассоциации, которую открыл `meta.source`.
