@@ -25,7 +25,7 @@ async fn start_app() -> Running {
     let ca_file = serde_json::to_string(&required("HYSTERIA2_CA_FILE")).unwrap();
     let json = format!(
         r#"{{
-          "inbounds": [{{"type":"socks","listen":"127.0.0.1","listen_port":0}],
+          "inbounds": [{{"type":"socks","listen":"127.0.0.1","listen_port":0}}],
           "outbounds": [{{"type":"hysteria2","tag":"hy2",
             "link":"hysteria2://interop-password@127.0.0.1:{port}?sni=localhost",
             "ca_file":{ca_file}}}],
