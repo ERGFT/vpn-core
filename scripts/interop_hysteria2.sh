@@ -48,10 +48,28 @@ PY
 )"
 
 openssl req -x509 -newkey rsa:2048 -nodes -days 1 \
-    -keyout "$WORK/server.key" -out "$WORK/server.crt" \
-    -subj /CN=localhost \
-    -addext 'subjectAltName=DNS:localhost,IP:127.0.0.1,IP:::1' \
-    -addext 'basicConstraints=critical,CA:TRUE' >/dev/null 2>&1
+    -keyout "$WORK/ca.key" -out "$WORK/ca.crt" \
+    -subj /CN=vpn-core-Hysteria-interop-CA \
+    -addext 'basicConstraints=critical,CA:TRUE' \
+    -addext 'keyUsage=critical,keyCertSign,cRLSign' >/dev/null 2>&1
+
+openssl req -newkey rsa:2048 -nodes \
+    -keyout "$WORK/server.key" -out "$WORK/server.csr" \
+    -subj /CN=localhost >/dev/null 2>&1
+cat >"$WORK/server.ext" <<'EOF'
+basicConstraints=critical,CA:FALSE
+keyUsage=critical,digitalSignature,keyEncipherment
+extendedKeyUsage=serverAuth
+subjectAltName=DNS:localhost,IP:127.0.0.1,IP:::1
+EOF
+openssl x509 -req -in "$WORK/server.csr" \
+    -CA "$WORK/ca.crt" -CAkey "$WORK/ca.key" -CAcreateserial \
+    -days 1 -extfile "$WORK/server.ext" -out "$WORK/server.crt" \
+    >/dev/null 2>&1
+openssl verify -CAfile "$WORK/ca.crt" -verify_hostname localhost \
+    "$WORK/server.crt" >/dev/null
+openssl verify -CAfile "$WORK/ca.crt" -verify_ip 127.0.0.1 \
+    "$WORK/server.crt" >/dev/null
 
 cat >"$WORK/server.yaml" <<EOF
 listen: 127.0.0.1:$PORT
@@ -84,7 +102,7 @@ if ! grep -q 'server up and running' "$WORK/server.log"; then
 fi
 
 cd "$ROOT"
-if ! HYSTERIA2_PORT="$PORT" HYSTERIA2_CA_FILE="$WORK/server.crt" \
+if ! HYSTERIA2_PORT="$PORT" HYSTERIA2_CA_FILE="$WORK/ca.crt" \
     cargo test --locked -p reality-core --test interop_hysteria2 \
     -- --ignored --nocapture; then
     echo "official Hysteria server log:" >&2
