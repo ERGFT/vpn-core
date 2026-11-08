@@ -243,7 +243,7 @@ fn network_change_reaches_static_and_subscription_group_members_once() {
         "selector".into(),
         super::group::GroupSettings {
             strategy: super::group::Strategy::Selector,
-            url: "http://127.0.0.1/".parse().unwrap(),
+            url: super::http_client::Url::parse("http://127.0.0.1/").unwrap(),
             interval: Duration::from_secs(60),
             tolerance: Duration::from_millis(50),
             timeout: Duration::from_secs(5),
