@@ -237,6 +237,7 @@ impl UdpDatagramMux {
                         }
                     };
                     let session_id = fragment.session_id;
+                    tracing::debug!(session_id, "Hysteria 2: received UDP datagram");
                     let packet = {
                         let mut reassembler = self.reassembler
                             .lock()
@@ -287,6 +288,8 @@ fn try_route_packet(routes: &HashMap<u32, mpsc::Sender<Packet>>, session_id: u32
     if let Some(sender) = routes.get(&session_id) {
         // A full queue drops this UDP packet; it never blocks QUIC receive.
         let _ = sender.try_send(packet);
+    } else {
+        tracing::debug!(session_id, "Hysteria 2: UDP datagram has no local session");
     }
 }
 
@@ -321,6 +324,13 @@ impl UdpSession for Hysteria2UdpSession {
                 })?;
             let frames =
                 encode_udp_fragments(self.session_id, packet_id, &dst, port, &data, max_wire)?;
+            tracing::debug!(
+                session_id = self.session_id,
+                packet_id,
+                fragments = frames.len(),
+                payload_bytes = data.len(),
+                "Hysteria 2: sending UDP datagram"
+            );
             *self
                 .last_activity
                 .lock()

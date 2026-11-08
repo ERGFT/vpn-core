@@ -966,8 +966,10 @@ flow. `transport::open(&TransportConfig)` открывает только тра
   - отдельные QUIC/auth, TCP stream и UDP datagram слои; PR #189, #190,
     #192, #193, #196, #197 и #198 слиты в `main`; PR #199 подключил общий
     `Hysteria2Outbound`, factory, sing-box config и подписки. CI PR #199 прошёл
-    16 проверок, 1 проверка пропущена; reference interop и сетевое восстановление
-    пока не подтверждены;
+    16 проверок, 1 проверка пропущена; CI #812 прошёл 8/8 jobs и подтвердил
+    ограниченный interop с официальным сервером (TCP, UDP IPv4/IPv6 и payload
+    4096 байт). Production readiness, loss/reordering, port hopping, смена
+    интерфейса и восстановление по-прежнему не подтверждены;
   - Stage 6.1 добавляет Salamander socket wrapper: каждый QUIC UDP packet
     получает 8-byte salt и BLAKE2b-256 mask; PSK короче 4 UTF-8 байт
     отклоняется для совместимости с официальной реализацией, короткие и
@@ -982,8 +984,9 @@ flow. `transport::open(&TransportConfig)` открывает только тра
   - Stage 6.3 реализует случайный начальный порт из диапазонов и смену
     порта раз в 30 секунд после auth. Новый защищённый UDP socket начинает
     работать до закрытия предыдущего, который остаётся доступен 2 секунды.
-    PR #197 слит; CI #761 прошёл 8/8 jobs на head `3762074`. Reference interop,
-    производительность, смена сетевого интерфейса и восстановление не проверены.
+    PR #197 слит; CI #761 прошёл 8/8 jobs на head `3762074`. Reference interop
+    ограниченно проверен в CI #812; port hopping, производительность, смена
+    сетевого интерфейса и восстановление не проверены.
 
 ## 14. Протоколы: VLESS, Vision, XUDP, Mux.Cool, Trojan и Shadowsocks
 

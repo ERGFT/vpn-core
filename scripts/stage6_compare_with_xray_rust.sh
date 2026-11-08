@@ -34,7 +34,7 @@ if [[ ! -x "$XRAY_BIN" ]]; then
     echo "Xray-core missing; run scripts/fetch_xray.sh first" >&2
     exit 2
 fi
-XRAY_VERSION_LINE="$("$XRAY_BIN" version 2>/dev/null | head -n1)"
+XRAY_VERSION_LINE="$("$XRAY_BIN" version 2>/dev/null | sed -n '1p')"
 [[ "$XRAY_VERSION_LINE" == *"${XRAY_VERSION#v}"* ]] || {
     echo "Xray binary version mismatch: expected $XRAY_VERSION, got ${XRAY_VERSION_LINE:-unknown}" >&2
     exit 2
