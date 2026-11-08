@@ -237,6 +237,7 @@ mod tests {
         use std::io::IoSliceMut;
         use std::task::Poll;
 
+        use quinn::udp::Transmit;
         use quinn::AsyncUdpSocket;
 
         let state = PortHopState::new(
