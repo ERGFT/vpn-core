@@ -1047,9 +1047,10 @@ implementation:
     and a port hop every 30 seconds after authentication. A fresh protected
     UDP socket starts before the previous one is retired, and the previous
     socket remains available for 2 seconds. PR #197 is merged; CI #761 passed
-    all 8 jobs on head `3762074`. Reference interoperability was tested
-    narrowly in CI #812; port hopping, performance, network-interface changes,
-    and recovery have not been verified.
+    all 8 jobs on head `3762074`. CI #823 exposed that the changed response
+    source port was reported to Quinn as a new QUIC peer; peer-address
+    normalization is in PR #213 and awaits CI. Performance, network-interface
+    changes, and recovery remain unverified.
 
 ## 14. Protocols: VLESS, Vision, XUDP, Mux.Cool, Trojan, and Shadowsocks
 

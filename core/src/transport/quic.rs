@@ -256,6 +256,27 @@ mod tests {
             .local_addr()
             .unwrap();
         let old_addr = SocketAddr::from((Ipv4Addr::LOCALHOST, old_local_addr.port()));
+        let socket = PortHopSocket {
+            state: Arc::clone(&state),
+        };
+        let peer = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let peer_addr = peer.local_addr().unwrap();
+        socket
+            .try_send(&Transmit {
+                destination: peer_addr,
+                ecn: None,
+                contents: b"initial packet",
+                segment_size: None,
+                src_ip: None,
+            })
+            .unwrap();
+        let mut peer_buffer = [0; 32];
+        let (len, _) =
+            tokio::time::timeout(Duration::from_secs(2), peer.recv_from(&mut peer_buffer))
+                .await
+                .unwrap()
+                .unwrap();
+        assert_eq!(&peer_buffer[..len], b"initial packet");
 
         state.rotate(false).unwrap();
         let new_addr = state
@@ -270,9 +291,8 @@ mod tests {
         let sender = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
         sender.send_to(b"late packet", old_addr).await.unwrap();
 
-        let socket = PortHopSocket { state };
         let mut buffer = [0u8; 64];
-        let (received, packet_len) = {
+        let (received, packet_len, metadata_addr) = {
             let mut bufs = [IoSliceMut::new(&mut buffer)];
             let mut meta = [RecvMeta {
                 addr: "127.0.0.1:0".parse().unwrap(),
@@ -291,10 +311,11 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
-            (received, meta[0].len)
+            (received, meta[0].len, meta[0].addr)
         };
         assert_eq!(received, 1);
         assert_eq!(&buffer[..packet_len], b"late packet");
+        assert_eq!(metadata_addr, peer_addr);
     }
 
     #[tokio::test]
@@ -456,6 +477,7 @@ struct HopSocketState {
     ports: Vec<PortRange>,
     active: Arc<PlainSocket>,
     active_port: u16,
+    peer: Option<SocketAddr>,
     previous: Vec<(Arc<PlainSocket>, tokio::time::Instant)>,
 }
 
@@ -514,6 +536,7 @@ impl PortHopState {
                 ports,
                 active: Self::bind_socket(ipv6)?,
                 active_port: initial_port,
+                peer: None,
                 previous: Vec::new(),
             }),
         }))
@@ -625,11 +648,14 @@ impl AsyncUdpSocket for PortHopSocket {
     }
 
     fn try_send(&self, transmit: &Transmit) -> io::Result<()> {
-        let state = self
+        let mut state = self
             .state
             .state
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if state.peer.is_none() {
+            state.peer = Some(transmit.destination);
+        }
         let socket = &state.active.0;
         let mut destination = transmit.destination;
         destination.set_port(state.active_port);
@@ -657,7 +683,7 @@ impl AsyncUdpSocket for PortHopSocket {
         bufs: &mut [IoSliceMut<'_>],
         meta: &mut [RecvMeta],
     ) -> Poll<io::Result<usize>> {
-        let mut sockets = {
+        let (mut sockets, peer) = {
             let mut state = self
                 .state
                 .state
@@ -668,7 +694,7 @@ impl AsyncUdpSocket for PortHopSocket {
                 .retain(|(_, deadline)| *deadline > tokio::time::Instant::now());
             let mut sockets = vec![Arc::clone(&state.active)];
             sockets.extend(state.previous.iter().map(|(socket, _)| Arc::clone(socket)));
-            sockets
+            (sockets, state.peer)
         };
         let buffer = bufs.first_mut().ok_or_else(|| {
             io::Error::new(
@@ -695,8 +721,14 @@ impl AsyncUdpSocket for PortHopSocket {
             match socket.0.poll_recv_from(cx, &mut read_buf) {
                 Poll::Ready(Ok(addr)) => {
                     let len = read_buf.filled().len();
+                    let peer_addr = peer.filter(|peer| peer.ip() == addr.ip()).unwrap_or(addr);
                     *metadata = RecvMeta {
-                        addr,
+                        // Port hopping changes the UDP destination, but it is
+                        // still the same QUIC peer. Reporting the server's
+                        // observed source port here would make Quinn interpret
+                        // every hop as remote path migration and reject an
+                        // otherwise valid response from the official server.
+                        addr: peer_addr,
                         len,
                         stride: len,
                         ecn: None,
