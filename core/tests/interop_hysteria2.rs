@@ -60,7 +60,16 @@ async fn udp_echo_v4() -> SocketAddr {
     tokio::spawn(async move {
         let mut buffer = vec![0; 65_535];
         while let Ok((size, peer)) = socket.recv_from(&mut buffer).await {
-            let _ = socket.send_to(&buffer[..size], peer).await;
+            let reply = if size == 4096 {
+                if buffer[..size].iter().all(|byte| *byte == 0x5a) {
+                    &b"validated full 4096-byte payload"[..]
+                } else {
+                    &b"invalid large UDP payload"[..]
+                }
+            } else {
+                &buffer[..size]
+            };
+            let _ = socket.send_to(reply, peer).await;
         }
     });
     addr
@@ -149,6 +158,7 @@ async fn udp_round_trip(
     relay: SocketAddr,
     destination: SocketAddr,
     payload: &[u8],
+    expected_reply: &[u8],
 ) {
     let frame = socks_udp_frame(destination, payload);
     socket.send_to(&frame, relay).await.unwrap();
@@ -157,7 +167,7 @@ async fn udp_round_trip(
         .await
         .expect("Hysteria UDP echo timed out")
         .unwrap();
-    assert_socks_udp_reply(&response[..size], destination, payload);
+    assert_socks_udp_reply(&response[..size], destination, expected_reply);
 }
 
 #[tokio::test]
@@ -194,10 +204,20 @@ async fn official_server_tcp_and_udp_ipv4_ipv6_large_and_multiple_destinations()
     let (reply, relay) = socks_request(&mut control, 3, client_udp.local_addr().unwrap()).await;
     assert_eq!(reply, 0, "SOCKS UDP ASSOCIATE must succeed");
     let small = b"IPv4 destination";
-    udp_round_trip(&client_udp, relay, udp_v4, small).await;
+    udp_round_trip(&client_udp, relay, udp_v4, small, small).await;
     let small = b"IPv6 destination";
-    udp_round_trip(&client_udp, relay, udp_v6, small).await;
+    udp_round_trip(&client_udp, relay, udp_v6, small, small).await;
     let large = vec![0x5a; 4096];
-    udp_round_trip(&client_udp, relay, udp_v4, &large).await;
+    // The official server's UDP response buffer is 4096 bytes including its
+    // UDPMessage header, so confirm the full request at the echo target and
+    // return a short acknowledgement rather than echoing an oversized frame.
+    udp_round_trip(
+        &client_udp,
+        relay,
+        udp_v4,
+        &large,
+        b"validated full 4096-byte payload",
+    )
+    .await;
     drop(control);
 }
