@@ -70,12 +70,16 @@ else
     skip "синтаксис генератора бенчмарка" "нужен python3"
 fi
 step "синтаксис сценария бенчмарка" bash -n scripts/stage6_compare_with_xray_rust.sh
+step "синтаксис сценария Hysteria interop" bash -n scripts/interop_hysteria2.sh
 step "cargo clippy (без предупреждений)" \
     cargo clippy --locked --workspace --all-targets -- -D warnings
 step "cargo test --workspace" cargo test --locked --workspace
 
 if [[ $QUICK -eq 0 ]]; then
     step "cargo build --release" cargo build --locked --release --workspace
+
+    # Проверка production outbound с отдельным официальным сервером Hysteria.
+    step "интероп с официальным Hysteria 2" bash scripts/interop_hysteria2.sh
 
     # Интероп и smoke нужен Go >= 1.27 (crypto/mldsa, crypto/hpke в stdlib).
     go_ok=0

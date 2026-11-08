@@ -1,8 +1,8 @@
 # Проверка на каждый push и pull request.
 #
 # linux   — весь scripts/ci.sh: fmt, clippy, тесты, release-сборка, интероп
-#           с Go REALITY-сервером и с настоящим Xray-core, smoke, сверка .srs
-#           с sing-box, эталон отпечатка Chrome; отдельно — TUN в netns (root).
+#           с Go REALITY-сервером, официальным Hysteria 2 и Xray-core, smoke,
+#           сверка .srs с sing-box и отпечатка Chrome; отдельно — TUN (root).
 # windows — на настоящей Windows (не Wine): тесты, сборка .exe, служба и
 #           TUN (Wintun, маршруты) с настоящим трафиком.
 # msrv    — сборка на минимальной версии Rust (rust-version в Cargo.toml).
