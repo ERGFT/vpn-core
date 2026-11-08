@@ -222,9 +222,22 @@ async fn official_server_tcp_and_udp_ipv4_ipv6_large_and_multiple_destinations()
     drop(control);
 
     // The production outbound starts hopping 30 seconds after authentication.
-    // Keep the same QUIC connection alive across that interval, then verify
-    // both relay types through the server's configured port range.
-    tokio::time::sleep(Duration::from_secs(31)).await;
+    // Keep the existing QUIC connection active while crossing the hop; an
+    // idle QUIC connection could otherwise expire at the same time. The echo
+    // on this established relay also proves that the stream survives the hop.
+    for _ in 0..=31 {
+        tcp.write_all(b".").await.unwrap();
+        let mut heartbeat = [0; 1];
+        tokio::time::timeout(TIMEOUT, tcp.read_exact(&mut heartbeat))
+            .await
+            .expect("Hysteria TCP heartbeat timed out during port hopping")
+            .unwrap();
+        assert_eq!(heartbeat, [b'.']);
+        tokio::time::sleep(Duration::from_secs(1)).await;
+    }
+
+    // Verify that new TCP and UDP relays also work over the hopped QUIC
+    // connection and the server's configured port range.
     let mut hopped_tcp = TcpStream::connect(app.listen_addrs[0]).await.unwrap();
     let (reply, _) = socks_request(&mut hopped_tcp, 1, tcp_target).await;
     assert_eq!(reply, 0, "TCP CONNECT must survive a Hysteria port hop");
