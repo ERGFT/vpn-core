@@ -7,6 +7,7 @@
 
 use std::net::{IpAddr, SocketAddr};
 use std::path::Path;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -56,12 +57,26 @@ impl TestProtocolSettings {
 }
 
 fn build_test_protocol(settings: TestProtocolSettings) -> Result<Arc<dyn Outbound>> {
+    Ok(build_test_protocol_with_counter(settings)?.0)
+}
+
+fn build_test_protocol_with_counter(
+    settings: TestProtocolSettings,
+) -> Result<(Arc<dyn Outbound>, Arc<AtomicUsize>)> {
     settings.validate()?;
-    Ok(Arc::new(TestProtocolOutbound { settings }))
+    let network_changes = Arc::new(AtomicUsize::new(0));
+    Ok((
+        Arc::new(TestProtocolOutbound {
+            settings,
+            network_changes: network_changes.clone(),
+        }),
+        network_changes,
+    ))
 }
 
 struct TestProtocolOutbound {
     settings: TestProtocolSettings,
+    network_changes: Arc<AtomicUsize>,
 }
 
 impl Outbound for TestProtocolOutbound {
@@ -75,6 +90,10 @@ impl Outbound for TestProtocolOutbound {
 
     fn capabilities(&self) -> OutboundCapabilities {
         OutboundCapabilities::TCP_UDP_TERMINAL
+    }
+
+    fn network_changed(&self) {
+        self.network_changes.fetch_add(1, Ordering::Relaxed);
     }
 
     fn connect<'a>(&'a self, _meta: &'a Metadata) -> BoxFuture<'a, Result<Box<dyn AsyncStream>>> {
@@ -208,6 +227,46 @@ fn settings(tag: &str, tcp_server: SocketAddr, udp_server: SocketAddr) -> TestPr
         udp_server,
         timeout: Duration::from_secs(2),
     }
+}
+
+#[test]
+fn network_change_reaches_static_and_subscription_group_members_once() {
+    let unused = "127.0.0.1:1".parse().unwrap();
+    let (fixed, fixed_calls) =
+        build_test_protocol_with_counter(settings("fixed", unused, unused)).unwrap();
+    let (dynamic, dynamic_calls) =
+        build_test_protocol_with_counter(settings("sub/server", unused, unused)).unwrap();
+    let (ungrouped, ungrouped_calls) =
+        build_test_protocol_with_counter(settings("ungrouped", unused, unused)).unwrap();
+
+    let group = super::group::Group::new(
+        "selector".into(),
+        super::group::GroupSettings {
+            strategy: super::group::Strategy::Selector,
+            url: "http://127.0.0.1/".parse().unwrap(),
+            interval: Duration::from_secs(60),
+            tolerance: Duration::from_millis(50),
+            timeout: Duration::from_secs(5),
+        },
+        None,
+        super::stats::Tracker::new(),
+    );
+    group.set_fixed(vec![fixed.clone()]);
+    group.set_dynamic("sub", vec![dynamic]);
+
+    let roots = vec![fixed, ungrouped, group as Arc<dyn Outbound>];
+    let mut seen = std::collections::HashSet::new();
+    let mut targets = Vec::new();
+    for root in roots {
+        super::collect_network_change_outbounds(root, &mut seen, &mut targets);
+    }
+    for outbound in targets {
+        outbound.network_changed();
+    }
+
+    assert_eq!(fixed_calls.load(Ordering::Relaxed), 1);
+    assert_eq!(dynamic_calls.load(Ordering::Relaxed), 1);
+    assert_eq!(ungrouped_calls.load(Ordering::Relaxed), 1);
 }
 
 #[tokio::test]

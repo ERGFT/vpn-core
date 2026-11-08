@@ -220,8 +220,10 @@ rc_stop(core);
   `{"notes": […]}`: what takes effect only after a restart.
 - **`rc_network_changed(core)`** — report a network change detected by the
   embedding host. The core clears its DNS and server-address caches, cancels
-  tracked TCP/UDP sessions, and keeps its inbounds and current config running.
-  New connections resolve names again; the core does not automatically replay
+  tracked TCP/UDP sessions, notifies active outbounds, and keeps its inbounds
+  and current config running. Hysteria 2 closes its shared QUIC session; the
+  next request establishes a fresh authenticated session. New connections
+  resolve names again; the core does not automatically replay
   application traffic, so the host must retry requests according to its own
   policy. Returns `0` when handled, or `-1` for a NULL handle or an internal
   error.

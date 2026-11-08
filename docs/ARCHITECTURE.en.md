@@ -178,8 +178,11 @@ A group reports networks supported by at least one member, without promising
 that its currently selected member supports them. Packet mode is outside the
 `Outbound` contract: WireGuard needs a separate IP/TUN integration point.
 Network changes are currently handled at the application level by
-`Running::network_changed()` and shared DNS caches; outbounds have no
-protocol-specific network-change action today.
+`Running::network_changed()`: the signal is forwarded to current outbounds and
+group/subscription members. Hysteria 2 discards its shared QUIC connection and
+closes streams bound to the old network; the next request establishes a fresh
+authenticated session. The core does not detect operating-system interface
+changes by itself.
 - `AsyncStream` — any `AsyncRead + AsyncWrite + Send + Unpin`, so
   transports and outbounds do not need each other's concrete types.
 - `Router` — outbounds by tag, compiled rules, `final`, DNS.
@@ -1024,9 +1027,11 @@ implementation:
     #199 wired a shared `Hysteria2Outbound`, factory, sing-box config, and
     subscriptions. PR #199 CI passed 16 checks and skipped 1; CI #812 passed
     all 8 jobs and confirmed limited official-server interoperability (TCP,
-    IPv4/IPv6 UDP, and a 4096-byte payload). Production readiness,
-    loss/reordering, port hopping, interface changes, and recovery remain
-    unverified;
+    IPv4/IPv6 UDP, and a 4096-byte payload). `Running::network_changed()` now
+    closes the shared Hysteria 2 QUIC session; the extended loopback interop
+    checks that the old TCP relay closes and new TCP/UDP echo works after the
+    signal. This does not test a real OS interface switch. Production readiness,
+    loss/reordering, port hopping, and mobile recovery remain unverified;
   - Stage 6.1 adds a Salamander socket wrapper: each QUIC UDP packet receives
     an 8-byte salt and BLAKE2b-256 mask; PSKs shorter than 4 UTF-8 bytes are
     rejected to match the reference implementation, and short or salt-only

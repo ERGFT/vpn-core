@@ -18,7 +18,7 @@
   UDP-over-TCP и legacy stream ciphers не поддерживаются.
 
 ### Hysteria 2
-- TCP/UDP runtime подключён к outbound factory, sing-box config и URI-подпискам; один outbound переиспользует аутентифицированное QUIC-соединение. Поддерживаемые поля sing-box преобразуются через URI-модель, неподдерживаемые опции отклоняются. Интеграция слита в PR #199; CI прошёл 16 проверок, 1 проверка пропущена. Совместимость с официальным сервером и смена сети пока не проверены, поэтому функция остаётся экспериментальной.
+- TCP/UDP runtime подключён к outbound factory, sing-box config и URI-подпискам; один outbound переиспользует аутентифицированное QUIC-соединение. Поддерживаемые поля sing-box преобразуются через URI-модель, неподдерживаемые опции отклоняются. Официальный сервер v2.13.0 подтвердил TCP/UDP echo, включая IPv4/IPv6 и UDP payload 4096 байт, в ограниченном loopback interop. `rc_network_changed` уведомляет выходы; Hysteria 2 сбрасывает общий QUIC-сеанс, а interop сценарий покрывает повторные TCP/UDP запросы после сигнала. Реальный переход между интерфейсами и production readiness не подтверждены; функция остаётся экспериментальной.
 - Добавлен `ca_file` для пользовательского PEM-набора корневых сертификатов Hysteria 2 в основной конфигурации. Проверка сертификата остаётся включённой; подписка не может хранить локальный путь и пропускает такую запись как неподдерживаемую.
 
 ### SDK и C ABI
@@ -278,7 +278,7 @@ stage-by-stage decision history is in [PLAN.md](PLAN.md) (in Russian).
   in main awaits the target PR.
 
 ### Hysteria 2
-- Wired the TCP/UDP runtime into the outbound factory, sing-box config, and URI subscriptions; each outbound reuses its authenticated QUIC connection. Supported sing-box fields are converted through the URI model, and unsupported options are rejected. PR #199 merged with 16 checks passed and 1 skipped. Official-server interoperability and network handover remain unverified, so the integration is experimental.
+- The TCP/UDP runtime is wired into the outbound factory, sing-box config, and URI subscriptions; each outbound reuses an authenticated QUIC connection. Supported sing-box fields are converted through the URI model and unsupported options are rejected. The official v2.13.0 server passed limited loopback TCP/UDP echo interoperability, including IPv4/IPv6 and a 4096-byte UDP payload. `rc_network_changed` now notifies outbounds; Hysteria 2 drops its shared QUIC session, and the interop scenario covers fresh TCP/UDP requests after the signal. A real interface transition and production readiness remain unverified, so the feature stays experimental.
 - Added `ca_file` for a custom PEM trust-root set on Hysteria 2 outbounds in the main config. Certificate verification stays enabled; subscriptions cannot store a local path and skip such records as unsupported.
 
 ### SDK and C ABI

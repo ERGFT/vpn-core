@@ -220,4 +220,55 @@ async fn official_server_tcp_and_udp_ipv4_ipv6_large_and_multiple_destinations()
     )
     .await;
     drop(control);
+
+    // A host-reported network transition must close existing relays and let
+    // the same outbound establish a new authenticated QUIC connection.
+    assert!(
+        app.network_changed() > 0,
+        "active TCP relay should be closed"
+    );
+    let mut old_response = [0; 1];
+    assert_eq!(
+        tokio::time::timeout(TIMEOUT, tcp.read(&mut old_response))
+            .await
+            .expect("old TCP relay did not close")
+            .expect("old TCP relay read failed"),
+        0
+    );
+
+    let mut recovered = TcpStream::connect(app.listen_addrs[0]).await.unwrap();
+    let (reply, _) = socks_request(&mut recovered, 1, tcp_target).await;
+    assert_eq!(reply, 0, "TCP CONNECT must recover after network change");
+    recovered
+        .write_all(b"hysteria2 recovered TCP")
+        .await
+        .unwrap();
+    let mut recovered_echo = vec![0; b"hysteria2 recovered TCP".len()];
+    tokio::time::timeout(TIMEOUT, recovered.read_exact(&mut recovered_echo))
+        .await
+        .expect("recovered Hysteria TCP echo timed out")
+        .unwrap();
+    assert_eq!(&recovered_echo, b"hysteria2 recovered TCP");
+
+    let recovered_udp = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
+    let mut recovered_control = TcpStream::connect(app.listen_addrs[0]).await.unwrap();
+    let (reply, recovered_relay) = socks_request(
+        &mut recovered_control,
+        3,
+        recovered_udp.local_addr().unwrap(),
+    )
+    .await;
+    assert_eq!(
+        reply, 0,
+        "SOCKS UDP ASSOCIATE must recover after network change"
+    );
+    let recovered_payload = b"hysteria2 recovered UDP";
+    udp_round_trip(
+        &recovered_udp,
+        recovered_relay,
+        udp_v4,
+        recovered_payload,
+        recovered_payload,
+    )
+    .await;
 }
