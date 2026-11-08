@@ -1022,8 +1022,11 @@ implementation:
   - separate QUIC/authentication, TCP stream, and UDP datagram layers; PRs
     #189, #190, #192, #193, #196, #197, and #198 are merged into `main`; PR
     #199 wired a shared `Hysteria2Outbound`, factory, sing-box config, and
-    subscriptions. PR #199 CI passed 16 checks and skipped 1; reference
-    interoperability and network recovery remain unverified;
+    subscriptions. PR #199 CI passed 16 checks and skipped 1; CI #812 passed
+    all 8 jobs and confirmed limited official-server interoperability (TCP,
+    IPv4/IPv6 UDP, and a 4096-byte payload). Production readiness,
+    loss/reordering, port hopping, interface changes, and recovery remain
+    unverified;
   - Stage 6.1 adds a Salamander socket wrapper: each QUIC UDP packet receives
     an 8-byte salt and BLAKE2b-256 mask; PSKs shorter than 4 UTF-8 bytes are
     rejected to match the reference implementation, and short or salt-only
@@ -1039,8 +1042,9 @@ implementation:
     and a port hop every 30 seconds after authentication. A fresh protected
     UDP socket starts before the previous one is retired, and the previous
     socket remains available for 2 seconds. PR #197 is merged; CI #761 passed
-    all 8 jobs on head `3762074`. Reference interoperability, performance,
-    network-interface changes, and recovery have not been verified.
+    all 8 jobs on head `3762074`. Reference interoperability was tested
+    narrowly in CI #812; port hopping, performance, network-interface changes,
+    and recovery have not been verified.
 
 ## 14. Protocols: VLESS, Vision, XUDP, Mux.Cool, Trojan, and Shadowsocks
 
