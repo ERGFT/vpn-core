@@ -7,7 +7,7 @@
 
 use aes::cipher::{Block, BlockCipherEncrypt, KeyInit as BlockKeyInit};
 use aes::Aes128;
-use aes_gcm::aead::{Aead, KeyInit, Payload};
+use aes_gcm::aead::{Aead, Payload};
 use aes_gcm::{Aes128Gcm, Nonce};
 use md5::Md5;
 use sha2::{Digest, Sha256};
@@ -76,7 +76,8 @@ pub fn create_auth_id(command_key: &[u8; 16], timestamp: u64, random: [u8; 4]) -
     let checksum = crc32_ieee(&plain[..12]);
     plain[12..].copy_from_slice(&checksum.to_be_bytes());
 
-    let mut block = Block::<Aes128>::clone_from_slice(&plain);
+    let mut block =
+        Block::<Aes128>::try_from(plain.as_slice()).expect("AES block has the fixed 16-byte size");
     cipher.encrypt_block(&mut block);
     block.into()
 }
@@ -109,9 +110,12 @@ pub fn seal_header(
     length_key_128.copy_from_slice(&length_key[..16]);
     let length_cipher = Aes128Gcm::new(&length_key_128.into());
     let length_bytes = (plaintext.len() as u16).to_be_bytes();
+    let length_nonce: [u8; 12] = length_nonce[..12]
+        .try_into()
+        .expect("AES-GCM nonce has the fixed 12-byte size");
     let encrypted_length = length_cipher
         .encrypt(
-            Nonce::from_slice(&length_nonce[..12]),
+            &Nonce::from(length_nonce),
             Payload {
                 msg: &length_bytes,
                 aad: auth_id,
@@ -123,9 +127,12 @@ pub fn seal_header(
     let mut payload_key_128 = [0u8; 16];
     payload_key_128.copy_from_slice(&payload_key[..16]);
     let payload_cipher = Aes128Gcm::new(&payload_key_128.into());
+    let payload_nonce: [u8; 12] = payload_nonce[..12]
+        .try_into()
+        .expect("AES-GCM nonce has the fixed 12-byte size");
     let encrypted_payload = payload_cipher
         .encrypt(
-            Nonce::from_slice(&payload_nonce[..12]),
+            &Nonce::from(payload_nonce),
             Payload {
                 msg: plaintext,
                 aad: auth_id,
@@ -159,6 +166,7 @@ fn crc32_ieee(bytes: &[u8]) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use aes_gcm::aead::KeyInit;
 
     #[test]
     fn kdf_without_path_matches_xray_sha256_hmac() {
@@ -211,7 +219,7 @@ mod tests {
         let length_cipher = Aes128Gcm::new_from_slice(&length_key[..16]).unwrap();
         let length = length_cipher
             .decrypt(
-                Nonce::from_slice(&length_nonce[..12]),
+                &Nonce::from(<[u8; 12]>::try_from(&length_nonce[..12]).unwrap()),
                 Payload {
                     msg: &sealed[16..34],
                     aad: &auth_id,
@@ -225,7 +233,7 @@ mod tests {
         let payload_cipher = Aes128Gcm::new_from_slice(&payload_key[..16]).unwrap();
         let payload = payload_cipher
             .decrypt(
-                Nonce::from_slice(&payload_nonce[..12]),
+                &Nonce::from(<[u8; 12]>::try_from(&payload_nonce[..12]).unwrap()),
                 Payload {
                     msg: &sealed[42..],
                     aad: &auth_id,
@@ -238,7 +246,7 @@ mod tests {
         altered[42] ^= 1;
         assert!(payload_cipher
             .decrypt(
-                Nonce::from_slice(&payload_nonce[..12]),
+                &Nonce::from(<[u8; 12]>::try_from(&payload_nonce[..12]).unwrap()),
                 Payload {
                     msg: &altered[42..],
                     aad: &auth_id,
