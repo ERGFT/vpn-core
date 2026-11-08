@@ -240,7 +240,8 @@ pub(crate) async fn connect(
             auth,
             udp_mux,
             udp_driver,
-            next_udp_session_id: AtomicU64::new(0),
+            // Match the official client: UDP session IDs begin at 1.
+            next_udp_session_id: AtomicU64::new(1),
             driver,
             _h3_sender: sender,
             hop_task,
@@ -540,6 +541,10 @@ mod tests {
 
     #[test]
     fn udp_session_ids_are_unique_until_the_wire_space_is_exhausted() {
+        let first = AtomicU64::new(1);
+        assert_eq!(allocate_udp_session_id(&first).unwrap(), 1);
+        assert_eq!(allocate_udp_session_id(&first).unwrap(), 2);
+
         let next = AtomicU64::new(u64::from(u32::MAX) - 1);
         assert_eq!(allocate_udp_session_id(&next).unwrap(), u32::MAX - 1);
         assert_eq!(allocate_udp_session_id(&next).unwrap(), u32::MAX);
