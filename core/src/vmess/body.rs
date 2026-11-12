@@ -97,50 +97,63 @@ impl BodyChunkCodec {
     /// Open exactly one chunk from the start of `input`, returning its
     /// plaintext and consumed wire length. Following bytes are left untouched.
     pub fn open_chunk(&mut self, input: &[u8]) -> Result<(Vec<u8>, usize)> {
-        let length_prefix_len = if self.authenticated_length() {
-            2 + TAG_LEN
-        } else {
-            2
-        };
-        if input.len() < length_prefix_len {
-            return Err(protocol_error("truncated VMess chunk length"));
-        }
         let index = self.next_chunk;
         if index >= MAX_CHUNK_COUNT {
             return Err(protocol_error("VMess chunk nonce counter exhausted"));
         }
-
-        let encoded_size = &input[..length_prefix_len];
-        let encoded_size = if self.authenticated_length() {
-            let length_nonce = chunk_nonce(&self.iv, index);
-            let clear = self.open_length(encoded_size, &length_nonce)?;
-            let size_bytes: [u8; 2] = clear
-                .as_slice()
-                .try_into()
-                .map_err(|_| protocol_error("invalid authenticated VMess chunk length"))?;
-            u16::from_be_bytes(size_bytes) as usize + TAG_LEN
-        } else {
-            u16::from_be_bytes([encoded_size[0], encoded_size[1]]) as usize
-        };
-
-        let size = encoded_size;
-        if !(TAG_LEN..=MAX_CHUNK_PLAINTEXT + TAG_LEN).contains(&size) {
-            return Err(protocol_error(
-                "VMess encrypted chunk length is out of bounds",
-            ));
-        }
-        let consumed = length_prefix_len + size;
+        let consumed = self.chunk_wire_len(input)?;
         if input.len() < consumed {
             return Err(protocol_error("truncated VMess encrypted chunk"));
         }
 
         let nonce = chunk_nonce(&self.iv, index);
-        let plaintext = self.open_payload(&input[length_prefix_len..consumed], &nonce)?;
+        let prefix_len = self.length_prefix_len();
+        let plaintext = self.open_payload(&input[prefix_len..consumed], &nonce)?;
         if plaintext.len() > MAX_CHUNK_PLAINTEXT {
             return Err(protocol_error("VMess plaintext chunk exceeds the limit"));
         }
         self.next_chunk += 1;
         Ok((plaintext, consumed))
+    }
+
+    /// Return the encoded prefix size for one chunk in this framing profile.
+    pub fn length_prefix_len(&self) -> usize {
+        if self.authenticated_length() {
+            2 + TAG_LEN
+        } else {
+            2
+        }
+    }
+
+    /// Authenticate and decode a chunk prefix without consuming its payload.
+    /// The returned length includes both the prefix and the encrypted chunk.
+    pub fn chunk_wire_len(&self, prefix: &[u8]) -> Result<usize> {
+        let prefix_len = self.length_prefix_len();
+        if prefix.len() < prefix_len {
+            return Err(protocol_error("truncated VMess chunk length"));
+        }
+        if self.next_chunk >= MAX_CHUNK_COUNT {
+            return Err(protocol_error("VMess chunk nonce counter exhausted"));
+        }
+        let payload_len = if self.authenticated_length() {
+            let nonce = chunk_nonce(&self.iv, self.next_chunk);
+            let clear = self.open_length(&prefix[..prefix_len], &nonce)?;
+            let size: [u8; 2] = clear
+                .as_slice()
+                .try_into()
+                .map_err(|_| protocol_error("invalid authenticated VMess chunk length"))?;
+            usize::from(u16::from_be_bytes(size)) + TAG_LEN
+        } else {
+            usize::from(u16::from_be_bytes([prefix[0], prefix[1]]))
+        };
+        if !(TAG_LEN..=MAX_CHUNK_PLAINTEXT + TAG_LEN).contains(&payload_len) {
+            return Err(protocol_error(
+                "VMess encrypted chunk length is out of bounds",
+            ));
+        }
+        prefix_len
+            .checked_add(payload_len)
+            .ok_or_else(|| protocol_error("VMess chunk wire length overflow"))
     }
 
     fn take_chunk_index(&mut self) -> Result<u32> {
@@ -358,6 +371,24 @@ mod tests {
         let (opened_second, second_consumed) = receiver.open_chunk(&wire[consumed..]).unwrap();
         assert_eq!(opened_second, b"second");
         assert_eq!(consumed + second_consumed, wire.len());
+    }
+
+    #[test]
+    fn chunk_wire_len_authenticates_prefix_without_advancing_counter() {
+        for cipher in [BodyCipher::Aes128Gcm, BodyCipher::Chacha20Poly1305] {
+            for authenticated_length in [false, true] {
+                let mut sender = codec(cipher, authenticated_length);
+                let frame = sender.seal_chunk(b"length prefix").unwrap();
+                let receiver = codec(cipher, authenticated_length);
+                let prefix_len = receiver.length_prefix_len();
+
+                assert_eq!(
+                    receiver.chunk_wire_len(&frame[..prefix_len]).unwrap(),
+                    frame.len()
+                );
+                assert_eq!(receiver.next_chunk, 0);
+            }
+        }
     }
 
     #[test]
