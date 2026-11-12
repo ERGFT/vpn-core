@@ -718,7 +718,9 @@ fn route_section(
     let route_rules = r.objs("rules")?;
     let route_rule_count = route_rules.len();
     for (index, rule) in route_rules.into_iter().enumerate() {
-        let action = rule.str("action")?.unwrap_or_else(|| "route".into());
+        let declared_action = rule.str("action")?;
+        let explicit_route = declared_action.as_deref() == Some("route");
+        let action = declared_action.unwrap_or_else(|| "route".into());
         let inbound = rule.strs("inbound")?;
         match action.as_str() {
             "sniff" => {
@@ -773,7 +775,7 @@ fn route_section(
             "route" => {
                 let target = rule.req_str("outbound")?;
                 let mut config = conditions(&rule, inbound, target)?;
-                config.terminal = index + 1 == route_rule_count;
+                config.terminal = explicit_route && index + 1 == route_rule_count;
                 route.rules.push(config);
                 rule.ignore(&["override_address", "override_port"]);
                 rule.finish()?;
