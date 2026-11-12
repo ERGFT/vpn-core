@@ -5,8 +5,12 @@
 //! and ChaCha20-Poly1305. It is a framing primitive, not a VMess stream or
 //! packet session; transport semantics and interop vectors remain separate.
 
-use aes_gcm::{aead::Aead, Aes128Gcm, Nonce, Payload};
+use aes_gcm::{
+    aead::{Aead, Payload},
+    Aes128Gcm, Nonce,
+};
 use chacha20poly1305::{aead::Aead as ChaChaAead, ChaCha20Poly1305, Nonce as ChaChaNonce};
+use sha2::Digest;
 use zeroize::{Zeroize, Zeroizing};
 
 use crate::error::{Error, Result};
@@ -163,8 +167,8 @@ impl BodyChunkCodec {
                     .map_err(|_| protocol_error("failed to seal VMess body chunk"))
             }
             BodyCipher::Chacha20Poly1305 => {
-                let key = chacha_key(self.key.as_ref());
-                <ChaCha20Poly1305 as chacha20poly1305::KeyInit>::new_from_slice(&key)
+                let key = chacha_key(&self.key);
+                <ChaCha20Poly1305 as chacha20poly1305::KeyInit>::new_from_slice(&key[..])
                     .map_err(|_| protocol_error("invalid VMess ChaCha20-Poly1305 key"))?
                     .encrypt(ChaChaNonce::from_slice(nonce), plaintext)
                     .map_err(|_| protocol_error("failed to seal VMess body chunk"))
@@ -187,8 +191,8 @@ impl BodyChunkCodec {
                     .map_err(|_| protocol_error("VMess body chunk authentication failed"))
             }
             BodyCipher::Chacha20Poly1305 => {
-                let key = chacha_key(self.key.as_ref());
-                <ChaCha20Poly1305 as chacha20poly1305::KeyInit>::new_from_slice(&key)
+                let key = chacha_key(&self.key);
+                <ChaCha20Poly1305 as chacha20poly1305::KeyInit>::new_from_slice(&key[..])
                     .map_err(|_| protocol_error("invalid VMess ChaCha20-Poly1305 key"))?
                     .decrypt(ChaChaNonce::from_slice(nonce), ciphertext)
                     .map_err(|_| protocol_error("VMess body chunk authentication failed"))
@@ -229,7 +233,7 @@ fn chunk_nonce(iv: &[u8; 16], index: u32) -> [u8; 12] {
 }
 
 fn chacha_key(key: &[u8; 16]) -> Zeroizing<[u8; 32]> {
-    use md5::{Digest, Md5};
+    use md5::Md5;
 
     let mut first = Md5::digest(key);
     let mut second = Md5::digest(&first);
