@@ -16,6 +16,7 @@ use crate::error::{Error, Result};
 use crate::transport::TransportConfig;
 
 pub mod aead;
+pub mod header;
 
 /// Data protection used by modern VMess AEAD.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
