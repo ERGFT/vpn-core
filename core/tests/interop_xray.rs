@@ -2705,7 +2705,7 @@ async fn vmess_aead_tcp_echo_against_xray() {
             timestamp,
             [0x19, 0x28, 0x37, 0x46 + profile_index as u8],
         );
-        let mut session_id = [0xa5; 8];
+        let mut session_id = [0xa5u8; 8];
         session_id[7] = session_id[7].wrapping_add(profile_index as u8);
         let encrypted_header =
             vmess_aead::seal_header(&command_key, &auth_id, &session_id, &plaintext_header)
