@@ -9,9 +9,9 @@
 
 `core::vmess::response` теперь разбирает plaintext response-header payload: проверяет ожидаемый response marker, сохраняет option byte, проверяет границы command frame и возвращает точную длину разобранной части. Командные данные пока остаются непрозрачными; этот модуль не реализует управление динамическим портом или соединением.
 
-`core::vmess::body` содержит направленный codec AEAD-чанков для AES-128-GCM и ChaCha20-Poly1305, двухбайтового размера, optional authenticated length с `auth_len`, проверки границ (размер зашифрованного чанка не более 2^14 байт, согласно спецификации Project X) и последовательного nonce. Счётчик nonce ограничен 65 536 чанками и завершается ошибкой вместо повторного использования nonce; способ безопасного rollover должен быть определён до подключения к длительным TCP-сессиям. Codec пока не включён в приложение как полноценный VMess outbound и проверен против Xray только для AES-128-GCM без authenticated length.
+`core::vmess::body` содержит направленный codec AEAD-чанков для AES-128-GCM и ChaCha20-Poly1305, двухбайтового размера, optional authenticated length с `auth_len`, проверки границ (размер зашифрованного чанка не более 2^14 байт, согласно спецификации Project X) и последовательного nonce. Счётчик nonce ограничен 65 536 чанками и завершается ошибкой вместо повторного использования nonce; безопасный rollover должен быть определён до подключения к длительным TCP-сессиям. Codec пока не включён в приложение как полноценный VMess outbound. Проверка с Xray расширяется на AES-128-GCM и ChaCha20-Poly1305, оба с обычной и аутентифицированной длиной; она пока не подтверждает chunk masking или global padding.
 
-Добавлена первая сквозная проверка против настоящего Xray: тест строит modern VMess AEAD по raw TCP с AES-128-GCM, AuthID, зашифрованным request header, body chunks и зашифрованными response header/body; он проверяет двусторонний обмен через loopback echo. Результат проверки для каждого коммита отображается в GitHub CI. Тест покрывает только этот профиль; UDP, ChaCha20-Poly1305, authenticated length, другие transports и V2Ray не подтверждаются. Response header parser теперь требует полный четырёхбайтовый fixed prefix Xray и не считает последующие байты частью заголовка.
+Добавлена сквозная проверка против настоящего Xray: тест строит modern VMess AEAD по raw TCP и проверяет двусторонний обмен через loopback echo для AES-128-GCM и ChaCha20-Poly1305, с обычной и аутентифицированной длиной. Результат проверки для каждого коммита отображается в GitHub CI. Проверка пока не подтверждает UDP, chunk masking, global padding, другие transports, V2Ray или стабильные wire-векторы. Response header parser требует полный четырёхбайтовый fixed prefix Xray и не считает последующие байты частью заголовка.
 
 Framing и derivation ключа `auth_len` сверены с [Xray `EncodeRequestBody`](https://github.com/XTLS/Xray-core/blob/main/proxy/vmess/encoding/client.go), [Xray chunk parser](https://github.com/XTLS/Xray-core/blob/main/common/crypto/chunk.go) и [V2Ray `EncodeRequestBody`](https://github.com/v2fly/v2ray-core/blob/master/proxy/vmess/encoding/client.go). Сверка исходников не заменяет независимый golden vector или сетевой interop.
 
@@ -21,7 +21,7 @@ Framing и derivation ключа `auth_len` сверены с [Xray `EncodeReque
 
 ## Оставшаяся работа
 
-1. Расширить interop с Xray на ChaCha20-Poly1305 и authenticated length; добавить отдельную проверку V2Ray и стабильные wire-векторы для AuthID/request header.
+1. Добавить отдельную проверку V2Ray и стабильные независимые wire-векторы для AuthID/request header.
 2. Подключить AEAD-чанки к потокам TCP и packet-семантике UDP; проверить варианты chunk masking, global padding, EOF/ошибки и nonce exhaustion на независимых wire-векторах.
 3. Подключить TCP и UDP семантику, используя общие TCP/TLS/REALITY и поддерживаемые транспорты проекта без дублирования транспортного слоя.
 4. Подключить типизированную конфигурацию к factory, Xray/sing-box importers, URI/subscription flow и добавить отрицательные тесты для неподдерживаемых параметров.
