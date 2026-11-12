@@ -2630,6 +2630,7 @@ dependencies = [
  "blake2b_simd",
  "brotli-decompressor 6.0.1",
  "bytes",
+ "chacha20poly1305",
  "futures-util",
  "h2",
  "h3",
