@@ -30,15 +30,15 @@ pub struct ResponseHeader {
 
 /// Decode one plaintext VMess response-header payload.
 ///
-/// The payload starts with the response marker, option byte, and command ID.
-/// A non-zero command ID is followed by a one-byte length and that many
+/// The payload starts with a four-byte response marker, option, command ID,
+/// and command-data length. A non-zero command ID is followed by that many
 /// command-specific bytes. Returns the decoded fields and exact bytes used,
 /// leaving any following bytes untouched.
 pub fn decode_response_header(
     input: &[u8],
     expected_response_header: u8,
 ) -> Result<(ResponseHeader, usize)> {
-    if input.len() < 3 {
+    if input.len() < 4 {
         return Err(protocol_error("truncated VMess response header"));
     }
     if input[0] != expected_response_header {
@@ -48,13 +48,10 @@ pub fn decode_response_header(
     let response_header = input[0];
     let options = input[1];
     let command_id = input[2];
+    let command_len = usize::from(input[3]);
     let (command, consumed) = if command_id == 0 {
-        (None, 3)
+        (None, 4)
     } else {
-        if input.len() < 4 {
-            return Err(protocol_error("truncated VMess response command length"));
-        }
-        let command_len = usize::from(input[3]);
         let consumed = 4 + command_len;
         if input.len() < consumed {
             return Err(protocol_error("truncated VMess response command data"));
@@ -88,13 +85,13 @@ mod tests {
 
     #[test]
     fn decodes_response_header_without_command_and_preserves_following_bytes() {
-        let input = [0x5a, 0x01, 0x00, 0xde, 0xad];
+        let input = [0x5a, 0x01, 0x00, 0x00, 0xde, 0xad];
         let (header, consumed) = decode_response_header(&input, 0x5a).unwrap();
 
         assert_eq!(header.response_header, 0x5a);
         assert_eq!(header.options, 0x01);
         assert_eq!(header.command, None);
-        assert_eq!(consumed, 3);
+        assert_eq!(consumed, 4);
         assert_eq!(&input[consumed..], &[0xde, 0xad]);
     }
 
@@ -116,8 +113,8 @@ mod tests {
 
     #[test]
     fn rejects_invalid_marker_and_truncated_fields() {
-        assert!(decode_response_header(&[0, 0, 0], 1).is_err());
-        assert!(decode_response_header(&[1, 0], 1).is_err());
+        assert!(decode_response_header(&[0, 0, 0, 0], 1).is_err());
+        assert!(decode_response_header(&[1, 0, 0], 1).is_err());
         assert!(decode_response_header(&[1, 0, 1], 1).is_err());
         assert!(decode_response_header(&[1, 0, 1, 2, 0xaa], 1).is_err());
     }

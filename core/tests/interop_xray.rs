@@ -44,6 +44,9 @@ use reality_core::transport::tcp_tls::{
 };
 use reality_core::transport::{dial, TcpVlessStream, TransportConfig};
 use reality_core::vless::{Address, Command as VlessCommand, VlessConfig};
+use reality_core::vmess::{
+    aead as vmess_aead, body as vmess_body, header as vmess_header, response as vmess_response,
+};
 
 const SHORT_ID: &str = "0123abcd";
 
@@ -2617,4 +2620,119 @@ async fn doq_through_vless_against_xray() {
             "{a:?}"
         );
     }
+}
+
+#[tokio::test]
+#[ignore = "нужен Xray-core: scripts/interop_xray.sh"]
+async fn vmess_aead_tcp_echo_against_xray() {
+    let echo_port = start_echo().await;
+    let inbound_port = free_port();
+    let user_id = uuid::Uuid::new_v4();
+    let vmess_inbound = serde_json_lite::obj(vec![
+        ("listen", serde_json_lite::s("127.0.0.1")),
+        ("port", serde_json_lite::n(inbound_port as i64)),
+        ("protocol", serde_json_lite::s("vmess")),
+        (
+            "settings",
+            serde_json_lite::obj(vec![(
+                "clients",
+                serde_json_lite::arr(vec![serde_json_lite::obj(vec![
+                    ("id", serde_json_lite::s(user_id.to_string())),
+                    ("alterId", serde_json_lite::n(0)),
+                ])]),
+            )]),
+        ),
+    ]);
+    let _xray = Xray::start(vec![vmess_inbound], &[inbound_port], tempdir::Dir::new()).await;
+
+    let request_body_key = [0x36; 16];
+    let request_body_iv = [0x72; 16];
+    let response_header = 0x5a;
+    let keys = vmess_aead::session_keys(request_body_key, request_body_iv, response_header);
+    let request = vmess_header::RequestHeader {
+        request_body_iv,
+        request_body_key,
+        response_header,
+        options: 0,
+        security: vmess_header::Security::Aes128Gcm,
+        command: vmess_header::Command::Tcp,
+        destination: Some((
+            vmess_header::Address::Ipv4(std::net::Ipv4Addr::LOCALHOST),
+            echo_port,
+        )),
+        padding: Vec::new(),
+    };
+    let plaintext_header = vmess_header::encode_request_header(&request).unwrap();
+    let command_key = vmess_aead::command_key(&user_id);
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("system clock is after the Unix epoch")
+        .as_secs();
+    let auth_id = vmess_aead::create_auth_id(&command_key, timestamp, [0x19, 0x28, 0x37, 0x46]);
+    let encrypted_header =
+        vmess_aead::seal_header(&command_key, &auth_id, &[0xa5; 8], &plaintext_header).unwrap();
+
+    let mut stream = TcpStream::connect(("127.0.0.1", inbound_port))
+        .await
+        .expect("connect to the Xray VMess inbound");
+    stream.write_all(&encrypted_header).await.unwrap();
+    let mut request_body = vmess_body::BodyChunkCodec::new(
+        vmess_body::BodyCipher::Aes128Gcm,
+        request_body_key,
+        request_body_iv,
+        None,
+    );
+    let payload = b"vpn-core VMess AEAD interop";
+    stream
+        .write_all(&request_body.seal_chunk(payload).unwrap())
+        .await
+        .unwrap();
+    stream
+        .write_all(&request_body.seal_chunk(&[]).unwrap())
+        .await
+        .unwrap();
+    stream.shutdown().await.unwrap();
+
+    tokio::time::timeout(Duration::from_secs(10), async {
+        let mut encrypted_length = [0; 18];
+        stream.read_exact(&mut encrypted_length).await.unwrap();
+        let header_wire_len = vmess_aead::response_header_wire_len(&keys, &encrypted_length)
+            .expect("authenticate Xray's response-header length");
+        let mut encrypted_response_header = encrypted_length.to_vec();
+        encrypted_response_header.resize(header_wire_len, 0);
+        stream
+            .read_exact(&mut encrypted_response_header[18..])
+            .await
+            .unwrap();
+        let (response_header_payload, consumed) =
+            vmess_aead::open_response_header(&keys, &encrypted_response_header)
+                .expect("decrypt Xray's AEAD response header");
+        assert_eq!(consumed, header_wire_len);
+        let (response_header, response_consumed) =
+            vmess_response::decode_response_header(&response_header_payload, response_header)
+                .expect("parse Xray's response header");
+        assert_eq!(response_consumed, response_header_payload.len());
+        assert!(response_header.command.is_none());
+
+        let mut encrypted_chunk_len = [0; 2];
+        stream.read_exact(&mut encrypted_chunk_len).await.unwrap();
+        let chunk_len = usize::from(u16::from_be_bytes(encrypted_chunk_len));
+        assert!(chunk_len >= 16, "AEAD chunk must include its tag");
+        let mut encrypted_chunk = encrypted_chunk_len.to_vec();
+        encrypted_chunk.resize(2 + chunk_len, 0);
+        stream.read_exact(&mut encrypted_chunk[2..]).await.unwrap();
+        let mut response_body = vmess_body::BodyChunkCodec::new(
+            vmess_body::BodyCipher::Aes128Gcm,
+            keys.response_body_key,
+            keys.response_body_iv,
+            None,
+        );
+        let (echoed, consumed) = response_body
+            .open_chunk(&encrypted_chunk)
+            .expect("authenticate Xray's response body chunk");
+        assert_eq!(consumed, encrypted_chunk.len());
+        assert_eq!(echoed, payload);
+    })
+    .await
+    .expect("Xray VMess TCP AEAD round-trip timed out");
 }

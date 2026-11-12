@@ -267,49 +267,12 @@ pub fn open_response_header(
     keys: &SessionKeys,
     encrypted: &[u8],
 ) -> crate::error::Result<(Vec<u8>, usize)> {
-    if encrypted.len() < 18 {
-        return Err(crate::error::Error::Protocol(
-            "truncated VMess response header length".into(),
-        ));
-    }
-    let length_key = kdf(&keys.response_body_key, &[RESPONSE_HEADER_LENGTH_KEY]);
-    let length_nonce = kdf(&keys.response_body_iv, &[RESPONSE_HEADER_LENGTH_NONCE]);
-    let length_cipher = Aes128Gcm::new_from_slice(&length_key[..16])
-        .map_err(|_| crate::error::Error::Protocol("invalid VMess response length key".into()))?;
-    let length_nonce: [u8; 12] = length_nonce[..12]
-        .try_into()
-        .map_err(|_| crate::error::Error::Protocol("invalid VMess response length nonce".into()))?;
-    let length_plaintext = length_cipher
-        .decrypt(
-            &Nonce::from(length_nonce),
-            Payload {
-                msg: &encrypted[..18],
-                aad: &[],
-            },
-        )
-        .map_err(|_| {
-            crate::error::Error::Protocol(
-                "VMess response header length authentication failed".into(),
-            )
-        })?;
-    let length_bytes: [u8; 2] = length_plaintext.as_slice().try_into().map_err(|_| {
-        crate::error::Error::Protocol("invalid VMess response header length".into())
-    })?;
-    let payload_len = usize::from(u16::from_be_bytes(length_bytes));
-    // Xray response headers contain a 2-byte fixed prefix and an optional
-    // command frame whose one-byte length is itself bounded to 255 bytes.
-    if payload_len > 259 {
-        return Err(crate::error::Error::Protocol(
-            "VMess response header exceeds its protocol limit".into(),
-        ));
-    }
-    let consumed = 18usize + payload_len + 16;
+    let consumed = response_header_wire_len(keys, encrypted)?;
     if encrypted.len() < consumed {
         return Err(crate::error::Error::Protocol(
             "truncated VMess response header payload".into(),
         ));
     }
-
     let payload_key = kdf(&keys.response_body_key, &[RESPONSE_HEADER_PAYLOAD_KEY]);
     let payload_nonce = kdf(&keys.response_body_iv, &[RESPONSE_HEADER_PAYLOAD_NONCE]);
     let payload_cipher = Aes128Gcm::new_from_slice(&payload_key[..16])
@@ -329,6 +292,52 @@ pub fn open_response_header(
             crate::error::Error::Protocol("VMess response header authentication failed".into())
         })?;
     Ok((payload, consumed))
+}
+
+/// Authenticate the encrypted response-header length and return its total
+/// wire size. Callers can read exactly this many bytes from a stream without
+/// consuming the following encrypted body.
+pub fn response_header_wire_len(
+    keys: &SessionKeys,
+    encrypted_length: &[u8],
+) -> crate::error::Result<usize> {
+    if encrypted_length.len() < 18 {
+        return Err(crate::error::Error::Protocol(
+            "truncated VMess response header length".into(),
+        ));
+    }
+    let length_key = kdf(&keys.response_body_key, &[RESPONSE_HEADER_LENGTH_KEY]);
+    let length_nonce = kdf(&keys.response_body_iv, &[RESPONSE_HEADER_LENGTH_NONCE]);
+    let length_cipher = Aes128Gcm::new_from_slice(&length_key[..16])
+        .map_err(|_| crate::error::Error::Protocol("invalid VMess response length key".into()))?;
+    let length_nonce: [u8; 12] = length_nonce[..12]
+        .try_into()
+        .map_err(|_| crate::error::Error::Protocol("invalid VMess response length nonce".into()))?;
+    let length_plaintext = length_cipher
+        .decrypt(
+            &Nonce::from(length_nonce),
+            Payload {
+                msg: &encrypted_length[..18],
+                aad: &[],
+            },
+        )
+        .map_err(|_| {
+            crate::error::Error::Protocol(
+                "VMess response header length authentication failed".into(),
+            )
+        })?;
+    let length_bytes: [u8; 2] = length_plaintext.as_slice().try_into().map_err(|_| {
+        crate::error::Error::Protocol("invalid VMess response header length".into())
+    })?;
+    let payload_len = usize::from(u16::from_be_bytes(length_bytes));
+    // Xray response headers contain a 2-byte fixed prefix and an optional
+    // command frame whose one-byte length is itself bounded to 255 bytes.
+    if payload_len > 259 {
+        return Err(crate::error::Error::Protocol(
+            "VMess response header exceeds its protocol limit".into(),
+        ));
+    }
+    Ok(18usize + payload_len + 16)
 }
 
 fn crc32_ieee(bytes: &[u8]) -> u32 {
@@ -504,6 +513,10 @@ mod tests {
         assert_eq!(keys.response_header, 0x5a);
         let plaintext = [0x5a, 0x00];
         let mut wire = seal_response_fixture(&keys, &plaintext);
+        assert_eq!(
+            response_header_wire_len(&keys, &wire[..18]).unwrap(),
+            wire.len()
+        );
         wire.extend_from_slice(b"response body follows");
 
         let (opened, consumed) = open_response_header(&keys, &wire).unwrap();
