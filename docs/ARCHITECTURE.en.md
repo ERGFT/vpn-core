@@ -1044,12 +1044,17 @@ implementation:
     CI #759 passed all 8 jobs on head `4300fc1`; full rate negotiation and
     Brutal are not supported;
   - Stage 6.3 implements a random initial port from the configured ranges
-    and a port hop every 30 seconds after authentication. A fresh protected
-    UDP socket starts before the previous one is retired, and the previous
-    socket remains available for 2 seconds. PR #197 is merged; CI #761 passed
-    all 8 jobs on head `3762074`. Reference interoperability was tested
-    narrowly in CI #812; port hopping, performance, network-interface changes,
-    and recovery have not been verified.
+    and a port hop every 30 seconds after authentication. PR #197 is merged;
+    CI #761 passed all 8 jobs on head `3762074`. Limited reference
+    interoperability passed in CI #812. CI #823 exposed a remote QUIC peer
+    change after the hop; peer-address normalization did not prevent the
+    heartbeat timeout in CI #828 on head `395dd36`. PR #213 sends each local UDP
+    socket change to Quinn through `Endpoint::rebind_abstract`, using a distinct
+    adapter per socket generation. The Linux job in CI #833 confirmed the
+    official TCP heartbeat and TCP/UDP relays after a port hop. Windows tests
+    passed on retry after one `WSAEACCES` socket bind failure. Performance, real
+    interface changes, and recovery from a real network failure remain
+    unverified.
 
 ## 14. Protocols: VLESS, Vision, XUDP, Mux.Cool, Trojan, and Shadowsocks
 

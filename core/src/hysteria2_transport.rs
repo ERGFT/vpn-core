@@ -233,7 +233,14 @@ pub(crate) async fn connect(
         };
         let udp_mux = UdpDatagramMux::new(connection.clone(), datagram_overhead);
         let udp_driver = udp_mux.clone().spawn();
-        let hop_task = hop_state.and_then(|state| state.start(PORT_HOP_INTERVAL, addr.is_ipv6()));
+        let hop_task = hop_state.and_then(|state| {
+            state.start(
+                endpoint.clone(),
+                PORT_HOP_INTERVAL,
+                addr.is_ipv6(),
+                salamander_key.map(|key| key.to_vec()),
+            )
+        });
         return Ok(Hysteria2Connection {
             _endpoint: endpoint,
             connection,

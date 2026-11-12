@@ -119,8 +119,8 @@ MetaCubeX/meta-rules-dat) и исходный `.json`, только `type: local
   `method` и `password`, Xray — одну запись `settings.servers`.
   Классические методы: `aes-128-gcm`, `aes-256-gcm` и
   `chacha20-ietf-poly1305`, TCP и нативный UDP. Ветка SIP022/2022 поддерживает
-  TCP и нативный UDP; полный CI и Xray interop прошли на head `2c0d14e`, а
-  включение в `main` ожидает целевого PR. Методы
+  TCP и нативный UDP; PR #206 включён в `main`, полный CI и Xray interop
+  прошли на head `2c0d14e`. Методы
   `2022-blake3-aes-128-gcm`/`2022-blake3-aes-256-gcm` требуют base64 PSK
   длиной 16/32 байта. Устаревшие stream-cipher методы, SIP003 plugins, UDP-over-TCP и ограничения
   `network` явно отклоняются; неподдерживаемые записи подписки пропускаются
