@@ -1048,10 +1048,12 @@ implementation:
     CI #761 passed all 8 jobs on head `3762074`. Limited reference
     interoperability passed in CI #812. CI #823 exposed a remote QUIC peer
     change after the hop; peer-address normalization did not prevent the
-    heartbeat timeout in CI #828 on head `395dd36`. PR #213 now sends each
-    local UDP socket change to Quinn through `Endpoint::rebind_abstract`, using
-    a distinct adapter per socket generation; official interoperability is
-    awaiting CI. Performance, network-interface changes, and recovery remain
+    heartbeat timeout in CI #828 on head `395dd36`. PR #213 sends each local UDP
+    socket change to Quinn through `Endpoint::rebind_abstract`, using a distinct
+    adapter per socket generation. The Linux job in CI #833 confirmed the
+    official TCP heartbeat and TCP/UDP relays after a port hop. Windows tests
+    passed on retry after one `WSAEACCES` socket bind failure. Performance, real
+    interface changes, and recovery from a real network failure remain
     unverified.
 
 ## 14. Protocols: VLESS, Vision, XUDP, Mux.Cool, Trojan, and Shadowsocks

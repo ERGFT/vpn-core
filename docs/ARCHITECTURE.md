@@ -991,11 +991,13 @@ flow. `transport::open(&TransportConfig)` открывает только тра
     порта раз в 30 секунд после auth. PR #197 слит; CI #761 прошёл 8/8 jobs
     на head `3762074`. Reference interop ограниченно проверен в CI #812.
     CI #823 выявил смену remote QUIC peer после hop; нормализация peer address
-    не устранила heartbeat timeout в CI #828 на head `395dd36`. PR #213 теперь
+    не устранила heartbeat timeout в CI #828 на head `395dd36`. PR #213
     передаёт Quinn каждую смену локального UDP socket через
-    `Endpoint::rebind_abstract`, с отдельной обёрткой на поколение socket;
-    официальный interop ожидает CI. Производительность, смена сетевого
-    интерфейса и восстановление не проверены.
+    `Endpoint::rebind_abstract`, с отдельной обёрткой на поколение socket.
+    Linux job CI #833 подтвердил официальный TCP heartbeat и TCP/UDP relay
+    после port hop. Windows tests прошли при повторном запуске после единичного
+    `WSAEACCES` при bind сокета. Производительность, смена сетевого интерфейса
+    и восстановление после реального сетевого сбоя не проверены.
 
 ## 14. Протоколы: VLESS, Vision, XUDP, Mux.Cool, Trojan и Shadowsocks
 
