@@ -54,6 +54,12 @@ impl PortSpec {
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RuleConfig {
+    #[serde(default)]
+    pub ip_version: Option<u8>,
+    #[serde(skip)]
+    pub terminal: bool,
+    #[serde(skip)]
+    pub resolver: Option<(String, super::dns::Strategy, bool)>,
     /// Домен целиком: `example.com` (без поддоменов).
     #[serde(default)]
     pub domain: Vec<String>,
@@ -92,6 +98,14 @@ pub struct RuleConfig {
     /// UID владельцев соединений (Android/Linux), группа «или».
     #[serde(default)]
     pub user_id: Vec<u32>,
+    #[serde(default)]
+    pub owner_unknown: bool,
+    #[serde(default)]
+    pub process_path: Vec<String>,
+    #[serde(default)]
+    pub process_path_regex: Vec<String>,
+    #[serde(default)]
+    pub process_name: Vec<String>,
     /// Инверсия всего предиката; неизвестный UID не считается «другим приложением».
     #[serde(default)]
     pub invert: bool,
@@ -375,12 +389,18 @@ pub struct Rule {
     domains: DomainSet,
     ips: IpSet,
     has_dest: bool,
+    ip_version: Option<u8>,
     ports: Vec<RangeInclusive<u16>>,
     network: Option<Network>,
     inbounds: Vec<String>,
     user_ids: HashSet<u32>,
+    owner_unknown: bool,
+    process_paths: Vec<String>,
+    process_names: Vec<String>,
+    process_regex: Option<regex::RegexSet>,
     invert: bool,
     pub outbound: Arc<dyn Outbound>,
+    pub resolver: Option<(String, super::dns::Strategy, bool)>,
 }
 
 /// Адрес назначения как IP, если это IP (в том числе IP, записанный
@@ -401,24 +421,73 @@ impl Rule {
 
     /// Нужен ли UID для принятия решения этим правилом.
     pub fn missing_owner(&self, meta: &Metadata) -> bool {
-        !self.user_ids.is_empty() && meta.user_id.is_none() && self.matches_traffic(meta)
+        ((!self.user_ids.is_empty() && meta.user_id.is_none())
+            || (self.needs_process() && meta.process_path.is_none()))
+            && self.matches_traffic(meta)
     }
 
     pub fn needs_owner(&self) -> bool {
-        !self.user_ids.is_empty()
+        !self.user_ids.is_empty() || self.owner_unknown
+    }
+
+    pub fn needs_process(&self) -> bool {
+        !self.process_paths.is_empty()
+            || !self.process_names.is_empty()
+            || self.process_regex.is_some()
+    }
+
+    fn matches_process(&self, path: &str) -> bool {
+        let name = path.rsplit(['\\', '/']).next().unwrap_or(path);
+        self.process_paths
+            .iter()
+            .any(|entry| entry.eq_ignore_ascii_case(path))
+            || self
+                .process_names
+                .iter()
+                .any(|entry| entry.eq_ignore_ascii_case(name))
+            || self
+                .process_regex
+                .as_ref()
+                .is_some_and(|regex| regex.is_match(path))
+    }
+
+    pub(crate) fn owner_matches(&self, uid: Option<u32>, path: Option<&str>) -> Option<bool> {
+        if (self.needs_owner() && uid.is_none()) || (self.needs_process() && path.is_none()) {
+            return None;
+        }
+        Some(
+            (!self.needs_owner() || uid.is_some_and(|uid| self.user_ids.contains(&uid)))
+                && (!self.needs_process() || path.is_some_and(|path| self.matches_process(path))),
+        )
     }
 
     pub fn matches(&self, meta: &Metadata) -> bool {
+        if self.owner_unknown {
+            return self.matches_traffic(meta) && meta.user_id.is_none();
+        }
         if self.missing_owner(meta) {
             return false;
         }
         let hit = self.matches_traffic(meta)
             && (self.user_ids.is_empty()
-                || meta.user_id.is_some_and(|uid| self.user_ids.contains(&uid)));
+                || meta.user_id.is_some_and(|uid| self.user_ids.contains(&uid)))
+            && (!self.needs_process()
+                || meta
+                    .process_path
+                    .as_deref()
+                    .is_some_and(|path| self.matches_process(path)));
         hit != self.invert
     }
 
     fn matches_traffic(&self, meta: &Metadata) -> bool {
+        if let Some(expected) = self.ip_version {
+            let actual = meta
+                .destination_ip_version
+                .or_else(|| target_ip(&meta.target).map(|ip| if ip.is_ipv4() { 4 } else { 6 }));
+            if actual != Some(expected) {
+                return false;
+            }
+        }
         if let Some(n) = self.network {
             if n != meta.network {
                 return false;
@@ -506,6 +575,16 @@ pub fn compile(
     geo: &GeoFiles,
 ) -> Result<Rule> {
     let n = index + 1;
+    if c.owner_unknown && (!c.user_id.is_empty() || c.invert || c.outbound != "__reject") {
+        return Err(Error::Config(format!(
+            "правило {n}: owner_unknown допустимо только для блокировки"
+        )));
+    }
+    if c.ip_version.is_some_and(|value| !matches!(value, 4 | 6)) {
+        return Err(Error::Config(format!(
+            "правило {n}: ip_version должен быть 4 или 6"
+        )));
+    }
     let domains = DomainSet::build(
         &DomainLists {
             domain: &c.domain,
@@ -550,6 +629,13 @@ pub fn compile(
         && c.network.is_none()
         && c.inbound.is_empty()
         && c.user_id.is_empty()
+        && !c.owner_unknown
+        && c.process_path.is_empty()
+        && c.process_path_regex.is_empty()
+        && c.process_name.is_empty()
+        && c.resolver.is_none()
+        && c.ip_version.is_none()
+        && !c.terminal
     {
         return Err(Error::Config(format!(
             "правило {n} без условий подошло бы ко всему — для этого есть route.final"
@@ -561,11 +647,24 @@ pub fn compile(
         domains,
         ips,
         has_dest,
+        ip_version: c.ip_version,
         ports,
         network: c.network,
         inbounds: c.inbound.clone(),
         user_ids: c.user_id.iter().copied().collect(),
+        owner_unknown: c.owner_unknown,
+        process_paths: c.process_path.clone(),
+        process_names: c.process_name.clone(),
+        process_regex: if c.process_path_regex.is_empty() {
+            None
+        } else {
+            Some(
+                regex::RegexSet::new(&c.process_path_regex)
+                    .map_err(|e| Error::Config(format!("правило {n}: process_path_regex: {e}")))?,
+            )
+        },
         invert: c.invert,
+        resolver: c.resolver.clone(),
         outbound,
     })
 }

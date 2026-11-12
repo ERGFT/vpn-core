@@ -100,6 +100,8 @@ pub async fn open(
         sniffed: None,
         inbound_type: "internal",
         user_id: None,
+        process_path: None,
+        destination_ip_version: None,
         rule: None,
     };
     let s = out.connect(&meta).await?;
