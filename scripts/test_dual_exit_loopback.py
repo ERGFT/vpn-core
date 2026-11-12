@@ -3,6 +3,7 @@
 """Exercise tagged exits with real SOCKS handshakes over loopback."""
 import argparse
 import json
+import os
 import socket
 import socketserver
 import sys
@@ -139,8 +140,13 @@ def run_windows_tun(core):
     if sys.platform != "win32":
         raise RuntimeError("The TUN fixture requires an isolated Windows runner")
     address = "192.0.2.42"
-    with socketserver.ThreadingTCPServer(("127.0.0.1", 0), Exit) as primary, \
-         socketserver.ThreadingTCPServer(("127.0.0.1", 0), Exit) as secondary, \
+    # TCP dials under Windows TUN are pinned to the physical interface.
+    # Select its local address without sending a packet to the synthetic target.
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as route:
+        route.connect((address, 9))
+        underlay = route.getsockname()[0]
+    with socketserver.ThreadingTCPServer((underlay, 0), Exit) as primary, \
+         socketserver.ThreadingTCPServer((underlay, 0), Exit) as secondary, \
          TemporaryDirectory(prefix="dual-tun-", dir=Path.cwd()) as directory:
         primary.label, secondary.label = "vpn1", "vpn2"
         primary.seen, secondary.seen = [], []
@@ -149,7 +155,7 @@ def run_windows_tun(core):
         config = {
             "inbounds": [{"type": "tun", "tag": "tun", "interface_name": "reality-dual-test",
                           "address": ["172.23.61.1/30"], "auto_route": True}],
-            "outbounds": [{"type": "socks", "tag": server.label, "server": "127.0.0.1",
+            "outbounds": [{"type": "socks", "tag": server.label, "server": underlay,
                            "server_port": server.server_address[1], "version": "5", "network": "tcp"}
                           for server in (primary, secondary)],
             "route": {
@@ -163,7 +169,8 @@ def run_windows_tun(core):
         subprocess.run([core, "--check", "-c", str(path)], check=True, timeout=15)
         with Path(directory, "core.log").open("w+b") as log:
             process = subprocess.Popen([core, "-c", str(path), "--exit-on-stdin-eof"],
-                                       stdin=subprocess.PIPE, stdout=log, stderr=log, cwd=Path(core).parent)
+                                       stdin=subprocess.PIPE, stdout=log, stderr=log, cwd=Path(core).parent,
+                                       env={**os.environ, "RUST_LOG": "info,reality_core::app=debug"})
             try:
                 deadline = time.monotonic() + 45
                 output = ""
@@ -176,7 +183,7 @@ def run_windows_tun(core):
                             break
                     except OSError:
                         time.sleep(0.25)
-                assert output.endswith("\r\n\r\nvpn2"), f"Python process did not select VPN-2: {output!r}"
+                assert output.endswith("\r\n\r\nvpn2"), f"Python process did not select VPN-2: {output!r}, exits={primary.seen!r}/{secondary.seen!r}"
                 assert not primary.seen and secondary.seen == [(address, 80)]
                 alternate = subprocess.run(
                     ["curl.exe", "--noproxy", "*", "--max-time", "5", "--fail", "--silent",
