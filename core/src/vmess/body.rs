@@ -16,8 +16,8 @@ use zeroize::{Zeroize, Zeroizing};
 use crate::error::{Error, Result};
 
 const TAG_LEN: usize = 16;
-/// Bound a chunk so its ciphertext, tags, and prefixes fit a 32 KiB frame.
-pub const MAX_CHUNK_PLAINTEXT: usize = 32 * 1024 - TAG_LEN * 2 - 2;
+/// Bound encrypted body chunks to the protocol maximum of 2^14 bytes.
+pub const MAX_CHUNK_PLAINTEXT: usize = (1 << 14) - TAG_LEN;
 const MAX_CHUNK_COUNT: u32 = u16::MAX as u32 + 1;
 
 /// Cipher selected by a validated modern VMess configuration.
@@ -124,7 +124,7 @@ impl BodyChunkCodec {
         };
 
         let size = encoded_size;
-        if size < TAG_LEN || size > MAX_CHUNK_PLAINTEXT + TAG_LEN {
+        if !(TAG_LEN..=MAX_CHUNK_PLAINTEXT + TAG_LEN).contains(&size) {
             return Err(protocol_error(
                 "VMess encrypted chunk length is out of bounds",
             ));
@@ -158,7 +158,7 @@ impl BodyChunkCodec {
                 <Aes128Gcm as aes_gcm::KeyInit>::new_from_slice(self.key.as_ref())
                     .map_err(|_| protocol_error("invalid VMess AES-128-GCM key"))?
                     .encrypt(
-                        Nonce::from_slice(nonce),
+                        &Nonce::from(*nonce),
                         Payload {
                             msg: plaintext,
                             aad: &[],
@@ -170,7 +170,7 @@ impl BodyChunkCodec {
                 let key = chacha_key(&self.key);
                 <ChaCha20Poly1305 as chacha20poly1305::KeyInit>::new_from_slice(&key[..])
                     .map_err(|_| protocol_error("invalid VMess ChaCha20-Poly1305 key"))?
-                    .encrypt(ChaChaNonce::from_slice(nonce), plaintext)
+                    .encrypt(&ChaChaNonce::from(*nonce), plaintext)
                     .map_err(|_| protocol_error("failed to seal VMess body chunk"))
             }
         }
@@ -182,7 +182,7 @@ impl BodyChunkCodec {
                 <Aes128Gcm as aes_gcm::KeyInit>::new_from_slice(self.key.as_ref())
                     .map_err(|_| protocol_error("invalid VMess AES-128-GCM key"))?
                     .decrypt(
-                        Nonce::from_slice(nonce),
+                        &Nonce::from(*nonce),
                         Payload {
                             msg: ciphertext,
                             aad: &[],
@@ -194,7 +194,7 @@ impl BodyChunkCodec {
                 let key = chacha_key(&self.key);
                 <ChaCha20Poly1305 as chacha20poly1305::KeyInit>::new_from_slice(&key[..])
                     .map_err(|_| protocol_error("invalid VMess ChaCha20-Poly1305 key"))?
-                    .decrypt(ChaChaNonce::from_slice(nonce), ciphertext)
+                    .decrypt(&ChaChaNonce::from(*nonce), ciphertext)
                     .map_err(|_| protocol_error("VMess body chunk authentication failed"))
             }
         }
@@ -236,7 +236,7 @@ fn chacha_key(key: &[u8; 16]) -> Zeroizing<[u8; 32]> {
     use md5::Md5;
 
     let mut first = Md5::digest(key);
-    let mut second = Md5::digest(&first);
+    let mut second = Md5::digest(first);
     let mut expanded = Zeroizing::new([0; 32]);
     expanded[..16].copy_from_slice(&first);
     expanded[16..].copy_from_slice(&second);
@@ -299,6 +299,18 @@ mod tests {
         assert_eq!(receiver.open_chunk(&frame).unwrap().0, b"response");
     }
 
+    #[test]
+    fn maximum_protocol_chunk_round_trips_with_both_length_formats() {
+        for authenticated_length in [false, true] {
+            let mut sender = codec(BodyCipher::Aes128Gcm, authenticated_length);
+            let mut receiver = codec(BodyCipher::Aes128Gcm, authenticated_length);
+            let payload = vec![0x5a; MAX_CHUNK_PLAINTEXT];
+            let frame = sender.seal_chunk(&payload).unwrap();
+            let (opened, consumed) = receiver.open_chunk(&frame).unwrap();
+            assert_eq!(opened, payload);
+            assert_eq!(consumed, frame.len());
+        }
+    }
     #[test]
     fn chunk_nonce_advances_and_empty_chunk_is_preserved() {
         let mut sender = codec(BodyCipher::Aes128Gcm, false);
