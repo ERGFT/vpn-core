@@ -773,9 +773,9 @@ impl AsyncUdpSocket for PortHopSocket {
                     ecn: None,
                     dst_ip: None,
                 };
-                return Poll::Ready(Ok(1));
+                Poll::Ready(Ok(1))
             }
-            Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
+            Poll::Ready(Err(error)) => Poll::Ready(Err(error)),
             Poll::Pending => Poll::Pending,
         }
     }
