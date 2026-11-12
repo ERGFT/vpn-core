@@ -7,11 +7,15 @@ The VMess stage has started, but outbound connections are not implemented yet. `
 
 The module now opens an incoming AEAD request-header payload, derives response keys from the random request-body key/IV, and authenticates/opens the two-layer AEAD response header while returning the exact number of consumed bytes. These helpers are not yet connected to a network session and do not replace independent interoperability vectors.
 
+`core::vmess::response` now parses plaintext response-header payload framing: it checks the expected response marker, preserves the option byte, bounds the command frame, and returns the exact parsed length. Command data remains opaque; this module does not implement dynamic-port or connection-control behavior.
+
+The field layout follows the [Project X VMess specification](https://xtls.github.io/en/development/protocols/vmess.html) and [Xray `DecodeResponseHeader`](https://github.com/XTLS/Xray-core/blob/main/proxy/vmess/encoding/client.go#L1061-L1169). This is a source-level structure check, not a network interoperability test.
+
 The parser reuses `TransportConfig` and its validation. It does **not** establish a connection, perform VMess authentication, or imply VMess support in configuration files or subscriptions. Do not register the protocol in the outbound factory or importers until the protocol client works.
 
 ## Remaining work
 
-1. Parse the plaintext response header and verify AuthID/request/response headers against independent current Xray/V2Ray interoperability vectors. Request-header serialization/decoding (address, command, bounded padding, FNV-1a checksum) is implemented, but compatibility remains unconfirmed until CI and reference interoperability checks pass.
+1. Verify AuthID/request/response headers against independent current Xray/V2Ray interoperability vectors. Request-header serialization/decoding and plaintext response-header framing are implemented; compatibility remains unconfirmed until reference interoperability checks pass.
 2. Implement authenticated AES-128-GCM and ChaCha20-Poly1305 chunks with length bounds and correct EOF/error handling.
 3. Add TCP and UDP semantics while reusing the project's shared TCP/TLS/REALITY and supported transports without duplicating the transport layer.
 4. Integrate typed configuration with the outbound factory, Xray/sing-box importers, URI/subscription flow, and negative tests for unsupported parameters.
