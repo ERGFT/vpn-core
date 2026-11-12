@@ -16,6 +16,7 @@
 use std::net::{IpAddr, SocketAddr};
 use std::path::PathBuf;
 
+use hickory_proto::rr::RecordType;
 use serde_json::Value;
 
 use super::link::LinkBuilder;
@@ -714,11 +715,27 @@ fn route_section(
         });
         s.finish()?;
     }
-    for rule in r.objs("rules")? {
+    let route_rules = r.objs("rules")?;
+    let route_rule_count = route_rules.len();
+    for (index, rule) in route_rules.into_iter().enumerate() {
         let action = rule.str("action")?.unwrap_or_else(|| "route".into());
         let inbound = rule.strs("inbound")?;
         match action.as_str() {
             "sniff" => {
+                // NOVA emits a DNS-only sniff followed by a sniff of unnamed traffic.
+                // TUN already intercepts DNS, and FakeIP restores the authoritative name.
+                if rule.has("domain_regex") || rule.has("port") || rule.has("invert") {
+                    let domains = rule.strs("domain_regex")?;
+                    let ports = rule.strs("port")?;
+                    let invert = rule.bool("invert")?.unwrap_or(false);
+                    let sniffers = rule.strs("sniffer")?;
+                    if domains != [".+"]
+                        || !((!invert && ports == ["53"] && sniffers == ["dns"])
+                            || (invert && ports.is_empty() && sniffers.is_empty()))
+                    {
+                        return Err(rule.err("action", "неподдерживаемое условие sniff"));
+                    }
+                }
                 rule.ignore(&["sniffer", "timeout"]);
                 sniff.push((!inbound.is_empty()).then_some(inbound));
                 rule.finish()?;
@@ -735,13 +752,29 @@ fn route_section(
             }
             "reject" => {
                 rule.ignore(&["method", "no_drop"]);
-                route.rules.push(conditions(&rule, inbound, REJECT.into())?);
+                let mut config = conditions(&rule, inbound, REJECT.into())?;
+                config.terminal = index + 1 == route_rule_count;
+                route.rules.push(config);
                 rule.finish()?;
                 continue;
             }
+            "resolve" => {
+                let server = rule.req_str("server")?;
+                let strategy = strategy(&rule, "strategy")?;
+                let mut config = conditions(&rule, inbound, String::new())?;
+                config.resolver = Some((
+                    server,
+                    strategy,
+                    !rule.bool("disable_cache")?.unwrap_or(false),
+                ));
+                route.rules.push(config);
+                rule.finish()?;
+            }
             "route" => {
                 let target = rule.req_str("outbound")?;
-                route.rules.push(conditions(&rule, inbound, target)?);
+                let mut config = conditions(&rule, inbound, target)?;
+                config.terminal = index + 1 == route_rule_count;
+                route.rules.push(config);
                 rule.ignore(&["override_address", "override_port"]);
                 rule.finish()?;
             }
@@ -762,7 +795,25 @@ fn conditions(r: &Obj<'_>, inbound: Vec<String>, outbound: String) -> Result<Rul
         return Err(r.err("type", "логические правила (and/or) не поддерживаются"));
     }
     r.ignore(&["type", "outbound", "action"]);
+    let versions = r.strs("ip_version")?;
+    if versions.len() > 1 {
+        return Err(r.err("ip_version", "ожидалось одно значение"));
+    }
     let mut c = RuleConfig {
+        terminal: false,
+        ip_version: versions
+            .first()
+            .map(|value| {
+                value
+                    .parse::<u8>()
+                    .map_err(|_| r.err("ip_version", "ожидался 4 или 6"))
+            })
+            .transpose()?,
+        resolver: None,
+        owner_unknown: r.bool("owner_unknown")?.unwrap_or(false),
+        process_path: r.strs("process_path")?,
+        process_path_regex: r.strs("process_path_regex")?,
+        process_name: r.strs("process_name")?,
         domain: r.strs("domain")?,
         domain_suffix: r.strs("domain_suffix")?,
         domain_keyword: r.strs("domain_keyword")?,
@@ -924,20 +975,102 @@ fn dns_section(d: Obj<'_>) -> Result<DnsConfig> {
             continue;
         }
         let action = r.str("action")?.unwrap_or_else(|| "route".into());
-        if action != "route" {
-            return Err(r.err(
-                "action",
-                format!("«{action}» не поддерживается (только route)"),
-            ));
-        }
+        let (server, response) = match action.as_str() {
+            "route" => (r.req_str("server")?, None),
+            "reject" => (String::new(), Some("REFUSED".into())),
+            "predefined" if r.req_str("rcode")? == "NOERROR" => {
+                (String::new(), Some("NOERROR".into()))
+            }
+            _ => return Err(r.err("action", format!("«{action}» не поддерживается"))),
+        };
+        let logical = match r.str("type")?.as_deref() {
+            None | Some("default") => false,
+            Some("logical") => true,
+            _ => return Err(r.err("type", "неподдерживаемый тип DNS-правила")),
+        };
+        let (domain, domain_suffix, exclude_domain, exclude_domain_suffix) = if logical {
+            let mut nested = r.objs("rules")?.into_iter();
+            let (Some(positive), Some(negative), None) =
+                (nested.next(), nested.next(), nested.next())
+            else {
+                return Err(r.err("rules", "ожидались область DNS и её исключение"));
+            };
+            if r.str("mode")?.as_deref() != Some("and") || negative.bool("invert")? != Some(true) {
+                return Err(r.err(
+                    "rules",
+                    "ожидалось правило области DNS с инвертированным исключением",
+                ));
+            }
+            let values = (
+                positive.strs("domain")?,
+                positive.strs("domain_suffix")?,
+                negative.strs("domain")?,
+                negative.strs("domain_suffix")?,
+            );
+            if (values.0.is_empty() && values.1.is_empty())
+                || (values.2.is_empty() && values.3.is_empty())
+            {
+                return Err(r.err("rules", "пустая область DNS или исключение"));
+            }
+            positive.finish()?;
+            negative.finish()?;
+            values
+        } else {
+            (
+                r.strs("domain")?,
+                r.strs("domain_suffix")?,
+                Vec::new(),
+                Vec::new(),
+            )
+        };
         cfg.rules.push(DnsRuleConfig {
-            domain: r.strs("domain")?,
-            domain_suffix: r.strs("domain_suffix")?,
+            domain,
+            domain_suffix,
+            exclude_domain,
+            exclude_domain_suffix,
             domain_keyword: r.strs("domain_keyword")?,
             domain_regex: r.strs("domain_regex")?,
             geosite: r.strs("geosite")?,
             rule_set: r.strs("rule_set")?,
-            server: r.req_str("server")?,
+            owner_unknown: r.bool("owner_unknown")?.unwrap_or(false),
+            invert: r.bool("invert")?.unwrap_or(false),
+            user_id: r
+                .strs("user_id")?
+                .into_iter()
+                .map(|value| {
+                    value
+                        .parse::<u32>()
+                        .map_err(|_| r.err("user_id", "ожидался UID"))
+                })
+                .collect::<Result<_>>()?,
+            process_name: r.strs("process_name")?,
+            process_path: r.strs("process_path")?,
+            process_path_regex: r.strs("process_path_regex")?,
+            query_type: r
+                .strs("query_type")?
+                .iter()
+                .map(|value| {
+                    value
+                        .parse::<u16>()
+                        .ok()
+                        .filter(|code| *code != 0)
+                        .or_else(|| {
+                            value
+                                .to_ascii_uppercase()
+                                .parse::<RecordType>()
+                                .ok()
+                                .map(u16::from)
+                        })
+                        .ok_or_else(|| {
+                            r.err(
+                                "query_type",
+                                "ожидался тип DNS-запроса или его числовой код",
+                            )
+                        })
+                })
+                .collect::<Result<_>>()?,
+            server,
+            response,
             strategy: if r.has("strategy") {
                 Some(strategy(&r, "strategy")?)
             } else {

@@ -559,6 +559,8 @@ mod tests {
             sniffed: None,
             inbound_type: "internal",
             user_id: None,
+            process_path: None,
+            destination_ip_version: None,
             rule: None,
         };
         // block — это отказ правилом, а не сбой: дальше не пробуем.

@@ -1648,6 +1648,8 @@ fn meta(port: u16) -> reality_core::app::Metadata {
         sniffed: None,
         inbound_type: "socks",
         user_id: None,
+        process_path: None,
+        destination_ip_version: None,
         rule: None,
     }
 }

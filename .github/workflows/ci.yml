@@ -208,6 +208,11 @@ jobs:
         with:
           name: reality-client-windows
           path: target/release/reality-client.exe
+      - name: Two independent VPN exits
+        run: python scripts/test_dual_exit_loopback.py target/release/reality-client.exe
       - name: служба и TUN на настоящей Windows
         shell: pwsh
         run: ./scripts/windows_live_test.ps1 -Exe target/release/reality-client.exe
+      - name: Two application exits through Wintun
+        shell: pwsh
+        run: python scripts/test_dual_exit_loopback.py (Join-Path $env:RUNNER_TEMP 'rc-live/reality-client.exe') --windows-tun

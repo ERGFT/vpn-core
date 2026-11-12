@@ -6,6 +6,26 @@ use std::sync::{Arc, RwLock};
 
 use crate::app::Network;
 
+#[cfg(windows)]
+mod windows;
+
+pub async fn process_image(
+    network: Network,
+    source: SocketAddr,
+    destination: SocketAddr,
+) -> Option<Arc<str>> {
+    #[cfg(windows)]
+    return tokio::task::spawn_blocking(move || windows::image(network, source, destination))
+        .await
+        .ok()
+        .flatten();
+    #[cfg(not(windows))]
+    {
+        let _ = (network, source, destination);
+        None
+    }
+}
+
 /// Получить UID по исходной паре адресов до fake-IP/sniffing.
 /// `None` — ОС не смогла установить владельца. Обратный вызов не должен блокировать.
 pub type OwnerFn = dyn Fn(Network, SocketAddr, SocketAddr) -> Option<u32> + Send + Sync;

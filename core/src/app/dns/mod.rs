@@ -84,6 +84,10 @@ pub struct DnsRuleConfig {
     #[serde(default)]
     pub domain_suffix: Vec<String>,
     #[serde(default)]
+    pub exclude_domain: Vec<String>,
+    #[serde(default)]
+    pub exclude_domain_suffix: Vec<String>,
+    #[serde(default)]
     pub domain_keyword: Vec<String>,
     #[serde(default)]
     pub domain_regex: Vec<String>,
@@ -92,8 +96,26 @@ pub struct DnsRuleConfig {
     /// tag наборов из `route.rule_set` (берутся только домены).
     #[serde(default)]
     pub rule_set: Vec<String>,
+    /// DNS record type codes. An empty list matches any question type.
+    #[serde(default)]
+    pub query_type: Vec<u16>,
+    #[serde(default)]
+    pub user_id: Vec<u32>,
+    #[serde(default)]
+    pub owner_unknown: bool,
+    #[serde(default)]
+    pub invert: bool,
+    #[serde(default)]
+    pub process_name: Vec<String>,
+    #[serde(default)]
+    pub process_path: Vec<String>,
+    #[serde(default)]
+    pub process_path_regex: Vec<String>,
     /// tag сервера.
+    #[serde(default)]
     pub server: String,
+    #[serde(default)]
+    pub response: Option<String>,
     /// Переопределение общей стратегии только для этого правила.
     #[serde(default)]
     pub strategy: Option<Strategy>,
@@ -129,9 +151,32 @@ pub struct DnsConfig {
     pub cache_size: Option<usize>,
 }
 
+#[derive(Clone, Copy)]
+enum DnsRuleTarget {
+    Upstream(usize),
+    Reply(ResponseCode),
+}
+
+#[derive(Default)]
+pub(crate) struct DnsOwner {
+    uid: Option<u32>,
+    process: Option<Arc<str>>,
+}
+
+struct DnsRule {
+    domains: DomainSet,
+    excluded_domains: DomainSet,
+    types: Vec<u16>,
+    target: DnsRuleTarget,
+    strategy: Option<Strategy>,
+    owner: Option<super::rules::Rule>,
+    owner_unknown: bool,
+    invert: bool,
+}
+
 pub struct Dns {
     servers: Vec<Arc<Upstream>>,
-    rules: Vec<(DomainSet, usize, Option<Strategy>)>,
+    rules: Vec<DnsRule>,
     final_: usize,
     bootstrap: Option<usize>,
     cache: Option<Cache>,
@@ -273,17 +318,74 @@ impl Dns {
                 geo,
             )
             .map_err(|e| Error::Config(format!("dns-правило {}: {e}", i + 1)))?;
-            if set.is_empty() {
+            let excluded_domains = DomainSet::build(
+                &DomainLists {
+                    domain: &r.exclude_domain,
+                    domain_suffix: &r.exclude_domain_suffix,
+                    domain_keyword: &[],
+                    domain_regex: &[],
+                    geosite: &[],
+                },
+                geo,
+            )?;
+            let owner = if r.user_id.is_empty()
+                && r.process_name.is_empty()
+                && r.process_path.is_empty()
+                && r.process_path_regex.is_empty()
+            {
+                None
+            } else {
+                let selector = super::rules::RuleConfig {
+                    user_id: r.user_id.clone(),
+                    process_name: r.process_name.clone(),
+                    process_path: r.process_path.clone(),
+                    process_path_regex: r.process_path_regex.clone(),
+                    ..Default::default()
+                };
+                Some(super::rules::compile(
+                    i,
+                    &selector,
+                    Arc::new(super::outbound::BlockOutbound::new("dns-owner-selector")),
+                    geo,
+                )?)
+            };
+            if set.is_empty() && r.query_type.is_empty() && r.response.is_none() && owner.is_none()
+            {
                 return Err(Error::Config(format!(
                     "dns-правило {} без условий — для этого есть dns.final",
                     i + 1
                 )));
             }
-            rules.push((
-                set,
-                index(&r.server, &format!("dns-правило {}", i + 1))?,
-                r.strategy,
-            ));
+            if r.owner_unknown
+                && (r.invert || owner.is_some() || r.response.as_deref() != Some("REFUSED"))
+            {
+                return Err(Error::Config(
+                    "DNS owner_unknown допустимо только для блокировки".into(),
+                ));
+            }
+            let target = match (r.response.as_deref(), r.server.is_empty()) {
+                (None, false) => {
+                    DnsRuleTarget::Upstream(index(&r.server, &format!("dns-правило {}", i + 1))?)
+                }
+                (Some("NOERROR"), true) => DnsRuleTarget::Reply(ResponseCode::NoError),
+                (Some("REFUSED"), true) => DnsRuleTarget::Reply(ResponseCode::Refused),
+                _ => {
+                    return Err(Error::Config(format!(
+                        "Некорректное действие DNS-правила {}",
+                        i + 1
+                    )))
+                }
+            };
+            rules.push(DnsRule {
+                domains: set,
+                excluded_domains,
+                types: r.query_type.clone(),
+                target,
+                strategy: r.strategy,
+                owner,
+                owner_unknown: r.owner_unknown,
+                invert: r.invert,
+            });
         }
         let mut fakeip_key = String::new();
         let fakeip = if servers.iter().any(|s| s.is_fake()) {
@@ -329,25 +431,72 @@ impl Dns {
 
     /// Сервер для имени. `allow_fake = false` — нужен настоящий ответ
     /// (для `direct` и правил по IP): fakeip пропускается.
-    fn pick(&self, name: &str, allow_fake: bool) -> &Arc<Upstream> {
-        self.policy(name, allow_fake).0
+    /// Сервер и стратегия выбираются одним первым совпавшим правилом.
+    fn policy(
+        &self,
+        name: &str,
+        qtype: Option<RecordType>,
+        allow_fake: bool,
+    ) -> std::result::Result<(&Arc<Upstream>, Strategy), ResponseCode> {
+        self.policy_for(name, qtype, allow_fake, None)
     }
 
-    /// Сервер и стратегия выбираются одним первым совпавшим правилом.
-    fn policy(&self, name: &str, allow_fake: bool) -> (&Arc<Upstream>, Strategy) {
-        for (set, idx, strategy) in &self.rules {
-            let s = &self.servers[*idx];
-            if set.matches(name) && (allow_fake || !s.is_fake()) {
-                return (s, strategy.unwrap_or(self.strategy));
+    fn policy_for(
+        &self,
+        name: &str,
+        qtype: Option<RecordType>,
+        allow_fake: bool,
+        owner: Option<&DnsOwner>,
+    ) -> std::result::Result<(&Arc<Upstream>, Strategy), ResponseCode> {
+        for rule in &self.rules {
+            let DnsRule {
+                domains: set,
+                excluded_domains,
+                types,
+                target,
+                strategy,
+                owner: selector,
+                owner_unknown,
+                invert,
+            } = rule;
+            let mut hit = (set.is_empty() || set.matches(name))
+                && !excluded_domains.matches(name)
+                && (types.is_empty() || qtype.is_some_and(|kind| types.contains(&u16::from(kind))));
+            if *owner_unknown {
+                if hit && owner.is_some_and(|owner| owner.uid.is_none()) {
+                    return Err(ResponseCode::Refused);
+                }
+                continue;
+            }
+            if let Some(selector) = selector {
+                let Some(owner) = owner else { continue };
+                if hit {
+                    match selector.owner_matches(owner.uid, owner.process.as_deref()) {
+                        Some(matches) => hit = matches,
+                        None => return Err(ResponseCode::Refused),
+                    }
+                }
+            }
+            if hit == *invert {
+                continue;
+            }
+            match *target {
+                DnsRuleTarget::Reply(code) => return Err(code),
+                DnsRuleTarget::Upstream(index) => {
+                    let server = &self.servers[index];
+                    if allow_fake || !server.is_fake() {
+                        return Ok((server, strategy.unwrap_or(self.strategy)));
+                    }
+                }
             }
         }
         let f = &self.servers[self.final_];
         if allow_fake || !f.is_fake() {
-            return (f, self.strategy);
+            return Ok((f, self.strategy));
         }
         let real = self.servers.iter().find(|s| !s.is_fake());
         #[allow(clippy::expect_used, reason = "инвариант: проверено при сборке")]
-        (real.expect("проверено при сборке"), self.strategy)
+        Ok((real.expect("проверено при сборке"), self.strategy))
     }
 
     /// Серверы, заданные именем (их адреса нужно узнать до включения TUN).
@@ -372,9 +521,38 @@ impl Dns {
         }
     }
 
+    pub(crate) async fn owner_for_flow(
+        &self,
+        network: super::Network,
+        src: std::net::SocketAddr,
+        dst: std::net::SocketAddr,
+    ) -> DnsOwner {
+        let selectors = || self.rules.iter().filter_map(|rule| rule.owner.as_ref());
+        DnsOwner {
+            uid: (self.rules.iter().any(|rule| rule.owner_unknown)
+                || selectors().any(super::rules::Rule::needs_owner))
+            .then(|| crate::connection_owner::resolve(network, src, dst))
+            .flatten(),
+            process: if selectors().any(super::rules::Rule::needs_process) {
+                crate::connection_owner::process_image(network, src, dst).await
+            } else {
+                None
+            },
+        }
+    }
+
     /// Ответить на запрос. Ответ есть всегда: ошибка сервера — SERVFAIL.
     pub async fn handle(&self, query: &Message, allow_fake: bool) -> Message {
-        match tokio::time::timeout(QUERY_TIMEOUT, self.try_handle(query, allow_fake)).await {
+        self.handle_for(query, allow_fake, None).await
+    }
+
+    async fn handle_for(
+        &self,
+        query: &Message,
+        allow_fake: bool,
+        owner: Option<&DnsOwner>,
+    ) -> Message {
+        match tokio::time::timeout(QUERY_TIMEOUT, self.try_handle(query, allow_fake, owner)).await {
             Ok(Ok(m)) => m,
             Ok(Err(e)) => {
                 tracing::debug!(error = %e, "DNS: запрос не удался");
@@ -384,7 +562,12 @@ impl Dns {
         }
     }
 
-    async fn try_handle(&self, query: &Message, allow_fake: bool) -> Result<Message> {
+    async fn try_handle(
+        &self,
+        query: &Message,
+        allow_fake: bool,
+        owner: Option<&DnsOwner>,
+    ) -> Result<Message> {
         if query.metadata.message_type != MessageType::Query
             || query.metadata.op_code != OpCode::Query
         {
@@ -395,7 +578,10 @@ impl Dns {
         };
         let name = normalize(&question.name().to_ascii());
         let qtype = question.query_type();
-        let (server, strategy) = self.policy(&name, allow_fake);
+        let (server, strategy) = match self.policy_for(&name, Some(qtype), allow_fake, owner) {
+            Ok(policy) => policy,
+            Err(code) => return Ok(reply(query, code)),
+        };
         if server.is_fake() {
             #[allow(
                 clippy::expect_used,
@@ -428,9 +614,10 @@ impl Dns {
                 RecordType::A | RecordType::AAAA | RecordType::HTTPS | RecordType::SVCB => {}
                 // Остальное (MX, TXT, SRV…) — у настоящего сервера.
                 _ => {
-                    return self
-                        .forward(self.pick(&name, false), query, &name, qtype)
-                        .await
+                    return match self.policy_for(&name, Some(qtype), false, owner) {
+                        Ok((server, _)) => self.forward(server, query, &name, qtype, true).await,
+                        Err(code) => Ok(reply(query, code)),
+                    };
                 }
             }
             return Ok(resp);
@@ -440,7 +627,7 @@ impl Dns {
         {
             return Ok(reply(query, ResponseCode::NoError));
         }
-        self.forward(server, query, &name, qtype).await
+        self.forward(server, query, &name, qtype, true).await
     }
 
     async fn forward(
@@ -449,11 +636,13 @@ impl Dns {
         query: &Message,
         name: &str,
         qtype: RecordType,
+        use_cache: bool,
     ) -> Result<Message> {
+        let cache = self.cache.as_ref().filter(|_| use_cache);
         let key = format!("{}|{name}", server.tag);
         let network_generation = self.network_generation.load(Ordering::Acquire);
-        let cache_generation = self.cache.as_ref().map(Cache::generation);
-        if let Some(c) = &self.cache {
+        let cache_generation = cache.map(Cache::generation);
+        if let Some(c) = cache {
             if let Some(mut m) = c.get(&key, qtype) {
                 if self.network_generation.load(Ordering::Acquire) != network_generation {
                     return Err(Error::Protocol(
@@ -472,7 +661,7 @@ impl Dns {
             ));
         }
         tracing::debug!(dns = %server.tag, name, ?qtype, rcode = ?answer.metadata.response_code, "DNS: ответ");
-        if let (Some(c), Some(generation)) = (&self.cache, cache_generation) {
+        if let (Some(c), Some(generation)) = (cache, cache_generation) {
             c.put_at_generation(generation, &key, qtype, &answer);
         }
         Ok(answer)
@@ -491,20 +680,48 @@ impl Dns {
             Error::Config("внешний TUN: для имён транспорта требуется dns.bootstrap".into())
         })?;
         let server = &self.servers[index];
-        self.lookup_with_server(name, Some(server)).await
+        self.lookup_with_server(name, Some((server, Strategy::PreferIpv4, true)))
+            .await
+    }
+
+    pub(crate) fn has_real_upstream(&self, tag: &str) -> bool {
+        self.servers
+            .iter()
+            .any(|server| server.tag == tag && !server.is_fake())
+    }
+
+    /// Resolve a destination through an explicitly selected real DNS upstream.
+    /// The caller owns the routing decision; never fall back to another tag.
+    pub async fn lookup_via(
+        &self,
+        name: &str,
+        tag: &str,
+        strategy: Strategy,
+        use_cache: bool,
+    ) -> Result<Vec<IpAddr>> {
+        let server = self
+            .servers
+            .iter()
+            .find(|server| server.tag == tag && !server.is_fake())
+            .ok_or_else(|| {
+                Error::Config(format!("DNS: неизвестный или виртуальный сервер «{tag}»"))
+            })?;
+        self.lookup_with_server(name, Some((server, strategy, use_cache)))
+            .await
     }
 
     async fn lookup_with_server(
         &self,
         name: &str,
-        server: Option<&Arc<Upstream>>,
+        server: Option<(&Arc<Upstream>, Strategy, bool)>,
     ) -> Result<Vec<IpAddr>> {
         let name = normalize(name);
         // Bootstrap не наследует правила приложений и их IPv6-only стратегию.
-        let strategy = if server.is_some() {
-            Strategy::PreferIpv4
+        let strategy = if let Some((_, strategy, _)) = server {
+            strategy
         } else {
-            self.policy(&name, false).1
+            self.policy(&name, None, false)
+                .map_or(self.strategy, |(_, strategy)| strategy)
         };
         let fqdn = Name::from_ascii(format!("{name}.")).map_err(|e| {
             tracing::debug!(%name, error = %e, "DNS: неверное имя");
@@ -517,11 +734,15 @@ impl Dns {
             m.add_query(Query::query(fqdn.clone(), t));
             async move {
                 let resp = match server {
-                    Some(s) => tokio::time::timeout(QUERY_TIMEOUT, self.forward(s, &m, name, t))
-                        .await
-                        .map_err(|_| {
-                            Error::Protocol("истекло время ожидания bootstrap DNS".into())
-                        })??,
+                    Some((s, _, use_cache)) => {
+                        tokio::time::timeout(QUERY_TIMEOUT, self.forward(s, &m, name, t, use_cache))
+                            .await
+                            .map_err(|_| {
+                                Error::Protocol(
+                                    "истекло время ожидания выбранного DNS-сервера".into(),
+                                )
+                            })??
+                    }
                     None => self.handle(&m, false).await,
                 };
                 Ok::<Vec<IpAddr>, Error>(
@@ -597,6 +818,15 @@ pub fn reply(query: &Message, rcode: ResponseCode) -> Message {
 
 /// Разобрать запрос и ответить (байты → байты); мусор — `None`.
 pub async fn answer_bytes(dns: &Dns, packet: &[u8], allow_fake: bool) -> Option<Vec<u8>> {
+    answer_bytes_for(dns, packet, allow_fake, None).await
+}
+
+pub(crate) async fn answer_bytes_for(
+    dns: &Dns,
+    packet: &[u8],
+    allow_fake: bool,
+    owner: Option<&DnsOwner>,
+) -> Option<Vec<u8>> {
     let query = match Message::from_vec(packet) {
         Ok(q) => q,
         Err(_) => {
@@ -613,7 +843,7 @@ pub async fn answer_bytes(dns: &Dns, packet: &[u8], allow_fake: bool) -> Option<
     if query.metadata.message_type != MessageType::Query {
         return None;
     }
-    let resp = dns.handle(&query, allow_fake).await;
+    let resp = dns.handle_for(&query, allow_fake, owner).await;
     resp.to_vec().ok()
 }
 
@@ -681,6 +911,169 @@ mod bootstrap_tests {
         assert!(err.contains("не поддерживает нужные TCP/UDP-пути"));
     }
 
+    #[tokio::test]
+    async fn dns_question_type_and_domain_choose_the_same_rule() {
+        let cfg = crate::app::config::Config::parse(
+            r#"{
+            "outbounds":[{"type":"direct","tag":"direct"}],
+            "dns":{
+                "servers":[
+                    {"type":"udp","tag":"real","server":"127.0.0.1","detour":"direct"},
+                    {"type":"fakeip","tag":"fake"}
+                ],
+                 "rules":[
+                    {"domain":["blocked.example"],"action":"reject"},
+                    {"query_type":["HTTPS","SVCB"],"action":"predefined","rcode":"NOERROR"},
+                    {"domain":["routed.example"],"query_type":["A",28],"server":"fake"}
+                ],
+                "final":"real"
+            }
+        }"#,
+        )
+        .unwrap();
+        let geo =
+            GeoFiles::load(Vec::new(), Vec::new(), "unused".as_ref(), "unused".as_ref()).unwrap();
+        let dns = Dns::build(
+            cfg.dns.as_ref().unwrap(),
+            &|_| Some(Arc::new(DirectOutbound::new("direct")) as Arc<dyn Outbound>),
+            "direct",
+            &geo,
+            None,
+        )
+        .unwrap();
+        for (host, kind, expected) in [
+            ("blocked.example.", RecordType::A, ResponseCode::Refused),
+            ("blocked.example.", RecordType::HTTPS, ResponseCode::Refused),
+            ("routed.example.", RecordType::HTTPS, ResponseCode::NoError),
+        ] {
+            let mut query = Message::query();
+            query.add_query(Query::query(Name::from_ascii(host).unwrap(), kind));
+            let answer = dns.handle(&query, true).await;
+            assert_eq!(answer.metadata.response_code, expected);
+            assert!(answer.answers.is_empty());
+        }
+        assert!(dns
+            .policy("routed.example", Some(RecordType::A), true)
+            .unwrap()
+            .0
+            .is_fake());
+        assert!(dns
+            .policy("routed.example", Some(RecordType::AAAA), true)
+            .unwrap()
+            .0
+            .is_fake());
+        assert!(!dns
+            .policy("routed.example", Some(RecordType::TXT), true)
+            .unwrap()
+            .0
+            .is_fake());
+        assert!(!dns
+            .policy("other.example", Some(RecordType::A), true)
+            .unwrap()
+            .0
+            .is_fake());
+        assert!(!dns
+            .policy("routed.example", Some(RecordType::A), false)
+            .unwrap()
+            .0
+            .is_fake());
+    }
+
+    #[tokio::test]
+    async fn dns_owner_selects_the_assigned_exit_and_unknown_is_refused() {
+        let cfg = crate::app::config::Config::parse(
+            r#"{
+            "outbounds":[{"type":"direct","tag":"direct"}],
+            "dns":{
+                "servers":[
+                    {"type":"udp","tag":"primary","server":"127.0.0.1","detour":"direct"},
+                    {"type":"udp","tag":"secondary","server":"127.0.0.1","detour":"direct"}
+                ],
+                "rules":[
+                    {"domain":["site.example"],"server":"primary"},
+                    {"type":"logical","mode":"and","rules":[
+                        {"domain_suffix":[".local"]},
+                        {"domain":["vpn.local"],"domain_suffix":[".vpn.local"],"invert":true}
+                    ],"action":"route","server":"primary"},
+                    {"user_id":[10001],"server":"secondary"},
+                    {"process_name":["ChatGPT.exe"],"server":"secondary"}
+                ],
+                "final":"primary"
+            }
+        }"#,
+        )
+        .unwrap();
+        let geo =
+            GeoFiles::load(Vec::new(), Vec::new(), "unused".as_ref(), "unused".as_ref()).unwrap();
+        let build = |cfg: &DnsConfig| {
+            Dns::build(
+                cfg,
+                &|_| Some(Arc::new(DirectOutbound::new("direct")) as Arc<dyn Outbound>),
+                "direct",
+                &geo,
+                None,
+            )
+            .unwrap()
+        };
+        let mut cfg = cfg.dns.unwrap();
+        let process_rule = cfg.rules.pop().unwrap();
+        let dns = build(&cfg);
+        let android = DnsOwner {
+            uid: Some(10001),
+            process: None,
+        };
+        cfg.rules.pop();
+        cfg.rules.push(process_rule);
+        let windows_dns = build(&cfg);
+        let windows = DnsOwner {
+            uid: None,
+            process: Some(Arc::from(r"C:\Apps\ChatGPT.exe")),
+        };
+        for (dns, owner) in [(&dns, &android), (&windows_dns, &windows)] {
+            assert_eq!(
+                dns.policy_for("other.example", Some(RecordType::A), true, Some(owner))
+                    .unwrap()
+                    .0
+                    .tag,
+                "secondary"
+            );
+            assert_eq!(
+                dns.policy_for("site.example", Some(RecordType::A), true, Some(owner))
+                    .unwrap()
+                    .0
+                    .tag,
+                "primary"
+            );
+            assert_eq!(
+                dns.policy_for("lan.local", Some(RecordType::A), true, Some(owner))
+                    .unwrap()
+                    .0
+                    .tag,
+                "primary"
+            );
+            assert_eq!(
+                dns.policy_for("sub.vpn.local", Some(RecordType::A), true, Some(owner))
+                    .unwrap()
+                    .0
+                    .tag,
+                "secondary"
+            );
+        }
+        let mut request = Message::query();
+        request.add_query(Query::query(
+            Name::from_ascii("other.example.").unwrap(),
+            RecordType::A,
+        ));
+        let owner = DnsOwner::default();
+        let packet = answer_bytes_for(&dns, &request.to_vec().unwrap(), true, Some(&owner))
+            .await
+            .unwrap();
+        assert_eq!(
+            Message::from_vec(&packet).unwrap().metadata.response_code,
+            ResponseCode::Refused
+        );
+    }
+
     #[test]
     fn bootstrap_tag_is_explicit_and_must_exist() {
         for (tag, valid) in [("configured-dns", true), ("missing", false)] {
@@ -738,6 +1131,104 @@ mod bootstrap_tests {
             .unwrap()
             .get(&format!("{BOOTSTRAP_DNS}|{name}"), RecordType::A)
             .is_none());
+    }
+
+    #[tokio::test]
+    async fn explicit_lookup_uses_only_the_selected_dns_tag_and_family() {
+        let dns = build_bootstrap("1.1.1.1", "direct", BOOTSTRAP_DNS).unwrap();
+        let name = "shared.example";
+        let fqdn = Name::from_ascii("shared.example.").unwrap();
+        let mut query = Message::query();
+        query.add_query(Query::query(fqdn.clone(), RecordType::A));
+        for (tag, last) in [("remote", 11), (BOOTSTRAP_DNS, 22)] {
+            let mut answer = reply(&query, ResponseCode::NoError);
+            answer.add_answer(Record::from_rdata(
+                fqdn.clone(),
+                60,
+                RData::A(A::new(203, 0, 113, last)),
+            ));
+            dns.cache
+                .as_ref()
+                .unwrap()
+                .put(&format!("{tag}|{name}"), RecordType::A, &answer);
+        }
+        assert_eq!(
+            dns.lookup_via(name, "remote", Strategy::Ipv4Only, true)
+                .await
+                .unwrap(),
+            vec!["203.0.113.11".parse::<IpAddr>().unwrap()]
+        );
+        assert_eq!(
+            dns.lookup_via(name, BOOTSTRAP_DNS, Strategy::Ipv4Only, true)
+                .await
+                .unwrap(),
+            vec!["203.0.113.22".parse::<IpAddr>().unwrap()]
+        );
+        assert!(dns
+            .lookup_via(name, "missing", Strategy::Ipv4Only, true)
+            .await
+            .is_err());
+        // The remote fixture rejects network exchanges. Its cached answer
+        // must not make a fresh connectivity check succeed.
+        assert!(dns
+            .lookup_via(name, "remote", Strategy::Ipv4Only, false)
+            .await
+            .is_err());
+        assert!(dns
+            .lookup_via(name, "remote", Strategy::Ipv4Only, true)
+            .await
+            .is_ok());
+
+        let geo =
+            GeoFiles::load(Vec::new(), Vec::new(), "unused".as_ref(), "unused".as_ref()).unwrap();
+        let dns = Arc::new(dns);
+        for (resolver, expected) in [
+            ("remote", Some("203.0.113.11")),
+            (BOOTSTRAP_DNS, Some("203.0.113.22")),
+            ("missing", None),
+        ] {
+            let config = crate::app::config::Config::parse(&serde_json::json!({
+                "outbounds": [{"type":"direct","tag":"vpn1"},{"type":"direct","tag":"vpn2"}],
+                "route": {"final":"vpn1","rules":[
+                    {"domain":[name],"action":"resolve","server":resolver,"strategy":"ipv4_only"},
+                    {"domain":[name],"outbound":"vpn2"}
+                ]}
+            }).to_string()).unwrap();
+            let mut router = crate::app::router::Router::new(
+                vec![
+                    Arc::new(DirectOutbound::new("vpn1")),
+                    Arc::new(DirectOutbound::new("vpn2")),
+                ],
+                &config.route,
+                &[],
+                &geo,
+            )
+            .unwrap();
+            router.set_dns(dns.clone());
+            assert_eq!(router.validate_resolvers().is_ok(), expected.is_some());
+            let mut meta = crate::app::Metadata {
+                inbound: "tun".into(),
+                source: "127.0.0.1:12345".parse().unwrap(),
+                network: crate::app::Network::Tcp,
+                target: crate::vless::Address::Domain(name.into()),
+                port: 443,
+                sniffed: None,
+                inbound_type: "tun",
+                user_id: None,
+                process_path: None,
+                destination_ip_version: None,
+                rule: None,
+            };
+            let result = router.route(&mut meta).await;
+            if let Some(expected) = expected {
+                assert_eq!(result.unwrap().tag(), "vpn2");
+                assert!(
+                    matches!(meta.target, crate::vless::Address::Ipv4(ip) if ip.to_string() == expected)
+                );
+            } else {
+                assert!(result.is_err());
+            }
+        }
     }
 
     #[tokio::test]
