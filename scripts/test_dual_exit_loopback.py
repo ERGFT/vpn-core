@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Exercise tagged exits with real SOCKS handshakes over loopback."""
 import argparse
+from concurrent.futures import ThreadPoolExecutor
 import json
 import os
 import socket
@@ -75,10 +76,12 @@ def request(proxy_port, host):
 def run(core):
     with socketserver.ThreadingTCPServer(("127.0.0.1", 0), Exit) as primary, \
          socketserver.ThreadingTCPServer(("127.0.0.1", 0), Exit) as secondary, \
+         socketserver.ThreadingTCPServer(("127.0.0.1", 0), Exit) as tertiary, \
          TemporaryDirectory(prefix="dual-exit-", dir=Path.cwd()) as directory:
-        primary.label, secondary.label = "vpn1", "vpn2"
-        primary.seen, secondary.seen = [], []
-        for server in (primary, secondary):
+        primary.label, secondary.label, tertiary.label = "vpn1", "vpn2", "vpn3"
+        exits = (primary, secondary, tertiary)
+        for server in exits:
+            server.seen = []
             threading.Thread(target=server.serve_forever, daemon=True).start()
         with socket.socket() as reserve:
             reserve.bind(("127.0.0.1", 0))
@@ -87,8 +90,11 @@ def run(core):
             "inbounds": [{"type": "http", "tag": "test", "listen": "127.0.0.1", "listen_port": proxy_port}],
             "outbounds": [{"type": "socks", "tag": server.label, "server": "127.0.0.1",
                            "server_port": server.server_address[1], "version": "5", "network": "tcp"}
-                          for server in (primary, secondary)],
-            "route": {"rules": [{"domain": ["secondary.example.test"], "outbound": "vpn2"}], "final": "vpn1"},
+                          for server in exits],
+            "route": {"rules": [
+                {"domain": ["secondary.example.test"], "outbound": "vpn2"},
+                {"domain": ["tertiary.example.test"], "outbound": "vpn3"},
+            ], "final": "vpn1"},
         }
         config_path = Path(directory, "config.json")
         config_path.write_text(json.dumps(config), encoding="utf-8")
@@ -107,11 +113,17 @@ def run(core):
                             break
                     except OSError:
                         time.sleep(0.05)
-                for host, expected in [("secondary.example.test", "vpn2"), ("default.example.test", "vpn1"),
-                                       ("secondary.example.test", "vpn2")]:
-                    assert request(proxy_port, host) == expected
-                assert primary.seen == [("default.example.test", 80)]
-                assert secondary.seen == [("secondary.example.test", 80)] * 2
+                barrier = threading.Barrier(3)
+                hosts = ("default.example.test", "secondary.example.test", "tertiary.example.test")
+
+                def parallel_request(host):
+                    barrier.wait(timeout=5)
+                    return request(proxy_port, host)
+
+                with ThreadPoolExecutor(max_workers=3) as clients:
+                    assert tuple(clients.map(parallel_request, hosts)) == ("vpn1", "vpn2", "vpn3")
+                for server, host in zip(exits, hosts):
+                    assert server.seen == [(host, 80)]
                 secondary.shutdown()
                 secondary.server_close()
                 try:
@@ -121,7 +133,9 @@ def run(core):
                 else:
                     raise AssertionError("Unavailable VPN-2 unexpectedly succeeded")
                 assert primary.seen == [("default.example.test", 80)]
+                assert tertiary.seen == [("tertiary.example.test", 80)]
                 assert request(proxy_port, "default.example.test") == "vpn1"
+                assert request(proxy_port, "tertiary.example.test") == "vpn3"
 
             finally:
                 process.stdin.close()
@@ -131,9 +145,9 @@ def run(core):
                     process.kill()
                     process.wait()
                     raise AssertionError("Core did not stop after stdin closed")
-                primary.shutdown()
-                secondary.shutdown()
-        print("PASS: domain and default select distinct exits, failed VPN-2 never falls back, stdin EOF stops core")
+                for server in exits:
+                    server.shutdown()
+        print("PASS: three concurrent exits, isolated failure and clean shutdown")
 
 
 def run_windows_tun(core):

@@ -208,7 +208,7 @@ jobs:
         with:
           name: reality-client-windows
           path: target/release/reality-client.exe
-      - name: Two independent VPN exits
+      - name: Three concurrent VPN exits
         run: python scripts/test_dual_exit_loopback.py target/release/reality-client.exe
       - name: служба и TUN на настоящей Windows
         shell: pwsh
