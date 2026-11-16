@@ -121,6 +121,8 @@ pub struct Metadata {
     pub source: SocketAddr,
     /// UID из доверенного callback приложения; SOCKS/HTTP-входы его не задают.
     pub user_id: Option<u32>,
+    pub process_path: Option<Arc<str>>,
+    pub destination_ip_version: Option<u8>,
     pub network: Network,
     pub target: Address,
     pub port: u16,
@@ -815,6 +817,8 @@ mod external_tun_route_tests {
             inbound: Arc::from("test"),
             source: SocketAddr::from((Ipv4Addr::LOCALHOST, 12345)),
             user_id: None,
+            process_path: None,
+            destination_ip_version: None,
             network: super::Network::Tcp,
             target: crate::vless::Address::Ipv4(Ipv4Addr::new(203, 0, 113, 1)),
             port: 443,
@@ -1363,6 +1367,7 @@ fn build_core(
     if let Some(d) = &dns {
         router.set_dns(d.clone());
     }
+    router.validate_resolvers()?;
     router.set_tracker(tracker);
     let mut pinned_hosts: Vec<(String, u16)> = router_pinned_servers(&router, &cfg.outbounds)
         .into_iter()

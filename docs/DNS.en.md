@@ -1,5 +1,9 @@
 # DNS
 
+A sing-box DNS rule can use query_type with a record type name such as A or AAAA, or its numeric code. If the rule also specifies a domain, both conditions must match. The reject action returns REFUSED. The predefined action with rcode NOERROR returns an empty successful answer.
+
+A route rule with action resolve uses the named server, then evaluates later rules with the resolved IP and the original domain. A lookup failure stops routing the connection.
+
 [Русский](DNS.md) | **English**
 
 The client's own DNS instead of the system one: servers, rules, cache, fake-IP. Set in the [config file](CONFIG.en.md).

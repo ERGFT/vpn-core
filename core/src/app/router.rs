@@ -96,13 +96,17 @@ impl Router {
         };
         let mut rules = Vec::with_capacity(route.rules.len());
         for (i, r) in route.rules.iter().enumerate() {
-            let out = map.get(&r.outbound).cloned().ok_or_else(|| {
-                Error::Config(format!(
-                    "правило {}: нет выхода с tag = \"{}\"",
-                    i + 1,
-                    r.outbound
-                ))
-            })?;
+            let out = if r.resolver.is_some() {
+                final_.clone()
+            } else {
+                map.get(&r.outbound).cloned().ok_or_else(|| {
+                    Error::Config(format!(
+                        "правило {}: нет выхода с tag = \"{}\"",
+                        i + 1,
+                        r.outbound
+                    ))
+                })?
+            };
             if let Some(t) = r.inbound.iter().find(|t| !inbound_tags.contains(t)) {
                 return Err(Error::Config(format!(
                     "правило {}: нет входа с tag = \"{t}\"",
@@ -194,6 +198,23 @@ impl Router {
         self.dns = Some(dns);
     }
 
+    pub(crate) fn validate_resolvers(&self) -> Result<()> {
+        for rule in &self.rules {
+            if let Some((tag, _, _)) = &rule.resolver {
+                if !self
+                    .dns
+                    .as_ref()
+                    .is_some_and(|dns| dns.has_real_upstream(tag))
+                {
+                    return Err(Error::Config(format!(
+                        "route.resolve: неизвестный или виртуальный DNS «{tag}»"
+                    )));
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// Выход для соединения с учётом fake-IP и `domain_strategy`.
     /// `meta.target` с fake-IP заменяется именем. Ошибка — адрес из
     /// диапазона fake-IP, для которого имя неизвестно.
@@ -207,7 +228,10 @@ impl Router {
             if let Some(ip) = ip {
                 match dns.reverse(ip) {
                     Reverse::NotFake => {}
-                    Reverse::Name(n) => meta.target = Address::Domain(n),
+                    Reverse::Name(n) => {
+                        meta.target = Address::Domain(n);
+                        meta.sniffed = None;
+                    }
                     Reverse::Unknown => {
                         return Err(Error::Protocol(format!(
                             "адрес {ip} из диапазона fake-IP, но имя для него неизвестно (устарел после перезапуска?)"
@@ -244,7 +268,7 @@ impl Router {
             if let Some(r) = self
                 .rules
                 .iter()
-                .find(|r| r.outbound.is_dns() && r.matches(meta))
+                .find(|r| r.resolver.is_none() && r.outbound.is_dns() && r.matches(meta))
             {
                 meta.rule = Some(r.label.clone());
                 return Ok(r.outbound.clone());
@@ -258,7 +282,7 @@ impl Router {
                 return Ok(o);
             }
         }
-        if let Some(o) = self.match_rules(meta) {
+        if let Some(o) = self.match_rules_resolving(meta).await? {
             return Ok(o);
         }
         if self.domain_strategy == DomainStrategy::IpIfNonMatch
@@ -295,8 +319,45 @@ impl Router {
             .unwrap_or_else(|| self.final_.clone())
     }
 
+    async fn match_rules_resolving(
+        &self,
+        meta: &mut Metadata,
+    ) -> Result<Option<Arc<dyn Outbound>>> {
+        for rule in &self.rules {
+            if rule.missing_owner(meta) {
+                meta.rule = Some("connection-owner-unavailable".into());
+                return Ok(Some(self.unknown_owner.clone()));
+            }
+            if !rule.matches(meta) {
+                continue;
+            }
+            let Some((server, strategy, use_cache)) = &rule.resolver else {
+                meta.rule = Some(rule.label.clone());
+                return Ok(Some(rule.outbound.clone()));
+            };
+            if let Address::Domain(name) = &meta.target {
+                let dns = self.dns.as_ref().ok_or_else(|| {
+                    Error::Config("route.resolve требует DNS-конфигурацию".into())
+                })?;
+                let addresses = dns.lookup_via(name, server, *strategy, *use_cache).await?;
+                let ip = addresses
+                    .first()
+                    .ok_or_else(|| Error::Protocol("DNS вернул пустой ответ".into()))?;
+                meta.sniffed = Some(name.clone());
+                meta.target = match ip {
+                    std::net::IpAddr::V4(ip) => Address::Ipv4(*ip),
+                    std::net::IpAddr::V6(ip) => Address::Ipv6(*ip),
+                };
+            }
+        }
+        Ok(None)
+    }
+
     fn match_rules(&self, meta: &mut Metadata) -> Option<Arc<dyn Outbound>> {
         for r in &self.rules {
+            if r.resolver.is_some() {
+                continue;
+            }
             // Не переходить к direct/final, если нужную идентичность не дала ОС.
             // Предыдущие правила сайтов/входов сохраняют свой приоритет.
             if r.missing_owner(meta) {
@@ -325,6 +386,10 @@ impl Router {
     /// Нужны ли правилам домены (тогда имеет смысл sniffing).
     pub fn has_rules(&self) -> bool {
         !self.rules.is_empty()
+    }
+
+    pub fn needs_process(&self) -> bool {
+        self.rules.iter().any(Rule::needs_process)
     }
 
     pub fn needs_owner(&self) -> bool {
@@ -360,6 +425,8 @@ mod tests {
             sniffed: sniffed.map(str::to_string),
             inbound_type: "socks",
             user_id: None,
+            process_path: None,
+            destination_ip_version: None,
             rule: None,
         }
     }
@@ -420,6 +487,27 @@ mod tests {
                 assert_eq!(r.select(&m).tag(), expected);
             }
         }
+    }
+
+    #[test]
+    fn process_rules_choose_exact_exit_and_fail_closed() {
+        let r = router(
+            Path::new("."),
+            r#"
+            {"domain":["bypass.test"],"outbound":"direct"},
+            {"process_path_regex":["(?i)\\AC:\\\\Apps\\\\ChatGPT\\.exe\\z"],"outbound":"proxy"},
+            {"process_name":["Game.exe"],"outbound":"direct"}
+            "#,
+        );
+        let mut metadata = meta(dom("remote.test"), None);
+        assert_eq!(r.select(&metadata).tag(), "connection-owner-unavailable");
+        metadata.process_path = Some(Arc::from(r"c:\apps\CHATGPT.EXE"));
+        assert_eq!(r.select(&metadata).tag(), "proxy");
+        metadata.process_path = Some(Arc::from(r"C:\Other\GAME.EXE"));
+        assert_eq!(r.select(&metadata).tag(), "direct");
+        metadata.target = dom("bypass.test");
+        metadata.process_path = None;
+        assert_eq!(r.select(&metadata).tag(), "direct");
     }
 
     #[test]

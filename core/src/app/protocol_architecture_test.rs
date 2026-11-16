@@ -166,6 +166,8 @@ fn metadata(network: Network) -> Metadata {
         inbound: Arc::from("architecture-test"),
         source: SocketAddr::from(([127, 0, 0, 1], 12345)),
         user_id: None,
+        process_path: None,
+        destination_ip_version: None,
         network,
         target: Address::Domain("echo.test".into()),
         port: 7,

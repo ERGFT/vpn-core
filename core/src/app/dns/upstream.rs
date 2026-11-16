@@ -257,6 +257,8 @@ impl Upstream {
             sniffed: None,
             inbound_type: "dns",
             user_id: None,
+            process_path: None,
+            destination_ip_version: None,
             rule: None,
         }
     }

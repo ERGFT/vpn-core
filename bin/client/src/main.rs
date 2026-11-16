@@ -72,6 +72,10 @@ struct Args {
     #[arg(long)]
     check: bool,
 
+    /// Exit when a supervising application's stdin pipe closes.
+    #[arg(long, conflicts_with = "service")]
+    exit_on_stdin_eof: bool,
+
     /// Windows: на время работы включить системный прокси (браузеры и
     /// программы пойдут через HTTP-вход); при выходе вернуть как было
     #[arg(long)]
@@ -411,9 +415,28 @@ async fn run(args: Args, stop: impl std::future::Future<Output = ()>) -> Result<
     tokio::select! {
         r = running.wait() => r?,
         _ = stop => tracing::info!("завершение по сигналу"),
+        result = wait_for_stdin_close(args.exit_on_stdin_eof) => {
+            result?;
+            tracing::info!("закрыт канал stdin");
+        }
     }
     // Здесь `_system_proxy` уничтожается и возвращает прежние настройки.
     Ok(())
+}
+
+// A detached OS thread avoids making runtime shutdown wait on an open stdin.
+async fn wait_for_stdin_close(enabled: bool) -> std::io::Result<()> {
+    if !enabled {
+        return std::future::pending().await;
+    }
+    let (send, receive) = tokio::sync::oneshot::channel();
+    std::thread::Builder::new()
+        .name("reality-stdin".into())
+        .spawn(move || {
+            let result = std::io::copy(&mut std::io::stdin().lock(), &mut std::io::sink());
+            let _ = send.send(result.map(|_| ()));
+        })?;
+    receive.await.map_err(std::io::Error::other)?
 }
 
 /// Блокировка `auto_route` — в папке службы (права только у SYSTEM и

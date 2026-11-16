@@ -32,7 +32,7 @@ use futures_util::{SinkExt, StreamExt};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 use super::access::IpNet;
-use super::dns::{answer_bytes, Dns};
+use super::dns::{answer_bytes_for, Dns, DnsOwner};
 use super::outbound::UDP_IDLE;
 use super::router::{Router, RouterHandle};
 use super::sniff;
@@ -356,7 +356,8 @@ impl TunInbound {
         }
         if self.settings.dns_hijack && dst.port() == 53 {
             if let Some(dns) = router.dns() {
-                return dns_over_tcp(dns, &mut t).await;
+                let owner = dns.owner_for_flow(Network::Tcp, src, dst).await;
+                return dns_over_tcp(dns, &mut t, &owner).await;
             }
         }
         if in_tun_net(&self.settings, dst) {
@@ -370,6 +371,12 @@ impl TunInbound {
                 .needs_owner()
                 .then(|| crate::connection_owner::resolve(Network::Tcp, src, dst))
                 .flatten(),
+            process_path: if router.needs_process() {
+                crate::connection_owner::process_image(Network::Tcp, src, dst).await
+            } else {
+                None
+            },
+            destination_ip_version: Some(if dst.is_ipv4() { 4 } else { 6 }),
             target: ip_address(dst.ip()),
             port: dst.port(),
             sniffed: None,
@@ -410,12 +417,13 @@ impl TunInbound {
         let mut buf = vec![0u8; 65535];
         if self.settings.dns_hijack && dst.port() == 53 {
             if let Some(dns) = router.dns().cloned() {
+                let owner = dns.owner_for_flow(Network::Udp, src, dst).await;
                 loop {
                     let n = u.read(&mut buf).await?;
                     if n == 0 {
                         return Ok(());
                     }
-                    if let Some(a) = answer_bytes(&dns, &buf[..n], true).await {
+                    if let Some(a) = answer_bytes_for(&dns, &buf[..n], true, Some(&owner)).await {
                         u.write_all(&a).await?;
                     }
                 }
@@ -432,6 +440,12 @@ impl TunInbound {
                 .needs_owner()
                 .then(|| crate::connection_owner::resolve(Network::Udp, src, dst))
                 .flatten(),
+            process_path: if router.needs_process() {
+                crate::connection_owner::process_image(Network::Udp, src, dst).await
+            } else {
+                None
+            },
+            destination_ip_version: Some(if dst.is_ipv4() { 4 } else { 6 }),
             target: ip_address(dst.ip()),
             port: dst.port(),
             sniffed: None,
@@ -496,7 +510,11 @@ impl TunInbound {
 }
 
 /// DNS поверх TCP: запросы с длиной впереди.
-async fn dns_over_tcp<S: AsyncRead + AsyncWrite + Unpin>(dns: &Dns, t: &mut S) -> Result<()> {
+async fn dns_over_tcp<S: AsyncRead + AsyncWrite + Unpin>(
+    dns: &Dns,
+    t: &mut S,
+    owner: &DnsOwner,
+) -> Result<()> {
     loop {
         let mut len = [0u8; 2];
         match tokio::time::timeout(Duration::from_secs(30), t.read_exact(&mut len)).await {
@@ -505,7 +523,7 @@ async fn dns_over_tcp<S: AsyncRead + AsyncWrite + Unpin>(dns: &Dns, t: &mut S) -
         }
         let mut q = vec![0u8; u16::from_be_bytes(len) as usize];
         t.read_exact(&mut q).await?;
-        let Some(a) = answer_bytes(dns, &q, true).await else {
+        let Some(a) = answer_bytes_for(dns, &q, true, Some(owner)).await else {
             return Ok(());
         };
         let mut out = (a.len() as u16).to_be_bytes().to_vec();

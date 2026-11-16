@@ -248,6 +248,8 @@ mod tests {
             inbound: Arc::from("test"),
             source: SocketAddr::from((Ipv4Addr::LOCALHOST, 12345)),
             user_id: None,
+            process_path: None,
+            destination_ip_version: None,
             network: crate::app::Network::Tcp,
             target,
             port,

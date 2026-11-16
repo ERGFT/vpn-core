@@ -97,6 +97,8 @@ pub(crate) fn detour_metadata(server: &str, port: u16, parent: &Metadata) -> Met
         inbound: parent.inbound.clone(),
         source: parent.source,
         user_id: parent.user_id,
+        process_path: None,
+        destination_ip_version: None,
         network: Network::Tcp,
         target,
         port,
@@ -703,6 +705,8 @@ mod tests {
             sniffed: None,
             inbound_type: "socks",
             user_id: None,
+            process_path: None,
+            destination_ip_version: None,
             rule: None,
         }
     }

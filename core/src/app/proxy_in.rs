@@ -349,6 +349,8 @@ impl ProxyInbound {
             sniffed: None,
             inbound_type: self.kind.name(),
             user_id: None,
+            process_path: None,
+            destination_ip_version: None,
             rule: None,
         };
         // Sniffing нужен, только когда домена нет. Ответ «соединено»
@@ -487,6 +489,8 @@ async fn udp_associate(
                     sniffed: None,
                     inbound_type: "socks",
                     user_id: None,
+                    process_path: None,
+                    destination_ip_version: None,
                     rule: None,
                 };
                 let original = meta.target.clone();

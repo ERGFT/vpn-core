@@ -137,6 +137,8 @@ outbound. The `direct` outbound does not let network clients reach services
 of this computer (`127.0.0.1`, `localhost`); the `block` outbound replies with
 SOCKS5 code 0x02 or HTTP 403.
 
+Each routing rule can select its own outbound tag. You can use three or more VPN outbounds in one session. Set `route.final` to the default outbound for traffic that matches no rule.
+
 ## SOCKS5 and HTTP CONNECT TCP chains
 
 The sing-box `detour` field can be set on `socks` or `http` outbounds. It uses
