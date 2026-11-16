@@ -154,6 +154,7 @@ def run_windows_tun(core):
     if sys.platform != "win32":
         raise RuntimeError("The TUN fixture requires an isolated Windows runner")
     address = "192.0.2.42"
+    third_address = "192.0.2.43"
     # TCP dials under Windows TUN are pinned to the physical interface.
     # Select its local address without sending a packet to the synthetic target.
     with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as route:
@@ -161,21 +162,27 @@ def run_windows_tun(core):
         underlay = route.getsockname()[0]
     with socketserver.ThreadingTCPServer((underlay, 0), Exit) as primary, \
          socketserver.ThreadingTCPServer((underlay, 0), Exit) as secondary, \
+         socketserver.ThreadingTCPServer((underlay, 0), Exit) as tertiary, \
          TemporaryDirectory(prefix="dual-tun-", dir=Path.cwd()) as directory:
-        primary.label, secondary.label = "vpn1", "vpn2"
-        primary.seen, secondary.seen = [], []
-        for server in (primary, secondary):
+        primary.label, secondary.label, tertiary.label = "vpn1", "vpn2", "vpn3"
+        exits = (primary, secondary, tertiary)
+        for server in exits:
+            server.seen = []
             threading.Thread(target=server.serve_forever, daemon=True).start()
         config = {
             "inbounds": [{"type": "tun", "tag": "tun", "interface_name": "reality-dual-test",
                           "address": ["172.23.61.1/30"], "auto_route": True}],
             "outbounds": [{"type": "socks", "tag": server.label, "server": underlay,
                            "server_port": server.server_address[1], "version": "5", "network": "tcp"}
-                          for server in (primary, secondary)],
+                          for server in exits] + [{"type": "direct", "tag": "unrelated"}],
             "route": {
-                "rules": [{"process_path": [sys.executable], "ip_cidr": [address + "/32"],
-                           "outbound": "vpn2"}],
-                "final": "vpn1",
+                "rules": [
+                    {"process_path": [sys.executable], "ip_cidr": [address + "/32"], "outbound": "vpn2"},
+                    {"ip_cidr": [address + "/32"], "outbound": "vpn1"},
+                    {"ip_cidr": [third_address + "/32"], "outbound": "vpn3"},
+                ],
+                # Hosted Windows also generates background traffic while TUN is up.
+                "final": "unrelated",
             },
         }
         path = Path(directory, "config.json")
@@ -204,7 +211,13 @@ def run_windows_tun(core):
                      "--show-error", f"http://{address}/"],
                     capture_output=True, text=True, check=True, timeout=10)
                 assert alternate.stdout == "vpn1", f"Default application selected {alternate.stdout!r}"
+                third = subprocess.run(
+                    ["curl.exe", "--noproxy", "*", "--max-time", "5", "--fail", "--silent",
+                     "--show-error", f"http://{third_address}/"],
+                    capture_output=True, text=True, check=True, timeout=10)
+                assert third.stdout == "vpn3", f"Third destination selected {third.stdout!r}"
                 assert primary.seen == [(address, 80)] and secondary.seen == [(address, 80)]
+                assert tertiary.seen == [(third_address, 80)]
             except Exception:
                 log.seek(0)
                 print(log.read().decode("utf-8", errors="replace"), file=sys.stderr)
@@ -218,9 +231,9 @@ def run_windows_tun(core):
                     process.wait()
                     raise
                 finally:
-                    for server in (primary, secondary):
+                    for server in exits:
                         server.shutdown()
-    print("PASS: two Windows executables reached different exits through Wintun")
+    print("PASS: Windows application and destination rules reached three exits through Wintun")
 
 
 if __name__ == "__main__":
