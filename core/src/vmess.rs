@@ -16,6 +16,7 @@ use crate::error::{Error, Result};
 use crate::transport::TransportConfig;
 
 pub mod aead;
+pub mod body;
 pub mod header;
 pub mod response;
 

@@ -21,6 +21,9 @@
 - TCP/UDP runtime подключён к outbound factory, sing-box config и URI-подпискам; один outbound переиспользует аутентифицированное QUIC-соединение. Поддерживаемые поля sing-box преобразуются через URI-модель, неподдерживаемые опции отклоняются. Официальный сервер v2.13.0 подтвердил TCP/UDP echo, включая IPv4/IPv6 и UDP payload 4096 байт, в ограниченном loopback interop. `rc_network_changed` уведомляет выходы; Hysteria 2 сбрасывает общий QUIC-сеанс, а interop сценарий покрывает повторные TCP/UDP запросы после сигнала. Реальный переход между интерфейсами и production readiness не подтверждены; функция остаётся экспериментальной.
 - Добавлен `ca_file` для пользовательского PEM-набора корневых сертификатов Hysteria 2 в основной конфигурации. Проверка сертификата остаётся включённой; подписка не может хранить локальный путь и пропускает такую запись как неподдерживаемую.
 
+### VMess
+- Добавлен ограниченный raw-TCP interop-тест modern VMess AEAD/AES-128-GCM против Xray и исправлен разбор четырёхбайтового response-header prefix. Это не подключает VMess outbound к runtime и не подтверждает UDP, ChaCha20-Poly1305 или другие transports.
+
 ### SDK и C ABI
 - Добавлены manifest архива с SHA-256 каждого файла и сведениями о сборке,
   переносимые CMake/pkg-config metadata и native link arguments для статической
@@ -280,6 +283,9 @@ stage-by-stage decision history is in [PLAN.md](PLAN.md) (in Russian).
 ### Hysteria 2
 - The TCP/UDP runtime is wired into the outbound factory, sing-box config, and URI subscriptions; each outbound reuses an authenticated QUIC connection. Supported sing-box fields are converted through the URI model and unsupported options are rejected. The official v2.13.0 server passed limited loopback TCP/UDP echo interoperability, including IPv4/IPv6 and a 4096-byte UDP payload. `rc_network_changed` now notifies outbounds; Hysteria 2 drops its shared QUIC session, and the interop scenario covers fresh TCP/UDP requests after the signal. A real interface transition and production readiness remain unverified, so the feature stays experimental.
 - Added `ca_file` for a custom PEM trust-root set on Hysteria 2 outbounds in the main config. Certificate verification stays enabled; subscriptions cannot store a local path and skip such records as unsupported.
+
+### VMess
+- Added a limited raw-TCP modern VMess AEAD/AES-128-GCM interoperability test against Xray and corrected parsing of the four-byte response-header prefix. This does not connect a VMess outbound to the runtime or establish UDP, ChaCha20-Poly1305, or other transports.
 
 ### SDK and C ABI
 - SDK archives now include a per-file SHA-256 manifest and build metadata,
